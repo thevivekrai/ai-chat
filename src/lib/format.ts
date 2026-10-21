@@ -1,0 +1,54 @@
+import type { Contact, Message } from '@/data/types'
+import { ME_ID } from '@/data/types'
+
+const EMOJI = /\p{Extended_Pictographic}/u
+
+/** "Priya Nair" → "PN", "Mr. Desai" → "D", "Rajmachi Trek 🏔️" → "🏔️", "#studio-ops" → "#". */
+export function initials(name: string): string {
+  const emoji = name.match(/\p{Extended_Pictographic}️?/u)
+  if (emoji) return emoji[0]
+  if (name.startsWith('#')) return '#'
+  const words = name
+    .replace(/\(.*?\)/g, '')
+    .replace(/^(mr|mrs|ms|dr)\.?\s+/i, '')
+    .split(/\s+/)
+    .filter((w) => /^\p{L}/u.test(w))
+  return words
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('')
+}
+
+export const isEmojiAvatar = (text: string) => EMOJI.test(text)
+
+/** "Priya Nair" → "Priya", "Ramesh (Courier)" → "Ramesh", "Mr. Desai" stays "Mr. Desai". */
+export function shortName(name: string): string {
+  const clean = name.replace(/\s*\(.*\)\s*$/, '').trim()
+  if (/^(mr|mrs|ms|dr)\.?\s/i.test(clean)) return clean
+  return clean.split(/\s+/)[0]
+}
+
+/** Stable small hash for picking avatar colours. */
+export function hashString(value: string): number {
+  let h = 0
+  for (let i = 0; i < value.length; i++) h = (h * 31 + value.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+/** One-line preview for the thread list. */
+export function messagePreview(message: Message | undefined, contacts: Record<string, Contact>, isGroup: boolean) {
+  if (!message) return 'No messages yet'
+  const text = message.body.replace(/\s+/g, ' ').trim() || (message.attachments?.[0] ? `📎 ${message.attachments[0].name}` : '')
+  if (message.senderId === ME_ID) return `You: ${text}`
+  if (isGroup) return `${contacts[message.senderId]?.name.split(' ')[0] ?? 'Someone'}: ${text}`
+  return text
+}
+
+const PLACEHOLDER = /\[[^\]\n]{1,40}\]/g
+
+/** "[price]"-style blanks the AI leaves for facts it can't know. */
+export function findPlaceholders(text: string): string[] {
+  return text.match(PLACEHOLDER) ?? []
+}
+
+export const placeholderPattern = () => new RegExp(PLACEHOLDER.source, 'g')
