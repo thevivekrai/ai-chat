@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { CloudOff, Hourglass, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
+import { CloudOff, Hourglass, Link2, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
@@ -10,6 +10,7 @@ import { NETWORKS } from '@/lib/networks'
 import { isAtLeast } from '@/lib/media'
 import { turnOnAi } from '@/store/actions'
 import { useClock } from '@/store/clock'
+import { hasRealAccount, useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
 import { selectViewThreads, useThreadViews } from '@/store/selectors'
 import { useSettings } from '@/store/settings'
@@ -43,6 +44,8 @@ export function ThreadListPane({ view }: { view: ListView }) {
   const aiEnabled = useSettings((s) => s.aiEnabled)
   const now = useClock((s) => s.now)
   const views = useThreadViews()
+  const { demoShown, connected } = useConnections(useShallow((s) => ({ demoShown: s.demo, connected: hasRealAccount(s) })))
+  const hintDismissed = useUi((s) => s.connectHintDismissed)
 
   const list = useMemo(
     () => selectViewThreads(views, view, { networks, query, messages }),
@@ -112,7 +115,8 @@ export function ThreadListPane({ view }: { view: ListView }) {
         )}
       </header>
 
-      {!aiEnabled && view === 'needs-reply' && status === 'ready' && <AiOffBanner />}
+      {demoShown && !connected && !hintDismissed && status === 'ready' && <ConnectHint />}
+      {!aiEnabled && view === 'needs-reply' && status === 'ready' && views.length > 0 && <AiOffBanner />}
       {classifying && view === 'needs-reply' && (
         <div className="flex items-center gap-2 border-b border-line bg-accent-soft/50 px-4 py-2 text-xs text-accent-ink">
           <Loader2 className="size-3.5 animate-spin" aria-hidden /> Sorting by priority…
@@ -135,6 +139,20 @@ export function ThreadListPane({ view }: { view: ListView }) {
           </EmptyState>
         ) : status !== 'ready' ? (
           <ListSkeleton />
+        ) : views.length === 0 ? (
+          <EmptyState
+            icon={<Link2 className="size-6" />}
+            title={connected ? 'No chats yet' : 'Connect an account'}
+            actions={
+              <Button variant="primary" size="sm" onClick={() => useUi.getState().openSettings('accounts')}>
+                {connected ? 'Check accounts' : 'Connect an account'}
+              </Button>
+            }
+          >
+            {connected
+              ? 'Chats appear here as they arrive. A Telegram bot shows chats once someone messages it.'
+              : 'Bring in a Telegram bot or a Matrix account (with its WhatsApp, Instagram, Slack and SMS bridges), or turn the demo chats back on.'}
+          </EmptyState>
         ) : list.length === 0 ? (
           query ? (
             <NoMatches query={query} onClear={() => setQuery('')} />
@@ -178,6 +196,33 @@ export function ThreadListPane({ view }: { view: ListView }) {
   )
 }
 
+function ConnectHint() {
+  return (
+    <div className="flex items-start gap-3 border-b border-line px-4 py-3">
+      <Link2 className="mt-0.5 size-4 shrink-0 text-accent-ink" aria-hidden />
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
+        These are demo chats.{' '}
+        <button
+          type="button"
+          className="font-medium text-accent-ink hover:underline"
+          onClick={() => useUi.getState().openSettings('accounts')}
+        >
+          Connect Telegram or Matrix
+        </button>{' '}
+        to bring in your own.
+      </p>
+      <button
+        type="button"
+        aria-label="Dismiss"
+        className="-m-1 rounded-lg p-1 text-faint hover:text-fg"
+        onClick={() => useUi.getState().dismissConnectHint()}
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  )
+}
+
 function AiOffBanner() {
   return (
     <div className="border-b border-line bg-accent-soft/60 px-4 py-3">
@@ -194,7 +239,7 @@ function AiOffBanner() {
             <Button variant="primary" size="sm" onClick={() => turnOnAi()}>
               Turn on AI
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => useUi.getState().openDialog('settings')}>
+            <Button variant="ghost" size="sm" onClick={() => useUi.getState().openSettings('ai')}>
               Choose chats
             </Button>
           </div>

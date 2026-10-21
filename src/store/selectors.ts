@@ -99,7 +99,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     aiAllowed,
     priority: fresh,
     stalePriority: fresh ? null : (entry?.result ?? null),
-    priorityLoading: aiAllowed && !fresh,
+    priorityLoading: aiAllowed && !fresh && entry?.status !== 'error',
     sortPriority: fresh?.priority ?? entry?.result?.priority ?? 'normal',
   }
 }

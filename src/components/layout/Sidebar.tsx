@@ -7,9 +7,11 @@ import { Kbd } from '@/components/ui/Kbd'
 import { cn } from '@/lib/cn'
 import { NETWORK_ORDER, NETWORKS } from '@/lib/networks'
 import { turnOnAi } from '@/store/actions'
+import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
 import { countViews, useThreadViews } from '@/store/selectors'
-import { useSettings } from '@/store/settings'
+import { useAi } from '@/store/ai'
+import { usesClaude, useSettings } from '@/store/settings'
 import { useUi, type View } from '@/store/ui'
 
 const NAV: { id: View; label: string; icon: LucideIcon }[] = [
@@ -115,6 +117,7 @@ export function Sidebar({ className }: { className?: string }) {
       </section>
 
       <div className="mt-auto space-y-2 px-1">
+        <AccountsStatus />
         <AiStatusCard />
         <button
           type="button"
@@ -128,9 +131,44 @@ export function Sidebar({ className }: { className?: string }) {
   )
 }
 
+const ACCOUNT_STATE = {
+  online: { label: 'Online', dot: 'bg-emerald-500' },
+  connecting: { label: 'Syncing…', dot: 'bg-amber-400 animate-pulse' },
+  error: { label: 'Needs attention', dot: 'bg-rose-500' },
+} as const
+
+/** Connected accounts at a glance; opens Settings → Accounts. */
+function AccountsStatus() {
+  const { telegram, matrix } = useConnections(useShallow((s) => ({ telegram: s.telegram, matrix: s.matrix })))
+  const rows = [
+    { id: 'telegram', label: 'Telegram bot', status: telegram },
+    { id: 'matrix', label: 'Matrix', status: matrix },
+  ].filter((r) => r.status)
+  if (rows.length === 0) return null
+  return (
+    <button
+      type="button"
+      onClick={() => useUi.getState().openSettings('accounts')}
+      className="w-full space-y-1.5 rounded-2xl px-3 py-2 text-left transition-colors hover:bg-surface-2"
+      aria-label="Accounts"
+    >
+      {rows.map(({ id, label, status }) => (
+        <span key={id} className="flex items-center gap-2 text-xs">
+          <span className={cn('size-1.5 shrink-0 rounded-full', ACCOUNT_STATE[status!.state].dot)} aria-hidden />
+          <span className="truncate font-medium text-fg">{label}</span>
+          <span className="ml-auto shrink-0 text-faint">{ACCOUNT_STATE[status!.state].label}</span>
+        </span>
+      ))}
+    </button>
+  )
+}
+
 function AiStatusCard() {
-  const { aiEnabled, selected } = useSettings(useShallow((s) => ({ aiEnabled: s.aiEnabled, selected: s.aiThreadIds.length })))
+  const { aiEnabled, selected, claude } = useSettings(
+    useShallow((s) => ({ aiEnabled: s.aiEnabled, selected: s.aiThreadIds.length, claude: usesClaude(s) })),
+  )
   const total = useInbox((s) => Object.keys(s.threads).length)
+  const problem = useAi((s) => s.problem)
 
   if (!aiEnabled) {
     return (
@@ -151,14 +189,16 @@ function AiStatusCard() {
   return (
     <button
       type="button"
-      onClick={() => useUi.getState().openDialog('settings')}
+      onClick={() => useUi.getState().openSettings('ai')}
       className="w-full rounded-2xl border border-line bg-surface p-3.5 text-left shadow-card transition-colors hover:border-line-strong"
     >
       <p className="flex items-center gap-2 text-sm font-medium">
-        <span className="size-2 rounded-full bg-emerald-500" aria-hidden /> AI assist on
+        <span className={cn('size-2 rounded-full', problem ? 'bg-rose-500' : 'bg-emerald-500')} aria-hidden />
+        {claude ? 'Claude' : 'Demo AI'} is on
       </p>
       <p className="mt-1 text-xs text-muted">
-        Reads {selected} of {total} chats · <span className="text-accent-ink">Manage</span>
+        {problem ? 'Needs attention' : `Reads ${Math.min(selected, total)} of ${total} chats`} ·{' '}
+        <span className="text-accent-ink">Manage</span>
       </p>
     </button>
   )

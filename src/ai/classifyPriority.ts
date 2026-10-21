@@ -1,7 +1,9 @@
 import { assertAiCanRead } from './access'
 import { simulateLatency } from './latency'
+import { generate, llmConfigured } from './llm'
 import { cannedBasePriority, cannedPriority } from './mock/canned'
 import { heuristicPriority } from './mock/heuristics'
+import { buildPriorityPrompt } from './prompts'
 import type { AiThread, PriorityResult } from './types'
 
 /**
@@ -11,9 +13,11 @@ import type { AiThread, PriorityResult } from './types'
 export async function classifyPriority(thread: AiThread): Promise<PriorityResult> {
   assertAiCanRead(thread.id)
 
-  // TODO(LLM): replace the mock below with a real model call:
-  //   const raw = await complete(buildPriorityPrompt(thread, new Date()))
-  //   return parseJson<PriorityResult>(raw)
+  if (llmConfigured()) {
+    const result = await generate(buildPriorityPrompt(thread, new Date()))
+    return { ...result, reason: result.reason.trim() }
+  }
+
   await simulateLatency('classify')
   const now = Date.now()
   return cannedPriority(thread, now) ?? heuristicPriority(thread, now, cannedBasePriority(thread.id))

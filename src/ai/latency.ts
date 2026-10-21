@@ -1,4 +1,4 @@
-/** Fake "model is thinking" delays for the canned results, so loading states are exercised. */
+/** Fake "model is thinking" delays for the demo AI, so its results feel like a model's. */
 const RANGES = {
   classify: [350, 1100],
   summarize: [700, 1400],

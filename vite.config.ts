@@ -11,6 +11,9 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   build: {
+    // matrix-js-sdk (~900 kB) and the Claude SDK are split out and only downloaded once Matrix is
+    // connected or a Claude key is set; the app itself stays well under this.
+    chunkSizeWarningLimit: 1000,
     rolldownOptions: {
       output: {
         // Large libraries that rarely change get their own long-cacheable chunks.

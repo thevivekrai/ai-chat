@@ -3,11 +3,12 @@
  * these, so behaviour (auto-advance, undo toasts, consent clean-up) is identical everywhere.
  */
 import type { ExtractedTask } from '@/ai'
+import { api, type ConnectorId, type MatrixLogin } from '@/data/api'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
 import { useInbox } from './inbox'
-import { useSettings } from './settings'
+import { usesClaude, useSettings, type ClaudeSettings } from './settings'
 import { toast } from './toasts'
 import { useUi } from './ui'
 
@@ -118,11 +119,14 @@ export function turnOnAi(options: { threadIds?: string[]; quiet?: boolean } = {}
   settings.setAiEnabled(true)
   if (options.quiet) return
   const count = useSettings.getState().aiThreadIds.length
+  const where = usesClaude(useSettings.getState())
+    ? 'They are sent to Claude when an AI feature runs.'
+    : 'The built-in demo AI runs on this device.'
   toast({
     title: 'AI is on',
-    description: `It can read ${count} of ${allIds.length} chats. Nothing leaves this device in the prototype.`,
+    description: `It can read ${count} of ${allIds.length} chats. ${where}`,
     group: 'ai',
-    action: { label: 'Choose chats', run: () => useUi.getState().openDialog('settings') },
+    action: { label: 'Choose chats', run: () => useUi.getState().openSettings('ai') },
   })
 }
 
@@ -142,6 +146,77 @@ export function setThreadAiAccess(threadId: string, allowed: boolean) {
     settings.setThreadsAllowed([threadId], false)
     useAi.getState().forgetThread(threadId)
   }
+}
+
+/* ── Accounts ────────────────────────────────────────────────────────────── */
+
+const ACCOUNT_NAMES: Record<ConnectorId, string> = { telegram: 'Telegram bot', matrix: 'Matrix' }
+
+function offerToHideDemo(name: string) {
+  const demoShown = api.connections.get().demo
+  toast({
+    title: `${name} connected`,
+    description: demoShown ? 'Its chats appear as they sync. The demo chats are still shown too.' : 'Its chats appear as they sync.',
+    group: 'accounts',
+    action: demoShown ? { label: 'Hide demo', run: () => void setDemoShown(false) } : undefined,
+  })
+}
+
+export async function connectTelegram(token: string, apiBase?: string) {
+  await api.connections.connectTelegram({ token, apiBase })
+  offerToHideDemo(ACCOUNT_NAMES.telegram)
+}
+
+export async function connectMatrix(login: MatrixLogin) {
+  await api.connections.connectMatrix(login)
+  offerToHideDemo(ACCOUNT_NAMES.matrix)
+}
+
+export async function disconnectAccount(id: ConnectorId) {
+  await api.connections.disconnect(id)
+  toast({ title: `${ACCOUNT_NAMES[id]} disconnected`, description: 'Its chats were removed from this device.', group: 'accounts' })
+}
+
+export async function applyConnectorFix(id: ConnectorId, fixId: string) {
+  await api.connections.applyFix(id, fixId)
+}
+
+export async function setDemoShown(shown: boolean) {
+  await api.connections.setDemoEnabled(shown)
+}
+
+/* ── Claude ──────────────────────────────────────────────────────────────── */
+
+/** Saves the key or model choice. Results from another engine or model are recomputed. */
+export function updateClaude(patch: Partial<ClaudeSettings>) {
+  const before = useSettings.getState().claude
+  useSettings.getState().setClaude(patch)
+  const after = useSettings.getState().claude
+  const changed =
+    before.apiKey.trim() !== after.apiKey.trim() || before.model !== after.model || before.triageModel !== after.triageModel
+  if (changed) useAi.getState().forgetAll()
+}
+
+/** After a setup problem (say, a rejected key), resumes the automatic AI calls. */
+export function retryAi() {
+  useAi.getState().clearProblem()
+  const threadId = useUi.getState().selectedThreadId
+  if (!threadId) return
+  useAi.getState().ensureSummary(threadId)
+  useAi.getState().ensureTasks(threadId)
+}
+
+/** Tells the user once when Claude can't run at all, instead of failing quietly per chat. */
+export function watchAiProblems() {
+  return useAi.subscribe((state, prev) => {
+    if (!state.problem || state.problem.message === prev.problem?.message) return
+    toast({
+      title: "Claude couldn't run",
+      description: state.problem.message,
+      group: 'ai-problem',
+      action: { label: 'Settings', run: () => useUi.getState().openSettings('ai') },
+    })
+  })
 }
 
 /* ── Tasks ───────────────────────────────────────────────────────────────── */

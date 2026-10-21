@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildAnswerSources } from '@/store/aiInput'
-import { searchMessages } from '@/data/mock/search'
+import { searchMessages } from '@/data/search'
 import { NOW, aiThread, seedState } from '@/test/fixtures'
 import {
   AiAccessError,

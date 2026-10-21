@@ -5,7 +5,7 @@ import { Kbd } from '@/components/ui/Kbd'
 import { Menu, Popover } from '@/components/ui/Popover'
 import { isMac } from '@/lib/media'
 import { useInbox } from '@/store/inbox'
-import { useSettings, type ThemePreference } from '@/store/settings'
+import { usesClaude, useSettings, type ThemePreference } from '@/store/settings'
 import { useUi } from '@/store/ui'
 import { Logo } from './LogoMark'
 
@@ -51,9 +51,10 @@ export function Header() {
 }
 
 function PrivacyBadge() {
-  const { aiEnabled, aiThreadIds } = useSettings(useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds })))
+  const { aiEnabled, aiThreadIds, claude } = useSettings(
+    useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds, claude: usesClaude(s) })),
+  )
   const total = useInbox((s) => Object.keys(s.threads).length)
-  const openDialog = useUi((s) => s.openDialog)
 
   return (
     <Popover
@@ -77,7 +78,8 @@ function PrivacyBadge() {
               <HardDrive className="size-4 text-muted" aria-hidden /> Chats stay on this device
             </p>
             <p className="mt-1 text-muted">
-              Conversations are kept in this browser's local storage. Nothing is uploaded in this prototype.
+              Conversations are kept in this browser. Connected accounts talk to their networks directly from here; there
+              is no Tidings server in between.
             </p>
           </div>
           <div>
@@ -86,14 +88,17 @@ function PrivacyBadge() {
               {aiEnabled ? `AI can read ${aiThreadIds.length} of ${total} chats` : 'AI is off'}
             </p>
             <p className="mt-1 text-muted">
-              AI only reads the chats you select, and only when a feature needs it.
+              AI only reads the chats you select, and only when a feature needs it.{' '}
+              {claude
+                ? 'They are sent to Claude with your API key.'
+                : 'The built-in demo AI runs on this device.'}
             </p>
           </div>
           <Button
             size="sm"
             onClick={() => {
               close()
-              openDialog('settings')
+              useUi.getState().openSettings('ai')
             }}
           >
             Privacy settings

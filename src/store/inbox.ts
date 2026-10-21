@@ -36,6 +36,8 @@ interface InboxState {
   load(): Promise<void>
   applyEvent(event: InboxEvent): void
   sendMessage(threadId: string, body: string): Promise<void>
+  /** Sends a failed message again. */
+  retryMessage(threadId: string, messageId: string): Promise<void>
   markRead(threadId: string): void
   /** Updates done/snoozed state and returns the previous state, for undo. */
   setThreadState(threadId: string, patch: ThreadStatePatch): Promise<ThreadStatePatch>
@@ -119,6 +121,16 @@ export const useInbox = create<InboxState>()((set, get) => {
         case 'thread.updated':
           patchThread(event.thread)
           break
+        case 'contact.updated':
+          set((s) => ({ contacts: { ...s.contacts, [event.contact.id]: event.contact } }))
+          break
+        case 'scheduled.updated':
+          set((s) => ({
+            scheduled: s.scheduled.some((x) => x.id === event.scheduled.id)
+              ? s.scheduled.map((x) => (x.id === event.scheduled.id ? event.scheduled : x))
+              : [...s.scheduled, event.scheduled],
+          }))
+          break
         case 'scheduled.removed':
           set((s) => ({ scheduled: s.scheduled.filter((x) => x.id !== event.scheduledId) }))
           break
@@ -134,10 +146,19 @@ export const useInbox = create<InboxState>()((set, get) => {
       putMessage({ id: tempId, threadId, senderId: ME_ID, body, sentAt: new Date().toISOString(), status: 'sending' })
       try {
         putMessage(await api.sendMessage(threadId, body), tempId)
-      } catch {
+      } catch (error) {
         const failed = get().messages[threadId]?.find((m) => m.id === tempId)
-        if (failed) putMessage({ ...failed, status: 'failed' })
+        if (failed) {
+          putMessage({ ...failed, status: 'failed', error: error instanceof Error ? error.message : 'Not sent' })
+        }
       }
+    },
+
+    async retryMessage(threadId, messageId) {
+      const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
+      if (!failed) return
+      set((s) => ({ messages: { ...s.messages, [threadId]: s.messages[threadId].filter((m) => m.id !== messageId) } }))
+      await get().sendMessage(threadId, failed.body)
     },
 
     markRead(threadId) {
@@ -167,7 +188,11 @@ export const useInbox = create<InboxState>()((set, get) => {
 
     async sendScheduledNow(scheduledId) {
       set((s) => ({ scheduled: s.scheduled.filter((x) => x.id !== scheduledId) }))
-      putMessage(await api.sendScheduledNow(scheduledId))
+      try {
+        putMessage(await api.sendScheduledNow(scheduledId))
+      } catch {
+        // The API puts the message back with the reason it wasn't sent (a scheduled.updated event).
+      }
     },
 
     async addTask(input) {
@@ -197,8 +222,6 @@ export const useInbox = create<InboxState>()((set, get) => {
   }
 })
 
-/** Whether the backend offers prototype-only controls (reset, simulate incoming). */
-export const hasDemoControls = !!api.demo
 
 /** Latest message whose content is settled (not still sending): what AI results are keyed on. */
 export function settledLastMessageId(messages: Message[] | undefined): string | null {

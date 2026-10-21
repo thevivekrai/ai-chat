@@ -13,6 +13,7 @@ export const NETWORKS: Record<NetworkId, NetworkMeta> = {
   instagram: { id: 'instagram', name: 'Instagram', dot: 'bg-net-instagram' },
   slack: { id: 'slack', name: 'Slack', dot: 'bg-net-slack' },
   sms: { id: 'sms', name: 'SMS', dot: 'bg-net-sms' },
+  matrix: { id: 'matrix', name: 'Matrix', dot: 'bg-net-matrix' },
 }
 
-export const NETWORK_ORDER: NetworkId[] = ['whatsapp', 'telegram', 'instagram', 'slack', 'sms']
+export const NETWORK_ORDER: NetworkId[] = ['whatsapp', 'telegram', 'instagram', 'slack', 'sms', 'matrix']

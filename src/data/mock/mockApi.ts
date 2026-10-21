@@ -4,7 +4,7 @@ import { ME_ID } from '../types'
 import { toMs } from '@/lib/time'
 import { loadDb, saveDb, seedDb, type MockDb } from './db'
 import { INCOMING_POOL } from './incoming'
-import { searchMessages } from './search'
+import { searchMessages } from '../search'
 
 const IS_TEST = import.meta.env.MODE === 'test'
 
@@ -16,8 +16,11 @@ const newId = (prefix: string) =>
 
 const clone = <T>(value: T): T => structuredClone(value)
 
-/** In-browser implementation of InboxApi backed by localStorage. */
-export function createMockApi(): InboxApi {
+/** The demo inbox's backend: the inbox API minus account management, with its demo controls. */
+export type DemoApi = Omit<InboxApi, 'connections' | 'demo'> & { demo: NonNullable<InboxApi['demo']> }
+
+/** In-browser implementation of the inbox API backed by localStorage, seeded with demo chats. */
+export function createMockApi(): DemoApi {
   let db: MockDb = loadDb()
   const listeners = new Set<(event: InboxEvent) => void>()
   let scheduler: ReturnType<typeof setInterval> | null = null

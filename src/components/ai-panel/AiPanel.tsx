@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { CalendarDays, Check, CornerDownRight, Lock, Plus, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ExtractedTask } from '@/ai'
+import { AiFailed } from '@/components/ui/AiFailed'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
@@ -16,7 +17,7 @@ import { useAi } from '@/store/ai'
 import { useClock } from '@/store/clock'
 import { settledLastMessageId, useInbox } from '@/store/inbox'
 import { useThreadViews } from '@/store/selectors'
-import { canAiReadThread, useSettings } from '@/store/settings'
+import { canAiReadThread, usesClaude, useSettings } from '@/store/settings'
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -32,6 +33,7 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
 
 export function AiPanel({ threadId, onClose, className }: { threadId: string; onClose(): void; className?: string }) {
   const allowed = useSettings((s) => canAiReadThread(s, threadId))
+  const claude = useSettings(usesClaude)
   const { thread, contacts } = useInbox(useShallow((s) => ({ thread: s.threads[threadId], contacts: s.contacts })))
   if (!thread) return null
   const people = thread.participantIds.map((id) => contacts[id]).filter(Boolean)
@@ -59,7 +61,9 @@ export function AiPanel({ threadId, onClose, className }: { threadId: string; on
           </div>
           <p className="mt-1.5 pl-7 text-xs leading-relaxed text-muted">
             {allowed
-              ? 'Only this chat is read, and results stay on this device.'
+              ? claude
+                ? 'This chat is sent to Claude when a feature needs it. Results stay on this device.'
+                : 'Only this chat is read, and results stay on this device.'
               : 'Turn on to get a priority, summary, tasks and drafts for this chat.'}
           </p>
         </div>
@@ -112,8 +116,11 @@ function PrioritySection({ threadId }: { threadId: string }) {
 
   return (
     <Section title="Priority">
+      {entry?.status === 'error' && (
+        <AiFailed message={entry.error} onRetry={() => useAi.getState().ensurePriority(threadId)} className="mb-2" />
+      )}
       {!result ? (
-        <SkeletonLines lines={2} />
+        entry?.status !== 'error' && <SkeletonLines lines={2} />
       ) : (
         <div className={cn('rounded-xl border border-line p-3', entry.status === 'loading' && 'opacity-60')}>
           <div className="flex flex-wrap items-center gap-2">
@@ -138,8 +145,11 @@ function SummarySection({ threadId }: { threadId: string }) {
   const summary = entry?.result
   return (
     <Section title="Summary">
+      {entry?.status === 'error' && (
+        <AiFailed message={entry.error} onRetry={() => useAi.getState().ensureSummary(threadId)} className="mb-2" />
+      )}
       {!summary ? (
-        <SkeletonLines lines={3} />
+        entry?.status !== 'error' && <SkeletonLines lines={3} />
       ) : (
         <div className={cn('space-y-2', entry.status === 'loading' && 'opacity-60')}>
           <p className="text-[13px] leading-relaxed">{summary.oneLine}</p>
@@ -177,8 +187,11 @@ function TasksSection({ threadId }: { threadId: string }) {
 
   return (
     <Section title="Detected tasks" aside={tasks && <span className="text-xs text-faint">{tasks.length}</span>}>
+      {entry?.status === 'error' && (
+        <AiFailed message={entry.error} onRetry={() => useAi.getState().ensureTasks(threadId)} className="mb-2" />
+      )}
       {!tasks ? (
-        <SkeletonLines lines={2} />
+        entry?.status !== 'error' && <SkeletonLines lines={2} />
       ) : tasks.length === 0 ? (
         <p className="text-[13px] text-muted">No tasks or dates in this chat.</p>
       ) : (

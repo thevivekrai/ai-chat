@@ -76,9 +76,10 @@ export function ScheduledView() {
                       </span>
                     </button>
                     <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-muted">{s.body}</p>
+                    {s.error && <p className="mt-2 text-xs leading-relaxed text-rose-600 dark:text-rose-400">{s.error}</p>}
                     <div className="mt-2.5 flex gap-1.5">
                       <Button size="sm" onClick={() => void useInbox.getState().sendScheduledNow(s.id)}>
-                        Send now
+                        {s.error ? 'Send now anyway' : 'Send now'}
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => void useInbox.getState().cancelScheduled(s.id)}>
                         Cancel

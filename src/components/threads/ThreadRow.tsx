@@ -37,7 +37,7 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
       (priority ? (
         <PriorityTag key="p" priority={priority.priority} reason={priority.reason} />
       ) : stalePriority ? (
-        <span key="p" className="animate-pulse opacity-60">
+        <span key="p" className={cn(view.priorityLoading && 'animate-pulse opacity-60')}>
           <PriorityTag priority={stalePriority.priority} />
         </span>
       ) : (
