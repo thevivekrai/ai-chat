@@ -9,7 +9,7 @@ import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
 import { useInbox } from './inbox'
 import { usesClaude, useSettings, type ClaudeSettings } from './settings'
-import { toast } from './toasts'
+import { toast, useToasts } from './toasts'
 import { useUi } from './ui'
 
 const threadTitle = (threadId: string) => useInbox.getState().threads[threadId]?.title ?? 'Chat'
@@ -182,6 +182,8 @@ export async function applyConnectorFix(id: ConnectorId, fixId: string) {
 }
 
 export async function setDemoShown(shown: boolean) {
+  // A "connected" toast offering to hide the demo would now be out of date.
+  useToasts.getState().dismissGroup('accounts')
   await api.connections.setDemoEnabled(shown)
 }
 

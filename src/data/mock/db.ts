@@ -3,9 +3,8 @@ import type { InboxSnapshot } from '../types'
 import { buildSeed, SEED_VERSION } from './seed'
 
 /**
- * The mock "server": one JSON document in localStorage. This is what makes "Chats stored on this
- * device" literally true for the prototype, and why refreshing keeps sent messages, done/snoozed
- * state and tasks.
+ * The demo inbox's "server": one JSON document in localStorage, so refreshing keeps sent
+ * messages and done/snoozed state in the demo chats.
  */
 const STORAGE_KEY = 'tidings.mockdb'
 

@@ -10,9 +10,9 @@
 import type { ExtractedTask, PriorityResult, SearchAnswer, ThreadSummary, Tone } from './types'
 
 export const CLAUDE_MODELS = [
-  { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', note: 'Best quality' },
+  { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', note: 'Most capable' },
   { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', note: 'Balanced' },
-  { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest, lowest cost' },
+  { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest' },
 ] as const
 
 export type ClaudeModel = (typeof CLAUDE_MODELS)[number]['id']

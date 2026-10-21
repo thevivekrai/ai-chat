@@ -1,4 +1,4 @@
-import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk'
+import type { ICreateClientOpts, MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk'
 import type { Attachment, Contact, Message, NetworkId, Thread } from '../../types'
 import { ME_ID } from '../../types'
 import { Emitter, type Connector, type ConnectorEvent, type ConnectorSnapshot, type ConnectorStatus } from '../types'
@@ -50,6 +50,23 @@ const SHOWN_EVENT_TYPES = new Set(['m.room.message', 'm.sticker', 'm.room.encryp
 
 const loadSdk = (): Promise<Sdk> => import('matrix-js-sdk')
 
+type MatrixLogger = NonNullable<ICreateClientOpts['logger']>
+
+/** matrix-js-sdk narrates every sync detail; keep only its errors, and only while `live()`. */
+function quietLogger(live: () => boolean = () => true): MatrixLogger {
+  const logger: MatrixLogger = {
+    trace() {},
+    debug() {},
+    info() {},
+    warn() {},
+    error: (...msg: unknown[]) => {
+      if (live()) console.error('[matrix]', ...msg)
+    },
+    getChild: () => logger,
+  }
+  return logger
+}
+
 /** Signs in and returns what's needed to reconnect later. Throws an Error with a readable message. */
 export async function signInToMatrix(login: MatrixLogin): Promise<MatrixConfig> {
   const sdk = await loadSdk()
@@ -57,10 +74,10 @@ export async function signInToMatrix(login: MatrixLogin): Promise<MatrixConfig> 
   try {
     if (login.accessToken?.trim()) {
       const accessToken = login.accessToken.trim()
-      const who = await sdk.createClient({ baseUrl, accessToken }).whoami()
+      const who = await sdk.createClient({ baseUrl, accessToken, logger: quietLogger() }).whoami()
       return { baseUrl, userId: who.user_id, accessToken, deviceId: who.device_id, ownsSession: false }
     }
-    const response = await sdk.createClient({ baseUrl }).loginRequest({
+    const response = await sdk.createClient({ baseUrl, logger: quietLogger() }).loginRequest({
       type: 'm.login.password',
       identifier: { type: 'm.id.user', user: login.user?.trim() ?? '' },
       password: login.password ?? '',
@@ -120,6 +137,7 @@ export class MatrixConnector implements Connector {
   /** Unread counts as last reported, to notice changes after each sync. */
   private readonly unread = new Map<string, number>()
   private readonly knownContacts = new Set<string>()
+  private leaving = false
 
   constructor(config: MatrixConfig) {
     this.config = config
@@ -223,8 +241,11 @@ export class MatrixConnector implements Connector {
       accessToken: this.config.accessToken,
       userId: this.config.userId,
       deviceId: this.config.deviceId,
+      // Requests cut off by stopping or leaving the page fail noisily; that isn't worth reporting.
+      logger: quietLogger(() => this.client === client && !this.leaving),
     })
     this.client = client
+    if (typeof window !== 'undefined') window.addEventListener('pagehide', () => (this.leaving = true), { once: true })
 
     client.on(sdk.ClientEvent.Sync, (state, _prev, data) => {
       if (state === sdk.SyncState.Prepared) {

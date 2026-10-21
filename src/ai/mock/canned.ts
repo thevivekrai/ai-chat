@@ -1,8 +1,9 @@
 /**
  * Hand-written "model output" for the demo conversations in src/data/mock/seed.ts, so the
- * prototype shows what good results look like. Each entry is only used while the thread still ends
- * with the message it was written for (`anchor`); after that the heuristics take over, like a real
- * model re-reading a changed thread would. Delete this file when a real model is connected.
+ * built-in demo AI shows what good results look like without an API key. Each entry is only used
+ * while the thread still ends with the message it was written for (`anchor`); after that the
+ * heuristics take over, like a real model re-reading a changed thread would. With a Claude key
+ * set, none of this is used.
  *
  * Day names are never hard-coded: `c.day('sharma-7')` reads the weekday out of that message, so
  * the text stays correct whatever day the demo data was generated on.

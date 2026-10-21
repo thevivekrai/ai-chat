@@ -13,6 +13,7 @@ interface ToastState {
   toasts: Toast[]
   push(toast: Omit<Toast, 'id'>): string
   dismiss(id: string): void
+  dismissGroup(group: string): void
 }
 
 let counter = 0
@@ -29,6 +30,7 @@ export const useToasts = create<ToastState>((set) => ({
     return id
   },
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  dismissGroup: (group) => set((s) => ({ toasts: s.toasts.filter((t) => t.group !== group) })),
 }))
 
 export const toast = (t: Omit<Toast, 'id'>) => useToasts.getState().push(t)

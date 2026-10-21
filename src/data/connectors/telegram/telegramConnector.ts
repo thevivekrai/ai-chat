@@ -242,6 +242,8 @@ export class TelegramConnector implements Connector {
       this.events.emit({ type: 'reloaded' })
     }
     this.persist()
+    // The token works; a long poll can take a while to return when nobody is writing.
+    this.setStatus({ state: 'online', account: this.account() })
     try {
       await this.poll(signal)
     } finally {

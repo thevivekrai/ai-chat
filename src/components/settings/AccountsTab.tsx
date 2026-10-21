@@ -103,7 +103,7 @@ function TelegramCard({ status }: { status: ConnectorStatus | null }) {
               />
             </Field>
           ) : (
-            <button type="button" onClick={() => setAdvanced(true)} className="text-xs text-muted hover:text-fg">
+            <button type="button" onClick={() => setAdvanced(true)} className="block text-xs text-muted hover:text-fg">
               Use a different Bot API server…
             </button>
           )}

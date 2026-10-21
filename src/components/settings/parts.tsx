@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from 'react'
+import { cloneElement, useId, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import type { ConnectorStatus } from '@/data/api'
 import { cn } from '@/lib/cn'
 
@@ -24,13 +24,23 @@ export function CardHeader({ icon, title, aside, children }: { icon: ReactNode; 
   )
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
+type FieldControl = ReactElement<{ id?: string; 'aria-describedby'?: string }>
+
+/** A labelled input; the hint is announced as its description. */
+export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: FieldControl }) {
+  const id = useId()
   return (
-    <label className="block space-y-1.5">
-      <span className="text-xs font-medium text-muted">{label}</span>
-      {children}
-      {hint && <span className="block text-[11px] leading-relaxed text-faint">{hint}</span>}
-    </label>
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-xs font-medium text-muted">
+        {label}
+      </label>
+      {cloneElement(children, { id, 'aria-describedby': hint ? `${id}-hint` : undefined })}
+      {hint && (
+        <p id={`${id}-hint`} className="text-[11px] leading-relaxed text-faint">
+          {hint}
+        </p>
+      )}
+    </div>
   )
 }
 

@@ -56,7 +56,7 @@ function ClaudeCard() {
       <Select value={claude[field]} onChange={(e) => updateClaude({ [field]: e.target.value as ClaudeModel })}>
         {CLAUDE_MODELS.map((m) => (
           <option key={m.id} value={m.id}>
-            {m.name} · {m.note}
+            {m.name.replace(/^Claude /, '')} · {m.note.toLowerCase()}
           </option>
         ))}
       </Select>

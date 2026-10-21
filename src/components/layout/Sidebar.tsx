@@ -35,6 +35,13 @@ export function Sidebar({ className }: { className?: string }) {
   const { tasks, scheduled } = useInbox(useShallow((s) => ({ tasks: s.tasks, scheduled: s.scheduled })))
   const views = useThreadViews()
   const counts = useMemo(() => countViews(views, { networks, tasks, scheduled }), [views, networks, tasks, scheduled])
+  // Only networks that have chats (or are filtered on) get a chip.
+  const shownNetworks = useInbox(
+    useShallow((s) => {
+      const present = new Set(Object.values(s.threads).map((t) => t.network))
+      return NETWORK_ORDER.filter((n) => present.has(n) || networks.includes(n))
+    }),
+  )
   // The sidebar can be mounted twice (column + drawer); keep each one's sliding pill separate.
   const layoutGroup = useId()
 
@@ -81,40 +88,42 @@ export function Sidebar({ className }: { className?: string }) {
         </ul>
       </LayoutGroup>
 
-      <section aria-labelledby="networks-heading">
-        <div className="flex items-center justify-between px-3">
-          <h2 id="networks-heading" className="text-[11px] font-semibold tracking-wider text-faint uppercase">
-            Networks
-          </h2>
-          {networks.length > 0 && (
-            <button type="button" onClick={clearNetworks} className="text-xs text-muted hover:text-fg">
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="mt-2.5 flex flex-wrap gap-1.5 px-2">
-          {NETWORK_ORDER.map((id) => {
-            const active = networks.includes(id)
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => toggleNetwork(id)}
-                className={cn(
-                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  active
-                    ? 'border-accent/30 bg-accent-soft text-accent-ink'
-                    : 'border-line bg-surface text-muted hover:border-line-strong hover:text-fg',
-                )}
-              >
-                <span className={cn('size-2 rounded-full', NETWORKS[id].dot)} aria-hidden />
-                {NETWORKS[id].name}
+      {shownNetworks.length > 0 && (
+        <section aria-labelledby="networks-heading">
+          <div className="flex items-center justify-between px-3">
+            <h2 id="networks-heading" className="text-[11px] font-semibold tracking-wider text-faint uppercase">
+              Networks
+            </h2>
+            {networks.length > 0 && (
+              <button type="button" onClick={clearNetworks} className="text-xs text-muted hover:text-fg">
+                Clear
               </button>
-            )
-          })}
-        </div>
-      </section>
+            )}
+          </div>
+          <div className="mt-2.5 flex flex-wrap gap-1.5 px-2">
+            {shownNetworks.map((id) => {
+              const active = networks.includes(id)
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => toggleNetwork(id)}
+                  className={cn(
+                    'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    active
+                      ? 'border-accent/30 bg-accent-soft text-accent-ink'
+                      : 'border-line bg-surface text-muted hover:border-line-strong hover:text-fg',
+                  )}
+                >
+                  <span className={cn('size-2 rounded-full', NETWORKS[id].dot)} aria-hidden />
+                  {NETWORKS[id].name}
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="mt-auto space-y-2 px-1">
         <AccountsStatus />

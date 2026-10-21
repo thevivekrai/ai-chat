@@ -1,6 +1,6 @@
 import { DAY } from '@/lib/time'
 
-/** Working name for the prototype. Change it here. */
+/** Working name for the app. Change it here. */
 export const APP_NAME = 'Tidings'
 
 /** Threads with at least this many messages get an automatic one-line summary on top. */
