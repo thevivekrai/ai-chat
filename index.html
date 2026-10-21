@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="An AI-first unified inbox that tells you who needs a reply and drafts it for you." />
+    <meta name="theme-color" content="#f3f3f5" />
+    <title>Tidings — AI inbox prototype</title>
+    <script>
+      // Apply the saved theme before first paint so there is no light/dark flash.
+      ;(function () {
+        try {
+          var raw = localStorage.getItem('tidings.settings')
+          var theme = raw ? (JSON.parse(raw).state || {}).theme : 'system'
+          var dark =
+            theme === 'dark' ||
+            ((!theme || theme === 'system') && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

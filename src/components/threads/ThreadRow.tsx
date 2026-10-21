@@ -1,0 +1,102 @@
+import { memo, useEffect, useRef } from 'react'
+import type { Contact } from '@/data/types'
+import { Avatar } from '@/components/ui/Avatar'
+import { PriorityTag, PriorityTagSkeleton, ScheduledBadge, SnoozedBadge, UnansweredBadge } from '@/components/ui/Tags'
+import { UNANSWERED_BADGE_AFTER } from '@/config'
+import { cn } from '@/lib/cn'
+import { messagePreview } from '@/lib/format'
+import { formatAgo, formatDuration, formatWhen } from '@/lib/time'
+import type { ThreadView } from '@/store/selectors'
+import { useUi } from '@/store/ui'
+
+interface ThreadRowProps {
+  view: ThreadView
+  selected: boolean
+  now: number
+  contacts: Record<string, Contact>
+  showWaitingOnThem?: boolean
+}
+
+export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts, showWaitingOnThem }: ThreadRowProps) {
+  const draft = useUi((s) => s.composer[view.id])
+  const ref = useRef<HTMLButtonElement>(null)
+
+  // Keep the selected row visible while moving with J/K.
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+  const { thread } = view
+  const isGroup = thread.kind === 'group'
+  const unread = thread.unreadCount
+  const waitingMs = view.waitingSince ? now - view.waitingSince : 0
+
+  const { priority, stalePriority } = view
+  const tags = [
+    view.aiAllowed &&
+      (priority ? (
+        <PriorityTag key="p" priority={priority.priority} reason={priority.reason} />
+      ) : stalePriority ? (
+        <span key="p" className="animate-pulse opacity-60">
+          <PriorityTag priority={stalePriority.priority} />
+        </span>
+      ) : (
+        view.priorityLoading && <PriorityTagSkeleton key="p" />
+      )),
+    view.needsReply && waitingMs >= UNANSWERED_BADGE_AFTER && <UnansweredBadge key="u" waitingMs={waitingMs} />,
+    showWaitingOnThem && view.waitingOnThem && (
+      <span key="w" className="text-[11px] text-muted">
+        You asked {formatDuration(now - view.lastAt)} ago
+      </span>
+    ),
+    view.scheduledCount > 0 && <ScheduledBadge key="s" label="Reply scheduled" />,
+    view.snoozed && thread.snoozedUntil && (
+      <SnoozedBadge key="z" label={`Snoozed until ${formatWhen(thread.snoozedUntil, now)}`} />
+    ),
+  ].filter(Boolean)
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      data-thread-row={view.id}
+      onClick={() => useUi.getState().selectThread(view.id)}
+      aria-current={selected ? 'true' : undefined}
+      className={cn(
+        'group flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        selected ? 'bg-accent-soft' : 'hover:bg-surface-2',
+      )}
+    >
+      <Avatar name={thread.title} seed={thread.id} group={isGroup} network={thread.network} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className={cn('truncate text-sm text-fg', unread ? 'font-semibold' : 'font-medium')}>
+            {thread.title}
+          </span>
+          <span className="ml-auto shrink-0 text-xs text-faint tabular-nums">
+            {view.lastMessage ? formatAgo(view.lastMessage.sentAt, now) : ''}
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-2">
+          <p className={cn('min-w-0 flex-1 truncate text-[13px]', unread ? 'text-fg' : 'text-muted')}>
+            {draft ? (
+              <>
+                <span className="font-medium text-accent-ink">Draft:</span> {draft}
+              </>
+            ) : (
+              messagePreview(view.lastMessage, contacts, isGroup)
+            )}
+          </p>
+          {unread > 0 && (
+            <span
+              aria-label={`${unread} unread`}
+              className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg tabular-nums"
+            >
+              {unread}
+            </span>
+          )}
+        </div>
+        {tags.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1.5">{tags}</div>}
+      </div>
+    </button>
+  )
+})
