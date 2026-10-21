@@ -37,11 +37,11 @@ function ToastItem({ toast }: { toast: Toast }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.15 } }}
       transition={{ type: 'spring', stiffness: 500, damping: 38 }}
-      className="pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-xl bg-fg py-3 pr-3 pl-4 text-surface shadow-pop"
+      className="glass-thick glass-edge pointer-events-auto relative flex w-full max-w-sm items-center gap-3 rounded-2xl py-3 pr-3 pl-4 text-fg shadow-pop"
     >
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{toast.title}</p>
-        {toast.description && <p className="mt-0.5 line-clamp-2 text-[13px] opacity-70">{toast.description}</p>}
+        {toast.description && <p className="mt-0.5 line-clamp-2 text-[13px] text-muted">{toast.description}</p>}
       </div>
       {toast.action && (
         <button
@@ -50,7 +50,7 @@ function ToastItem({ toast }: { toast: Toast }) {
             toast.action?.run()
             dismiss()
           }}
-          className="shrink-0 rounded-md px-2 py-1 text-sm font-semibold text-[#b9baff] hover:bg-white/10 dark:text-[#4343b6] dark:hover:bg-black/5"
+          className="shrink-0 rounded-lg px-2 py-1 text-sm font-semibold text-accent-ink hover:bg-accent-soft"
         >
           {toast.action.label}
         </button>
@@ -59,7 +59,7 @@ function ToastItem({ toast }: { toast: Toast }) {
         type="button"
         aria-label="Dismiss"
         onClick={dismiss}
-        className="shrink-0 rounded-md p-1 opacity-60 hover:opacity-100"
+        className="shrink-0 rounded-lg p-1 text-muted hover:text-fg"
       >
         <X className="size-4" />
       </button>

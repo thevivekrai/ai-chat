@@ -30,7 +30,7 @@ export function Header() {
         <button
           type="button"
           onClick={() => openDialog('command')}
-          className="hidden h-9 w-full max-w-md items-center gap-2.5 rounded-xl border border-line bg-surface px-3 text-sm text-faint shadow-xs transition-colors hover:border-line-strong hover:text-muted md:flex"
+          className="glass glass-edge relative hidden h-10 w-full max-w-md items-center gap-2.5 rounded-full px-4 text-sm text-muted shadow-glass transition-colors hover:text-fg md:flex"
         >
           <Search className="size-4" aria-hidden />
           <span className="flex-1 truncate text-left">Search or ask across all chats…</span>
@@ -62,7 +62,7 @@ function PrivacyBadge() {
         <button
           {...props}
           type="button"
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 text-xs font-medium text-muted shadow-xs transition-colors hover:text-fg sm:px-3"
+          className="glass glass-edge relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-muted shadow-glass transition-colors hover:text-fg sm:px-3"
         >
           <ShieldCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
           <span className="hidden sm:inline">Chats stored on this device</span>

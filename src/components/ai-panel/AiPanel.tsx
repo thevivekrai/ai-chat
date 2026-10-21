@@ -37,7 +37,7 @@ export function AiPanel({ threadId, onClose, className }: { threadId: string; on
   const people = thread.participantIds.map((id) => contacts[id]).filter(Boolean)
 
   return (
-    <div className={cn('flex h-full flex-col bg-surface', className)}>
+    <div className={cn('flex h-full flex-col', className)}>
       <div className="flex h-16 shrink-0 items-center gap-2 border-b border-line px-4">
         <Sparkles className="size-4 text-accent-ink" aria-hidden />
         <h2 className="text-sm font-semibold">AI assist</h2>

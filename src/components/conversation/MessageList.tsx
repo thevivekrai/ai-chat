@@ -137,7 +137,7 @@ export function MessageList({ threadId }: { threadId: string }) {
           // Each day is its own section so its sticky label is pushed away by the next one.
           <section key={day.key} aria-label={day.label} className="flex flex-col gap-2">
             <div className="pointer-events-none sticky top-0 z-10 flex justify-center pt-3 pb-1">
-              <span className="rounded-full border border-line bg-surface/90 px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-xs backdrop-blur">
+              <span className="glass-thick rounded-full px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-card">
                 {day.label}
               </span>
             </div>
@@ -207,7 +207,7 @@ function MessageGroup({ messages, fromMe, sender, showSender, highlights, flash 
               title={new Date(m.sentAt).toLocaleString()}
               className={cn(
                 'w-fit max-w-full rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap',
-                fromMe ? 'bg-bubble-out text-white' : 'bg-bubble-in text-fg',
+                fromMe ? 'accent-gloss shadow-bubble-out' : 'bg-bubble-in text-fg shadow-bubble',
                 i === messages.length - 1 && (fromMe ? 'rounded-br-md' : 'rounded-bl-md'),
                 m.status === 'sending' && 'opacity-70',
                 m.status === 'failed' && 'ring-2 ring-rose-500/60',

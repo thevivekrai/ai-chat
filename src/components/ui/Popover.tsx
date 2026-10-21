@@ -61,7 +61,7 @@ function useFloating({ open: controlled, onOpenChange }: Pick<FloatingProps, 'op
 
 const panelPosition = (side: 'top' | 'bottom', align: 'start' | 'end') =>
   cn(
-    'absolute z-50 animate-pop-in rounded-xl border border-line bg-surface shadow-pop',
+    'glass-thick glass-edge absolute z-50 animate-pop-in rounded-2xl shadow-pop',
     side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5',
     align === 'end' ? 'right-0' : 'left-0',
   )
@@ -130,7 +130,7 @@ export function Menu({
                 setOpen(false)
                 item.onSelect()
               }}
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-fg outline-none hover:bg-surface-2 focus-visible:bg-surface-2"
+              className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm text-fg outline-none hover:bg-surface-2 focus-visible:bg-surface-2"
             >
               {item.icon && <item.icon className="size-4 text-muted" aria-hidden />}
               <span className="flex-1">{item.label}</span>

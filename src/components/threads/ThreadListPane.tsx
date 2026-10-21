@@ -78,7 +78,7 @@ export function ThreadListPane({ view }: { view: ListView }) {
           </h1>
           <p className="min-w-0 truncate text-xs text-faint">{copy.subtitle(aiEnabled)}</p>
         </div>
-        <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-surface-2/60 px-2.5 text-sm transition-colors focus-within:border-accent/40 focus-within:bg-surface focus-within:ring-4 focus-within:ring-accent/10">
+        <label className="flex h-9 items-center gap-2 rounded-xl border border-line bg-surface-2/60 px-2.5 text-sm transition-colors focus-within:border-accent/40 focus-within:bg-surface focus-within:ring-4 focus-within:ring-accent/10">
           <Search className="size-4 shrink-0 text-faint" aria-hidden />
           <input
             ref={searchRef}
@@ -119,7 +119,8 @@ export function ThreadListPane({ view }: { view: ListView }) {
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {/* layoutScroll lets the sliding row highlight account for this list's scroll position. */}
+      <motion.div layoutScroll className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {status === 'error' ? (
           <EmptyState
             icon={<CloudOff className="size-6" />}
@@ -172,7 +173,7 @@ export function ThreadListPane({ view }: { view: ListView }) {
             </AnimatePresence>
           </ul>
         )}
-      </div>
+      </motion.div>
     </Panel>
   )
 }
@@ -181,7 +182,7 @@ function AiOffBanner() {
   return (
     <div className="border-b border-line bg-accent-soft/60 px-4 py-3">
       <div className="flex gap-3">
-        <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface text-accent-ink shadow-xs">
+        <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-surface text-accent-ink shadow-card">
           <Sparkles className="size-4" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">

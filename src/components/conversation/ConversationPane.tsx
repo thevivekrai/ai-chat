@@ -80,7 +80,7 @@ function Conversation({ threadId }: { threadId: string }) {
         {!wide && aiSheetOpen && (
           <div className="fixed inset-0 z-40 flex justify-end">
             <motion.div
-              className="absolute inset-0 bg-black/30 backdrop-blur-[1px]"
+              className="absolute inset-0 bg-[rgb(20_22_60/0.18)] backdrop-blur-[3px] dark:bg-black/45"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -92,9 +92,9 @@ function Conversation({ threadId }: { threadId: string }) {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', stiffness: 420, damping: 42 }}
-              className="relative h-full w-full max-w-sm shadow-pop sm:border-l sm:border-line"
+              className="relative h-full w-full max-w-sm shadow-pop sm:overflow-hidden sm:rounded-l-3xl"
             >
-              <AiPanel threadId={threadId} onClose={closeSheet} />
+              <AiPanel threadId={threadId} onClose={closeSheet} className="glass-thick" />
             </motion.aside>
           </div>
         )}

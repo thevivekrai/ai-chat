@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
+import { LayoutGroup, motion } from 'motion/react'
 import { CalendarClock, Hourglass, Inbox, Keyboard, ListTodo, MessagesSquare, Sparkles, type LucideIcon } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
@@ -32,39 +33,51 @@ export function Sidebar({ className }: { className?: string }) {
   const { tasks, scheduled } = useInbox(useShallow((s) => ({ tasks: s.tasks, scheduled: s.scheduled })))
   const views = useThreadViews()
   const counts = useMemo(() => countViews(views, { networks, tasks, scheduled }), [views, networks, tasks, scheduled])
+  // The sidebar can be mounted twice (column + drawer); keep each one's sliding pill separate.
+  const layoutGroup = useId()
 
   return (
     <nav aria-label="Inbox views" className={cn('flex h-full min-h-0 w-full flex-col gap-6 overflow-y-auto py-1', className)}>
-      <ul className="space-y-0.5">
-        {NAV.map(({ id, label, icon: Icon }) => {
-          const active = view === id
-          const count = counts[id]
-          return (
-            <li key={id}>
-              <button
-                type="button"
-                onClick={() => setView(id)}
-                aria-current={active ? 'page' : undefined}
-                className={cn(
-                  'flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  active ? 'bg-surface font-medium text-fg shadow-card' : 'text-muted hover:bg-surface/60 hover:text-fg',
-                )}
-              >
-                <Icon className={cn('size-4', active ? 'text-accent-ink' : 'text-faint')} aria-hidden />
-                <span className="flex-1 text-left">{label}</span>
-                {count > 0 &&
-                  (id === 'needs-reply' ? (
-                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg tabular-nums">
-                      {count}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-faint tabular-nums">{count}</span>
-                  ))}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
+      <LayoutGroup id={layoutGroup}>
+        <ul className="space-y-0.5">
+          {NAV.map(({ id, label, icon: Icon }) => {
+            const active = view === id
+            const count = counts[id]
+            return (
+              <li key={id}>
+                <button
+                  type="button"
+                  onClick={() => setView(id)}
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'relative isolate flex h-9 w-full items-center gap-2.5 rounded-xl px-3 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    active ? 'font-medium text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
+                  )}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="nav-pill"
+                      aria-hidden
+                      className="absolute inset-0 -z-10 rounded-xl bg-pill shadow-pill"
+                      transition={{ type: 'spring', stiffness: 520, damping: 40, mass: 0.9 }}
+                    />
+                  )}
+                  <Icon className={cn('size-4', active ? 'text-accent-ink' : 'text-faint')} aria-hidden />
+                  <span className="flex-1 text-left">{label}</span>
+                  {count > 0 &&
+                    (id === 'needs-reply' ? (
+                      <span className="grid h-5 min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg tabular-nums">
+                        {count}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-faint tabular-nums">{count}</span>
+                    ))}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </LayoutGroup>
 
       <section aria-labelledby="networks-heading">
         <div className="flex items-center justify-between px-3">
@@ -121,7 +134,7 @@ function AiStatusCard() {
 
   if (!aiEnabled) {
     return (
-      <div className="rounded-xl border border-line bg-surface p-3.5 shadow-card">
+      <div className="rounded-2xl border border-line bg-surface p-3.5 shadow-card">
         <p className="flex items-center gap-2 text-sm font-medium">
           <Sparkles className="size-4 text-accent-ink" aria-hidden /> AI assist is off
         </p>
@@ -139,7 +152,7 @@ function AiStatusCard() {
     <button
       type="button"
       onClick={() => useUi.getState().openDialog('settings')}
-      className="w-full rounded-xl border border-line bg-surface p-3.5 text-left shadow-card transition-colors hover:border-line-strong"
+      className="w-full rounded-2xl border border-line bg-surface p-3.5 text-left shadow-card transition-colors hover:border-line-strong"
     >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span className="size-2 rounded-full bg-emerald-500" aria-hidden /> AI assist on

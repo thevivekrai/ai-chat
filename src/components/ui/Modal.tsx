@@ -37,7 +37,7 @@ export function Modal({ open, onClose, label, children, className, placement = '
         if (e.target === e.currentTarget) onClose()
       }}
       className={cn(
-        'w-[calc(100%-1.5rem)] max-w-lg overflow-hidden rounded-2xl border border-line bg-surface p-0 text-fg shadow-pop open:animate-dialog-in',
+        'glass-thick glass-edge w-[calc(100%-1.5rem)] max-w-lg overflow-hidden rounded-3xl border-0 p-0 text-fg shadow-pop open:animate-dialog-in',
         placement === 'top' ? 'mx-auto mt-[9vh] mb-auto max-h-[80dvh]' : 'm-auto max-h-[88dvh]',
         className,
       )}

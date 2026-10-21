@@ -56,7 +56,7 @@ export function Avatar({ name, seed = name, size = 'md', group = false, network,
         <span
           title={NETWORKS[network].name}
           className={cn(
-            'absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-surface',
+            'absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-surface-solid',
             NETWORKS[network].dot,
             DOT_SIZES[size],
           )}

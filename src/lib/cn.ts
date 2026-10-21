@@ -4,7 +4,7 @@ import { extendTailwindMerge } from 'tailwind-merge'
 const merge = extendTailwindMerge({
   extend: {
     theme: {
-      shadow: ['card', 'pop'],
+      shadow: ['card', 'pop', 'glass', 'pill', 'bubble', 'bubble-out', 'accent'],
       animate: ['fade-in', 'pane-in', 'pop-in', 'dialog-in', 'flash', 'shimmer'],
     },
   },

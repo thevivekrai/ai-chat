@@ -7,6 +7,7 @@ import { useUi } from '@/store/ui'
 import { Header } from './Header'
 import { MobileNavDrawer } from './MobileNavDrawer'
 import { Sidebar } from './Sidebar'
+import { Wallpaper } from './Wallpaper'
 
 /**
  * Desktop: sidebar · list · conversation (+ AI panel when wide). Below `lg` the sidebar becomes a
@@ -18,12 +19,13 @@ export function AppShell() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
+      <Wallpaper />
       <div className={cn(threadOpen && 'max-md:hidden')}>
         <Header />
       </div>
       <div className="flex min-h-0 flex-1 gap-3 md:px-3 md:pb-3">
-        <aside className="hidden w-56 shrink-0 lg:flex xl:w-60">
-          <Sidebar className="pl-1" />
+        <aside className="glass glass-edge relative hidden w-56 shrink-0 rounded-3xl px-2 pt-2 pb-3 shadow-glass lg:flex xl:w-60">
+          <Sidebar />
         </aside>
         <main className={cn('flex min-h-0 w-full flex-col md:w-80 md:shrink-0 xl:w-[360px]', threadOpen && 'max-md:hidden')}>
           {view === 'tasks' ? <TasksView /> : view === 'scheduled' ? <ScheduledView /> : <ThreadListPane view={view} />}
