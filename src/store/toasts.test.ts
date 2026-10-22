@@ -8,8 +8,8 @@ describe('toasts', () => {
     const { push } = useToasts.getState()
     push({ title: 'Marked done', description: 'Priya', group: 'queue' })
     push({ title: 'New message from Rohan' })
-    push({ title: 'Marked done', description: 'Maa', group: 'queue' })
-    expect(useToasts.getState().toasts.map((t) => t.description ?? t.title)).toEqual(['New message from Rohan', 'Maa'])
+    push({ title: 'Marked done', description: 'Divya', group: 'queue' })
+    expect(useToasts.getState().toasts.map((t) => t.description ?? t.title)).toEqual(['New message from Rohan', 'Divya'])
   })
 
   it('keeps at most three on screen', () => {

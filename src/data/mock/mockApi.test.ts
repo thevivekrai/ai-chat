@@ -33,10 +33,10 @@ describe('mock api', () => {
 
   it('sends scheduled messages once they are due', async () => {
     const api = await freshApi()
-    const item = await api.scheduleMessage('maa', 'Pakka aa raha hoon!', new Date(Date.now() - 1000).toISOString())
+    const item = await api.scheduleMessage('divya', 'Pakka aa raha hoon!', new Date(Date.now() - 1000).toISOString())
     const snapshot = await api.loadInbox()
     expect(snapshot.scheduled.map((s) => s.id)).not.toContain(item.id)
-    expect(snapshot.messages.some((m) => m.threadId === 'maa' && m.body === 'Pakka aa raha hoon!')).toBe(true)
+    expect(snapshot.messages.some((m) => m.threadId === 'divya' && m.body === 'Pakka aa raha hoon!')).toBe(true)
   })
 
   it('keeps future scheduled messages queued', async () => {

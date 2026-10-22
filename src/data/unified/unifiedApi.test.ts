@@ -143,6 +143,10 @@ describe('unified inbox', () => {
     await api.updateTask(task.id, { done: true })
     expect((await api.loadInbox()).tasks[0].done).toBe(true)
 
+    // A task whose demo chat no longer exists (say, after the demo was regenerated) is hidden.
+    await api.addTask({ title: 'Old lunch', dueAt: null, source: { threadId: 'removed-chat', messageId: 'removed-chat-1' } })
+    expect((await api.loadInbox()).tasks.map((t) => t.title)).toEqual(['Send invoice'])
+
     // Resetting the demo regenerates its chats, so tasks pointing into them go too.
     await api.demo?.reset()
     expect((await api.loadInbox()).tasks).toEqual([])

@@ -152,22 +152,22 @@ const CANNED: Record<string, CannedThread> = {
     },
   },
 
-  maa: {
-    anchor: 'maa-4',
+  divya: {
+    anchor: 'divya-4',
     priority: 'normal',
     expectsReply: true,
-    reason: (c) => `Maa asked about Sunday lunch and has been waiting ${c.waiting()}.`,
-    summary: "Maa wants to know if you're coming for Sunday lunch — she's making rajma chawal and Didi is coming too.",
-    tasks: [{ messageId: 'maa-3', title: 'Sunday lunch at home' }],
+    reason: (c) => `Divya asked about a Sunday movie and has been waiting ${c.waiting()}.`,
+    summary: "Divya is booking tickets for the Sunday 7 PM movie and needs to know if you're in — only 4 seats are left.",
+    tasks: [{ messageId: 'divya-3', title: 'Movie with Divya' }],
     drafts: {
-      short: ['Haan Maa, aa raha hoon! 😊', 'Pakka aa raha hoon Maa ❤️'],
+      short: ['Haan Divya, main aa raha hoon! 🎬', 'Pakka, meri seat book kar de 😄'],
       friendly: [
-        'Haan Maa, bilkul aa raha hoon! Rajma chawal ke liye toh zaroor 😄 Didi se bhi milna ho jayega. Papa ko pranam ❤️',
-        'Aa raha hoon Maa! Sorry late reply kiya, kaam mein phasa tha 🙈 Lunch time tak pahunch jaunga. Rajma chawal 🤤',
+        'Haan yaar, bilkul chalte hain! 🎬 Meri seat book kar de, popcorn meri taraf se 😄',
+        'Sorry late reply kiya, kaam mein phasa tha 🙈 Sunday ka plan pakka hai, meri seat rakh lena!',
       ],
       professional: [
-        "Yes Maa, I'll be there for Sunday lunch. Looking forward to seeing Didi too — please tell Papa I'm coming.",
-        "Hi Maa, sorry for the late reply. I'll definitely come for lunch on Sunday and will be there in time.",
+        "Yes Divya, I'm in for the Sunday 7 PM show. Please go ahead and book my ticket — thanks for arranging it.",
+        "Hi Divya, sorry for the late reply. Sunday evening works for me; please book a seat for me and I'll pay you back.",
       ],
     },
   },
@@ -623,11 +623,11 @@ const ANSWERS: CannedAnswer[] = [
     ],
   },
   {
-    match: /lunch|maa|\bmom\b|sunday/i,
+    match: /movie|film|divya|tickets/i,
     parts: [
       {
-        cite: ['maa-3', 'maa-4'],
-        text: "Maa asked if you're coming for **Sunday lunch** — she's making rajma chawal and Didi is coming. She's still waiting for your answer.",
+        cite: ['divya-3', 'divya-4'],
+        text: "Divya asked if you're coming to the **Sunday 7 PM movie** — she's booking tickets and only **4 seats** are left. She's still waiting for your answer.",
       },
     ],
   },

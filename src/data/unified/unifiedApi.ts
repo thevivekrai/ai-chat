@@ -128,6 +128,11 @@ export function createUnifiedApi(): InboxApi {
     }
     const parts = [...connectors.values()].map(({ connector }) => connector.snapshot())
     const liveThreadIds = new Set(parts.flatMap((p) => p.threads.map((t) => t.id)))
+    const demoThreadIds = new Set(demoSnapshot?.threads.map((t) => t.id))
+    // A regenerated demo can drop chats; tasks that pointed into them would have nowhere to go.
+    const tasks = local.tasks.filter(
+      (t) => !demoSnapshot || !t.source || sourceOf(t.source.threadId) !== 'demo' || demoThreadIds.has(t.source.threadId),
+    )
     return {
       me: {
         id: ME_ID,
@@ -138,7 +143,7 @@ export function createUnifiedApi(): InboxApi {
       threads: [...(demoSnapshot?.threads ?? []), ...parts.flatMap((p) => p.threads.map(withLocalState))],
       messages: [...(demoSnapshot?.messages ?? []), ...parts.flatMap((p) => p.messages)],
       scheduled: [...(demoSnapshot?.scheduled ?? []), ...local.scheduled.filter((s) => liveThreadIds.has(s.threadId))],
-      tasks: local.tasks,
+      tasks,
     }
   }
 
