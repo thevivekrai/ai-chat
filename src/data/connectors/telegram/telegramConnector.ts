@@ -286,7 +286,7 @@ export class TelegramConnector implements Connector {
           this.setStatus({
             state: 'error',
             account: this.account(),
-            detail: "Another app is reading this bot's messages. Stop it, or give Tidings its own bot.",
+            detail: "Another app is reading this bot's messages. Stop it, or give Sytext its own bot.",
           })
           await sleep(15_000, signal)
           continue

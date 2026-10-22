@@ -7,7 +7,7 @@ import type { Contact, Message, Thread } from '../types'
  * tasks, and scheduled sends.
  *
  * Ids are prefixed per connector ("tg:", "mx:") so any id can be routed back to its source.
- * Accounts linked on the Tidings server come in through one more connector (../server), with
+ * Accounts linked on the Sytext server come in through one more connector (../server), with
  * "wa:" and "tga:" ids.
  */
 export type ConnectorId = 'telegram' | 'matrix'

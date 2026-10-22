@@ -201,7 +201,7 @@ export async function unlinkNetwork(network: LinkedNetwork) {
   forgetThreadsHere((id) => id.startsWith(prefix))
   toast({
     title: `${LINKED_NAMES[network]} unlinked`,
-    description: 'Tidings was logged out of it, and its chats were deleted from the server.',
+    description: 'Sytext was logged out of it, and its chats were deleted from the server.',
     group: 'accounts',
   })
 }

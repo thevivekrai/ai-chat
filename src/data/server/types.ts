@@ -1,7 +1,7 @@
 import type { Contact, Message, Thread } from '../types'
 
 /**
- * What the Tidings server and the web app send each other. The server (../../../server) imports
+ * What the Sytext server and the web app send each other. The server (../../../server) imports
  * these too, so both sides agree.
  */
 

@@ -7,7 +7,7 @@ import type { LinkedNetwork, PublicAccount, ServerEvent, ServerInbox } from './t
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
 
 /**
- * Chats from the WhatsApp and Telegram accounts linked on the Tidings server. The server keeps
+ * Chats from the WhatsApp and Telegram accounts linked on the Sytext server. The server keeps
  * them (encrypted at rest) and pushes changes as server-sent events; this keeps a copy for the
  * session, re-reading the whole inbox whenever the stream (re)connects so nothing is missed.
  *

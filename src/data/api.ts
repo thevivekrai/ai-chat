@@ -3,7 +3,7 @@
  *
  * `api` merges every source the user has turned on: the demo inbox (./mock, generated relative to
  * now), a Telegram bot and a Matrix account (./connectors), and the WhatsApp and Telegram accounts
- * linked on the Tidings server once signed in (./server). See ./unified for how they combine.
+ * linked on the Sytext server once signed in (./server). See ./unified for how they combine.
  * Stores and components never import a source directly.
  */
 import type { ConnectorId, ConnectorStatus } from './connectors/types'
@@ -74,7 +74,7 @@ export interface ConnectionsState {
   /** null when not connected. */
   telegram: ConnectorStatus | null
   matrix: ConnectorStatus | null
-  /** While signed in to a Tidings server: the connection to it, and the accounts linked there. */
+  /** While signed in to a Sytext server: the connection to it, and the accounts linked there. */
   server: {
     status: ConnectorStatus
     whatsapp: PublicAccount | null
@@ -96,7 +96,7 @@ export interface ConnectionsApi {
   applyFix(id: ConnectorId, fixId: string): Promise<void>
 
   /**
-   * Signing in to (or out of) the Tidings server: shows (or removes) the chats of the accounts
+   * Signing in to (or out of) the Sytext server: shows (or removes) the chats of the accounts
    * linked there. Signing out also clears what this device kept about them.
    */
   setServerSession(user: { name: string } | null): Promise<void>

@@ -24,7 +24,7 @@ import {
  * The inbox as one API over every source: the demo inbox and any connected accounts.
  *
  * - Reads merge every source; writes are routed by id prefix ("tg:", "mx:", "wa:"/"tga:" for
- *   accounts linked on the Tidings server, none for demo chats).
+ *   accounts linked on the Sytext server, none for demo chats).
  * - Done/snoozed state, tasks and "send later" for real accounts live on this device, since the
  *   networks have no such thing. Scheduled messages go out while the app is open; one that was
  *   due while it was closed waits for the user rather than arriving hours late.
@@ -57,7 +57,7 @@ export function createUnifiedApi(): InboxApi {
   let config = loadConfig()
   let local: LocalState = loadLocal()
   const connectors = new Map<ConnectorId, { connector: Connector; detach: () => void }>()
-  /** Accounts linked on the Tidings server, while signed in to it. */
+  /** Accounts linked on the Sytext server, while signed in to it. */
   let server: { connector: ServerConnector; name: string; detach: () => void } | null = null
   const signedOutListeners = new Set<() => void>()
   /** Latest copy of every connector thread, for events that need the whole thread. */

@@ -13,7 +13,7 @@ import { useSession } from '@/store/session'
 import { Card, CardHeader, ErrorText, Field, Input } from './parts'
 
 /**
- * WhatsApp and Telegram, linked as the user's own accounts on the Tidings server: WhatsApp with a
+ * WhatsApp and Telegram, linked as the user's own accounts on the Sytext server: WhatsApp with a
  * code (or QR) from the phone, the way WhatsApp Web links; Telegram with the phone number, a login
  * code and, if set, the two-step password.
  */
@@ -42,7 +42,7 @@ export function LinkedAccounts() {
       <WhatsAppCard account={server?.whatsapp ?? null} />
       <TelegramCard account={server?.telegram ?? null} enabled={!!features?.telegram} />
       <p className="text-xs leading-relaxed text-muted">
-        Linked chats sync through the Tidings server, which keeps them encrypted at rest, so they're there on every device
+        Linked chats sync through the Sytext server, which keeps them encrypted at rest, so they're there on every device
         you sign in on. Unlinking logs the server out and deletes them.
       </p>
     </>
@@ -100,7 +100,7 @@ function WhatsAppCard({ account }: { account: PublicAccount | null }) {
       >
         {linked
           ? 'Linked as a device of your WhatsApp, like WhatsApp Web. New messages arrive while the server is running.'
-          : 'Link your WhatsApp the way WhatsApp Web links: with a code from your phone. Your chats and replies then go through Tidings.'}
+          : 'Link your WhatsApp the way WhatsApp Web links: with a code from your phone. Your chats and replies then go through Sytext.'}
       </CardHeader>
 
       {linked ? (
@@ -149,7 +149,7 @@ function WhatsAppCard({ account }: { account: PublicAccount | null }) {
           )}
           {account?.status === 'disconnected' && <StoppedNote account={account} network="whatsapp" />}
           <Warning>
-            WhatsApp doesn't support unofficial apps and can restrict numbers that use them. Tidings links the same way
+            WhatsApp doesn't support unofficial apps and can restrict numbers that use them. Sytext links the same way
             WhatsApp Web does, but use a number you're comfortable with.
           </Warning>
           {link.error && <ErrorText>{link.error}</ErrorText>}
@@ -404,7 +404,7 @@ function LinkedFooter({ account, network }: { account: PublicAccount; network: '
         size="sm"
         disabled={unlink.busy}
         onClick={() => {
-          if (window.confirm(`Unlink ${name}? Tidings logs out of it, and its chats are deleted from the server.`)) {
+          if (window.confirm(`Unlink ${name}? Sytext logs out of it, and its chats are deleted from the server.`)) {
             void unlink.run(() => unlinkNetwork(network))
           }
         }}

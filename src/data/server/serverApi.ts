@@ -10,7 +10,7 @@ import type {
 import type { Message } from '../types'
 
 /**
- * The Tidings server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
+ * The Sytext server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
  * always sent as JSON, which the server requires (it's what keeps other sites from posting forms).
  */
 
@@ -49,7 +49,7 @@ const segment = (id: string) => encodeURIComponent(id)
 
 export const serverApi = {
   /**
-   * What the server offers, or null when there is no Tidings server (the app was deployed as a
+   * What the server offers, or null when there is no Sytext server (the app was deployed as a
    * static site, or the API isn't running): the app then works without accounts, as before.
    */
   async features(): Promise<ServerFeatures | null> {

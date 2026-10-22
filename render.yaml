@@ -1,7 +1,7 @@
 services:
   # One Node service serves both the API and the built web app.
   - type: web
-    name: tidings
+    name: sytext
     runtime: node
     # Free instances sleep after 15 minutes without visits, and linked WhatsApp and Telegram
     # accounts only sync while it runs. Pick an always-on plan to keep them syncing.

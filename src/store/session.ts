@@ -8,7 +8,7 @@ import { useInbox } from './inbox'
 /**
  * Who is using the app.
  *
- * - no-server: there is no Tidings server (a static deploy); the app runs without accounts.
+ * - no-server: there is no Sytext server (a static deploy); the app runs without accounts.
  * - signed-out: the sign-in screen.
  * - guest: trying the demo without an account.
  * - signed-in: the WhatsApp and Telegram accounts linked on the server are in the inbox.

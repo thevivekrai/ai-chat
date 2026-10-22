@@ -102,7 +102,7 @@ export function databaseName(uri: string): string {
 }
 
 export async function connectDatabase(uri: string, dbName = databaseName(uri)): Promise<Database> {
-  const client = new MongoClient(uri, { appName: 'tidings' })
+  const client = new MongoClient(uri, { appName: 'sytext' })
   await client.connect()
   const db = client.db(dbName)
   const col: Collections = {

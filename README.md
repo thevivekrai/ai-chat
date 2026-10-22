@@ -1,16 +1,16 @@
-# Tidings — an AI-first unified inbox
+# Sytext — an AI-first unified inbox
 
 People with chats spread across WhatsApp, Telegram, Instagram, Slack and SMS lose track of who is
-waiting on them, and replying takes effort. Tidings puts every chat in one place, tells you **who
+waiting on them, and replying takes effort. Sytext puts every chat in one place, tells you **who
 needs a reply** (sorted by AI priority and how long they've waited) and **drafts the reply** for you.
 Nothing is ever sent automatically.
 
 - **Accounts.** Sign in with **Google**, or with an **email and password**.
-- **Your own WhatsApp and Telegram.** Link **WhatsApp** by typing the 8-character code Tidings
+- **Your own WhatsApp and Telegram.** Link **WhatsApp** by typing the 8-character code Sytext
   shows into *Linked devices* on your phone (or scanning a QR code), the way WhatsApp Web links.
   Link **Telegram** with your phone number, the login code Telegram sends you and, if you use it,
   your two-step password. Your chats sync to the inbox on every device you sign in on, and you
-  reply from Tidings.
+  reply from Sytext.
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
 - **Real AI.** Add your **Claude API key** and every AI feature calls Claude. Without one, a
@@ -18,7 +18,7 @@ Nothing is ever sent automatically.
 - **Demo inbox.** 15 sample conversations across five networks, generated relative to now, in
   English and Hinglish. Try it without an account, too.
 
-Tidings is a web app plus a small Node server (`server/`) that handles sign-in and keeps the
+Sytext is a web app plus a small Node server (`server/`) that handles sign-in and keeps the
 WhatsApp and Telegram links running. Without the server (say, built as a static site) the app still
 works: just the demo, the browser connections and AI, with no accounts.
 
@@ -120,9 +120,9 @@ In **Settings → Accounts** (or the account menu → *WhatsApp and Telegram*), 
 
 ### WhatsApp
 
-Enter your number and Tidings shows an 8-character code. On your phone, open WhatsApp →
+Enter your number and Sytext shows an 8-character code. On your phone, open WhatsApp →
 **Settings → Linked devices → Link a device → Link with phone number instead**, and type it in. Or
-choose **QR code** and scan it from the same screen. Tidings becomes one of your linked devices,
+choose **QR code** and scan it from the same screen. Sytext becomes one of your linked devices,
 like WhatsApp Web; your phone doesn't have to stay online.
 
 ![Linking WhatsApp: the pairing code and where to enter it](docs/screenshots/link-whatsapp.jpg)
@@ -130,7 +130,7 @@ like WhatsApp Web; your phone doesn't have to stay online.
 - It brings in your recent chats (up to 40 messages each) and every new message after that, with
   delivery and read ticks for yours, edits and deletions. Pictures that arrive are copied to
   Cloudinary so the app can show them; other media shows as a labelled attachment.
-- Reading a chat in Tidings marks it read on WhatsApp; replies go out from your number.
+- Reading a chat in Sytext marks it read on WhatsApp; replies go out from your number.
 - **Unlink** logs the device out (it disappears from *Linked devices*) and deletes its chats from
   the server. If you remove the device from your phone instead, syncing stops and Settings offers
   to link again or remove its chats.
@@ -141,7 +141,7 @@ like WhatsApp Web; your phone doesn't have to stay online.
 ### Telegram
 
 Enter your number; Telegram sends a login code to your Telegram app (or by SMS). Enter it, and your
-two-step verification password if you have one. Tidings signs in as you, like Telegram on a new
+two-step verification password if you have one. Sytext signs in as you, like Telegram on a new
 device, and shows up in Telegram under **Settings → Devices**, where you can end it.
 
 - Your 30 most recent chats come in (20 messages each; broadcast channels are left out), then
@@ -175,7 +175,7 @@ Telegram Bot API, not your personal account; for that, use Matrix with the Teleg
 3. Paste the token in **Settings → Accounts → Telegram bot**. It's checked with Telegram first.
 
 Bots can't fetch chat history, only new messages, which Telegram keeps for 24 hours. So chats
-start from the moment the bot is connected, and messages that arrive while Tidings is closed are
+start from the moment the bot is connected, and messages that arrive while Sytext is closed are
 picked up when it opens. Only one browser tab polls Telegram (it allows a single reader per bot);
 other tabs follow along. If the bot already delivers to a webhook, Settings offers to switch it
 over. You can also point it at a self-hosted `telegram-bot-api` server.
@@ -195,7 +195,7 @@ that, and it keeps your chats on infrastructure you control.
 - **End-to-end encryption isn't supported yet.** Messages in encrypted rooms show as locked, and
   replying there is refused with an explanation. Bridges can be configured to keep portal rooms
   unencrypted (the `encryption` section of their config).
-- Disconnecting signs out the session Tidings created. A pasted access token belongs to another
+- Disconnecting signs out the session Sytext created. A pasted access token belongs to another
   app, so that session is left alone.
 
 ### The demo inbox
@@ -346,7 +346,7 @@ simulated WhatsApp bridge room) and a local Telegram Bot API server.
   verification).
 - **History.** Only recent messages load: the last 30 per Matrix room, and what a Telegram bot has
   seen. Scrolling back doesn't fetch older ones yet.
-- **Scheduled sends** go out while Tidings is open. One that was due while it was closed waits for
+- **Scheduled sends** go out while Sytext is open. One that was due while it was closed waits for
   you instead of arriving hours late. Matrix delayed events (MSC4140) would let the server send them.
 - **Sync across devices.** Done, snoozed and tasks live on one device. For Matrix they could sync
   through room account data.

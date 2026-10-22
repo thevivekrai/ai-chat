@@ -180,7 +180,7 @@ function PrivacyBadge() {
                 <Server className="size-4 text-muted" aria-hidden /> Linked chats are encrypted at rest
               </p>
               <p className="mt-1 text-muted">
-                Your WhatsApp and Telegram chats sync through the Tidings server, which stores them encrypted, so they're
+                Your WhatsApp and Telegram chats sync through the Sytext server, which stores them encrypted, so they're
                 on every device you sign in on. Unlinking deletes them there.
               </p>
             </div>
@@ -191,7 +191,7 @@ function PrivacyBadge() {
               </p>
               <p className="mt-1 text-muted">
                 Conversations are kept in this browser. Connected accounts talk to their networks directly from here;
-                there is no Tidings server in between.
+                there is no Sytext server in between.
               </p>
             </div>
           )}

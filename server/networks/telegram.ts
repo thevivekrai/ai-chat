@@ -162,7 +162,7 @@ export const createGramClient: CreateTgClient = (session, api) => {
     connectionRetries: 5,
     autoReconnect: true,
     baseLogger: gramLogger,
-    deviceModel: 'Tidings',
+    deviceModel: 'Sytext',
     systemVersion: 'Server',
     appVersion: '1.0',
   })

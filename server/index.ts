@@ -44,7 +44,7 @@ async function main() {
   })
 
   const server = app.listen(config.port, () => {
-    console.log(`Tidings is listening on port ${config.port}`)
+    console.log(`Sytext is listening on port ${config.port}`)
     const on = [config.googleClientId && 'Google sign-in', config.telegram && 'Telegram', config.cloudinary && 'image uploads']
     console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)
   })
