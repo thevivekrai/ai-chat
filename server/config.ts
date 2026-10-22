@@ -17,6 +17,12 @@ export interface Config {
   telegram?: { apiId: number; apiHash: string }
   /** Turns on profile photos and images in chats. */
   cloudinary?: { cloudName: string; apiKey: string; apiSecret: string }
+  /**
+   * The server's public address, visited every few minutes while accounts are linked, so hosts
+   * that put idle services to sleep don't (see keepAwake.ts). KEEP_AWAKE_URL, or the address
+   * Render provides; KEEP_AWAKE=off turns it off.
+   */
+  keepAwakeUrl?: string
 }
 
 export class ConfigError extends Error {}
@@ -40,6 +46,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || undefined,
     telegram: apiId && env.TELEGRAM_API_HASH?.trim() ? { apiId, apiHash: env.TELEGRAM_API_HASH.trim() } : undefined,
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
+    keepAwakeUrl: /^(off|false|no|0)$/i.test(env.KEEP_AWAKE?.trim() ?? '')
+      ? undefined
+      : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
   }
 }
 

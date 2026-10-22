@@ -1,11 +1,11 @@
 import type { ObjectId } from 'mongodb'
+import { MESSAGES_KEPT_PER_CHAT } from '../../src/data/server/types.ts'
 import type { Contact, Message, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, MessageDoc, MessagePayload, ThreadDoc } from '../db.ts'
 
-/** How much of each chat the browser gets on load. */
+/** How many chats the browser gets on load (each with every message the server keeps of it). */
 const SNAPSHOT_THREADS = 200
-const SNAPSHOT_MESSAGES_PER_THREAD = 50
 
 export interface StoredMessage extends Message {
   /** Network-specific reference kept alongside (e.g. a WhatsApp message key). */
@@ -89,6 +89,20 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       handle: '',
     })
     return { id: doc.id, network: doc.network, name, handle, ...(avatarUrl ? { avatarUrl } : {}) }
+  }
+
+  /** Chats that got new messages since they were last trimmed, by user and chat id. */
+  const untrimmed = new Map<string, { userId: ObjectId; threadId: string }>()
+
+  /** Deletes what's beyond the latest messages of a chat; returns how many went. */
+  async function trimThread(userId: ObjectId, threadId: string): Promise<number> {
+    const extra = await col.messages
+      .find({ userId, threadId }, { projection: { _id: 1 } })
+      .sort({ sentAt: -1 })
+      .skip(MESSAGES_KEPT_PER_CHAT)
+      .toArray()
+    if (!extra.length) return 0
+    return (await col.messages.deleteMany({ _id: { $in: extra.map((d) => d._id) } })).deletedCount
   }
 
   /** Rewrites a message's sealed payload. */
@@ -222,6 +236,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       )
       if (result.upsertedCount) {
         await col.threads.updateOne({ userId, id: message.threadId }, { $max: { lastAt: new Date(message.sentAt) } })
+        untrimmed.set(`${userId.toHexString()}:${message.threadId}`, { userId, threadId: message.threadId })
       }
       return result.upsertedCount > 0
     },
@@ -236,10 +251,13 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       if (!doc) return null
       const set: Partial<MessageDoc> = {}
       if (patch.body !== undefined || patch.attachments !== undefined) {
-        const current = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
+        // The quote and reactions stay as they are.
+        const { attachments, ...current } = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
+        const nextAttachments = patch.attachments ?? attachments
         set.payload = sealer.sealJson({
+          ...current,
           body: patch.body ?? current.body,
-          ...((patch.attachments ?? current.attachments) ? { attachments: patch.attachments ?? current.attachments } : {}),
+          ...(nextAttachments?.length ? { attachments: nextAttachments } : {}),
         })
       }
       if (patch.status) set.status = patch.status
@@ -269,12 +287,21 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       })
     },
 
-    /** Stored messages from before `beforeId`, oldest first. */
-    async older(userId: ObjectId, threadId: string, beforeId: string, limit = 30): Promise<{ messages: Message[]; hasMore: boolean }> {
-      const before = await col.messages.findOne({ userId, id: beforeId, threadId })
-      if (!before) return { messages: [], hasMore: false }
+    /**
+     * Stored messages from before `before`, oldest first. The message itself may be gone from the
+     * server (it keeps only the latest); then the time the device gave is used.
+     */
+    async older(
+      userId: ObjectId,
+      threadId: string,
+      before: { id: string; sentAt?: string },
+      limit = 30,
+    ): Promise<{ messages: Message[]; hasMore: boolean }> {
+      const stored = await col.messages.findOne({ userId, id: before.id, threadId })
+      const sentAt = stored?.sentAt ?? (before.sentAt ? new Date(before.sentAt) : null)
+      if (!sentAt || Number.isNaN(sentAt.getTime())) return { messages: [], hasMore: false }
       const docs = await col.messages
-        .find({ userId, threadId, sentAt: { $lt: before.sentAt } })
+        .find({ userId, threadId, sentAt: { $lt: sentAt } })
         .sort({ sentAt: -1 })
         .limit(limit + 1)
         .toArray()
@@ -320,7 +347,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         .aggregate<{ docs: MessageDoc[] }>([
           { $match: { userId, threadId: { $in: ids } } },
           { $sort: { sentAt: -1 } },
-          { $group: { _id: '$threadId', docs: { $firstN: { input: '$$ROOT', n: SNAPSHOT_MESSAGES_PER_THREAD } } } },
+          { $group: { _id: '$threadId', docs: { $firstN: { input: '$$ROOT', n: MESSAGES_KEPT_PER_CHAT } } } },
         ])
         .toArray()
       const contactDocs = await col.contacts.find({ userId }).limit(5000).toArray()
@@ -329,6 +356,31 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         contacts: contactDocs.map(toContact),
         messages: grouped.flatMap((g) => g.docs.map(toMessage)),
       }
+    },
+
+    /**
+     * Keeps the server's copy small: of each chat that got new messages, only the latest
+     * MESSAGES_KEPT_PER_CHAT stay. Devices keep everything they've seen. Returns how many went.
+     */
+    async trim(): Promise<number> {
+      const due = [...untrimmed.values()]
+      untrimmed.clear()
+      let removed = 0
+      for (const { userId, threadId } of due) removed += await trimThread(userId, threadId)
+      return removed
+    },
+
+    /** Trims every chat holding more than it should (data stored before the limit existed). */
+    async trimAll(): Promise<number> {
+      const over = await col.messages
+        .aggregate<{ _id: { userId: ObjectId; threadId: string } }>([
+          { $group: { _id: { userId: '$userId', threadId: '$threadId' }, count: { $sum: 1 } } },
+          { $match: { count: { $gt: MESSAGES_KEPT_PER_CHAT } } },
+        ])
+        .toArray()
+      let removed = 0
+      for (const { _id } of over) removed += await trimThread(_id.userId, _id.threadId)
+      return removed
     },
 
     /** Deletes every chat, contact and message of one network for a user (on unlink). */

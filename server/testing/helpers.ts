@@ -8,10 +8,10 @@ import { createSessionTokens } from '../auth/tokens.ts'
 import { createSealer } from '../crypto.ts'
 import { connectDatabase, type Database } from '../db.ts'
 import { createAvatars } from '../inbox/avatars.ts'
-import { createInboxStore } from '../inbox/store.ts'
+import { createInboxStore, type InboxStore } from '../inbox/store.ts'
 import { createAccounts } from '../networks/accounts.ts'
-import { createTelegram, type CreateTgClient, type TgSelf, type TgUpdate } from '../networks/telegram.ts'
-import { createWhatsApp, type WaSocket } from '../networks/whatsapp.ts'
+import { createTelegram, type CreateTgClient, type Telegram, type TgMessage, type TgSelf, type TgUpdate } from '../networks/telegram.ts'
+import { createWhatsApp, type WaSocket, type WhatsApp } from '../networks/whatsapp.ts'
 import { createHub } from '../realtime.ts'
 
 /** Integration tests run against a real MongoDB when TEST_MONGODB_URI is set (each run gets its own database). */
@@ -210,7 +210,7 @@ export function fakeTelegram() {
       },
       async dialogs() {
         return [
-          { chat: asha, unreadCount: 1, readOutboxMaxId: 11, date: now - 60 },
+          { chat: asha, unreadCount: 1, readOutboxMaxId: 11, date: ashaMessages[0]!.date },
           { chat: trek, unreadCount: 0, readOutboxMaxId: 0, date: now - 3600 },
           { chat: { id: '-100999', kind: 'group' as const, name: 'News channel', skip: true }, unreadCount: 9, readOutboxMaxId: 0, date: now },
         ]
@@ -266,6 +266,8 @@ export function fakeTelegram() {
     create,
     asha,
     trek,
+    /** Asha's chat as Telegram has it, newest first; a test can add messages the server missed. */
+    ashaMessages: ashaMessages as TgMessage[],
     emit: (update: TgUpdate) => state.listeners.forEach((l) => l(update)),
   }
 }
@@ -278,6 +280,8 @@ export interface TestServer {
   sockets: FakeWaSocket[]
   telegram: ReturnType<typeof fakeTelegram>
   google: Awaited<ReturnType<typeof fakeGoogle>>
+  /** The parts running now (rebuilt by `restart`). */
+  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram }
   /** Builds the network managers again over the same database, as after a restart. */
   restart(): Promise<void>
   close(): Promise<void>
@@ -293,7 +297,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
   const tokens = createSessionTokens('x'.repeat(40))
 
   let server: Server
-  let managers: { whatsapp: ReturnType<typeof createWhatsApp>; telegram: ReturnType<typeof createTelegram> }
+  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram }
 
   async function boot(port = 0) {
     const hub = createHub()
@@ -327,7 +331,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       api: { apiId: 1, apiHash: 'hash' },
       createClient: telegram.create,
     })
-    managers = { whatsapp, telegram: tg }
+    managers = { store, whatsapp, telegram: tg }
     const app = createApp({
       col: database.col,
       tokens,
@@ -366,6 +370,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
     sockets,
     telegram,
     google,
+    current: () => managers,
     async restart() {
       const port = (server.address() as AddressInfo).port
       await shutdown()

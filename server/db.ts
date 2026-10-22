@@ -67,16 +67,21 @@ export interface ContactDoc {
   data: string
 }
 
-/** A profile or group picture, kept on the server so it never expires and needs no other host. */
+/**
+ * A profile or group picture: that there is one, not the image (that's kept in memory and
+ * fetched from the network again when needed, so it takes no space here).
+ */
 export interface AvatarDoc {
   userId: ObjectId
   /** The contact or chat it belongs to. */
   id: string
-  /** Sealed base64 image; absent when the person has no picture (or hides it). */
+  /** Short content hash, so the URL changes when the picture does; absent when there's no picture. */
+  version?: string
+  /** Sealed link to download it again from, where the network gives one (WhatsApp). */
+  source?: string
+  /** Earlier versions kept the image here; removed on start. */
   data?: string
   contentType?: string
-  /** Short content hash, so the URL changes when the picture does. */
-  version?: string
   checkedAt: Date
 }
 

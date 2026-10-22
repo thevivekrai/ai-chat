@@ -12,7 +12,13 @@ import { createMedia } from './media.ts'
 import { createAccounts } from './networks/accounts.ts'
 import { createTelegram } from './networks/telegram.ts'
 import { createWhatsApp } from './networks/whatsapp.ts'
+import { keepAwake } from './keepAwake.ts'
 import { createHub } from './realtime.ts'
+
+/** How often linked accounts that aren't connected are reconnected. */
+const RESUME_EVERY_MS = 5 * 60_000
+/** How often chats that got new messages are trimmed to what the server keeps. */
+const TRIM_EVERY_MS = 60_000
 
 async function main() {
   // Locally, settings can live in a .env file; in production the host provides them.
@@ -48,19 +54,42 @@ async function main() {
 
   const server = app.listen(config.port, () => {
     console.log(`Sytext is listening on port ${config.port}`)
-    const on = [config.googleClientId && 'Google sign-in', config.telegram && 'Telegram', config.cloudinary && 'image uploads']
+    const on = [
+      config.googleClientId && 'Google sign-in',
+      config.telegram && 'Telegram',
+      config.cloudinary && 'image uploads',
+      config.keepAwakeUrl && 'keep-awake',
+    ]
     console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)
   })
 
-  // Reconnect linked accounts in the background; the site is usable meanwhile.
-  void whatsapp.resumeAll().catch((e) => console.error('[whatsapp] resume failed', e))
-  void telegram.resumeAll().catch((e) => console.error('[telegram] resume failed', e))
+  // Reconnect linked accounts in the background; the site is usable meanwhile. They're checked
+  // again every few minutes, so a link that stopped for any reason picks up again by itself.
+  // None of this depends on anyone being signed in: signing out of Sytext leaves links running.
+  const resume = () => {
+    void whatsapp.resumeAll().catch((e) => console.error('[whatsapp] resume failed', e))
+    void telegram.resumeAll().catch((e) => console.error('[telegram] resume failed', e))
+  }
+  resume()
+  const timers = [setInterval(resume, RESUME_EVERY_MS)]
+
+  // The server keeps only the latest messages of each chat (devices keep the rest), and no
+  // picture files. Data stored before that is trimmed once on start.
+  void (async () => {
+    const [messages, pictures] = await Promise.all([store.trimAll(), avatars.compact()])
+    if (messages || pictures) console.log(`Freed space: ${messages} old messages, ${pictures} stored pictures`)
+  })().catch((e) => console.error('[storage] trimming failed', e))
+  timers.push(setInterval(() => void store.trim().catch((e) => console.error('[storage] trimming failed', e)), TRIM_EVERY_MS))
+
+  const stopKeepingAwake = config.keepAwakeUrl ? keepAwake({ url: config.keepAwakeUrl, wanted: () => accounts.anyLinked() }) : null
 
   let closing = false
   async function shutdown(signal: string) {
     if (closing) return
     closing = true
     console.log(`${signal}: shutting down`)
+    for (const timer of timers) clearInterval(timer)
+    stopKeepingAwake?.()
     // Open event streams would keep the server from closing.
     hub.closeAll()
     server.close()

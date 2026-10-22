@@ -23,6 +23,26 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
     return browser
   }
 
+  /** Links WhatsApp the way a phone would, and returns the connected socket. */
+  async function linkWhatsApp(browser: Browser): Promise<FakeWaSocket> {
+    await browser.post('/api/link/whatsapp', { phone: '+91 98765 43210' })
+    const socket = server.sockets.at(-1)!
+    socket.authState.creds.registered = true
+    socket.emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() },
+    })
+    const linked = await waitFor(() => {
+      const s = server.sockets.at(-1)!
+      if (s === socket) throw new Error('Not reconnected yet')
+      return s
+    })
+    linked.user = { id: '919876543210:4@s.whatsapp.net' }
+    linked.emit('connection.update', { connection: 'open' })
+    await waitFor(async () => expect((await browser.get('/api/accounts')).json.accounts[0]?.status).toBe('connected'))
+    return linked
+  }
+
   describe('sign-in', () => {
     it('registers, keeps the session in an httpOnly cookie, and signs out', async () => {
       const browser = new Browser(server.url)
@@ -259,10 +279,33 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(tg.state.typing.at(-1)).toEqual({ chatId: '5001', typing: true })
       tg.emit({ type: 'typing', chatId: '5001', senderId: '5001', active: true })
       await events.next((e) => e.type === 'typing' && e.threadId === 'tga:5001' && e.senderId === 'tga:5001' && e.active)
-
       events.close()
-      await browser.delete('/api/link/telegram')
+
+      // Messages the server no longer keeps (it keeps only the latest of each chat) still work,
+      // from what the device knows of them.
+      await server.database.col.messages.deleteOne({ id: 'tga:5001:10' })
+      const hint = { id: 'tga:5001:10', senderId: 'tga:5001', sentAt: new Date().toISOString(), body: 'Which trail are we doing?' }
+      const lateReact = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: hint.id, emoji: '👍', message: hint })
+      expect(lateReact.json).toEqual({ message: null })
+      expect(tg.state.reactions.at(-1)).toEqual({ chatId: '5001', messageId: 10, emoji: '👍' })
+      const lateReply = await browser.post(`/api/threads/${enc('tga:5001')}/messages`, { body: 'Rajmachi', replyToId: hint.id, replyTo: hint })
+      expect(lateReply.json.message.replyTo).toEqual({ id: hint.id, senderId: hint.senderId, body: hint.body })
+      expect(tg.state.sent.at(-1)).toEqual({ chatId: '5001', text: 'Rajmachi', replyToId: 10 })
+      const beforeGone = await browser.get(`/api/threads/${enc('tga:5001')}/messages?before=${enc(hint.id)}`)
+      expect(beforeGone.json.messages.map((m: { body: string }) => m.body)).toEqual(['Rajmachi, the long one'])
+
+      // Only that there is a picture is stored; after a restart it's downloaded from Telegram again.
       const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const record = await server.database.col.avatars.findOne({ userId, id: 'tga:5001' })
+      expect(record).toMatchObject({ version: expect.any(String) })
+      expect(record).not.toHaveProperty('data')
+      await server.restart()
+      await waitFor(() => expect(server.current().telegram.isConnected(userId)).toBe(true))
+      const again = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(again.status).toBe(200)
+      expect(Buffer.from(await again.arrayBuffer())).toEqual(PIXEL)
+
+      await browser.delete('/api/link/telegram')
       expect(await server.database.col.avatars.countDocuments({ userId })).toBe(0)
     })
 
@@ -305,6 +348,33 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(accounts[0]).toMatchObject({ network: 'telegram', status: 'disconnected' })
       expect(accounts[0].detail).toMatch(/Settings → Devices/)
       tg.state.revoked = false
+      await browser.delete('/api/link/telegram')
+    })
+
+    it('catches up on messages missed while the connection was down', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('tg-catchup@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00004' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeDefined())
+      const events = await browser.events()
+
+      // A message Telegram never told the server about: the regular check finds it.
+      tg.ashaMessages.unshift({ id: 15, chat: tg.asha, out: false, text: 'Missed this one?', date: Math.floor(Date.now() / 1000) })
+      try {
+        await server.current().telegram.checkAll()
+        await events.next((e) => e.type === 'reloaded')
+        expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:15']).toMatchObject({ body: 'Missed this one?' })
+      } finally {
+        tg.ashaMessages.shift()
+      }
+      // Nothing new: nothing to tell the browser.
+      const before = events.received.length
+      await server.current().telegram.checkAll()
+      expect(events.received.slice(before).some((e) => e.type === 'reloaded')).toBe(false)
+
+      events.close()
       await browser.delete('/api/link/telegram')
     })
   })
@@ -388,26 +458,6 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect((await browser.get('/api/inbox')).json).toMatchObject({ threads: [], accounts: [] })
       expect(await server.database.col.waAuth.countDocuments({})).toBe(0)
     })
-
-    /** Links WhatsApp the way a phone would, and returns the connected socket. */
-    async function linkWhatsApp(browser: Browser): Promise<FakeWaSocket> {
-      await browser.post('/api/link/whatsapp', { phone: '+91 98765 43210' })
-      const socket = server.sockets.at(-1)!
-      socket.authState.creds.registered = true
-      socket.emit('connection.update', {
-        connection: 'close',
-        lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() },
-      })
-      const linked = await waitFor(() => {
-        const s = server.sockets.at(-1)!
-        if (s === socket) throw new Error('Not reconnected yet')
-        return s
-      })
-      linked.user = { id: '919876543210:4@s.whatsapp.net' }
-      linked.emit('connection.update', { connection: 'open' })
-      await waitFor(async () => expect((await browser.get('/api/accounts')).json.accounts[0]?.status).toBe('connected'))
-      return linked
-    }
 
     it('handles replies, reactions, typing, pictures and older messages', async () => {
       const RAVI = '919812345678@s.whatsapp.net'
@@ -493,14 +543,121 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // Nothing older on the phone either: asking from the same message again ends it.
       const third = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:OLD1`)}`)
       expect(third.json).toEqual({ messages: [], hasMore: false })
-
       events.close()
+
+      // Messages the server no longer keeps still work, from what the device knows of them.
+      await server.database.col.messages.deleteOne({ id: `wa:${RAVI}:M1` })
+      const hint = { id: `wa:${RAVI}:M1`, senderId: `wa:${RAVI}`, sentAt: new Date((ts - 50) * 1000).toISOString(), body: 'Got it, thanks!' }
+      const lateReact = await browser.post(`/api/threads/${thread}/reactions`, { messageId: hint.id, emoji: '😂', message: hint })
+      expect(lateReact.json).toEqual({ message: null })
+      expect(socket.reactions.at(-1)).toEqual({ jid: RAVI, emoji: '😂', targetId: 'M1' })
+      const lateReply = await browser.post(`/api/threads/${thread}/messages`, { body: 'Haha', replyToId: hint.id, replyTo: hint })
+      expect(lateReply.json.message.replyTo).toEqual({ id: hint.id, senderId: hint.senderId, body: hint.body })
+      expect(socket.sent.at(-1)).toEqual({ jid: RAVI, text: 'Haha', quotedId: 'M1' })
+      // Without it (or with a hint for another message), there's nothing to go on.
+      expect((await browser.post(`/api/threads/${thread}/reactions`, { messageId: hint.id, emoji: '😂' })).status).toBe(404)
+      const mismatched = { ...hint, id: `wa:${RAVI}:OTHER` }
+      expect((await browser.post(`/api/threads/${thread}/reactions`, { messageId: hint.id, emoji: '😂', message: mismatched })).status).toBe(404)
+      // Paging back from a message only the device has asks the phone from it.
+      const gone = { id: `wa:${RAVI}:GONE`, sentAt: new Date((ts - 90_000) * 1000).toISOString() }
+      const fromDevice = await browser.get(`/api/threads/${thread}/messages?before=${enc(gone.id)}&senderId=me&sentAt=${enc(gone.sentAt)}`)
+      expect(fromDevice.json).toEqual({ messages: [], hasMore: true })
+      expect(socket.historyRequests.at(-1)).toEqual({ count: 50, oldestId: 'GONE' })
+
+      // After a restart the picture is downloaded again from the link WhatsApp gave.
+      await server.restart()
+      const again = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(again.status).toBe(200)
+      expect(Buffer.from(await again.arrayBuffer())).toEqual(PIXEL)
+
+      await browser.delete('/api/link/whatsapp')
+    })
+
+    it('keeps only the latest messages of each chat', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const browser = await newUser('wa-trim@example.com')
+      const socket = await linkWhatsApp(browser)
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const ts = Math.floor(Date.now() / 1000)
+      const say = (target: FakeWaSocket, n: number) =>
+        target.emit('messages.upsert', {
+          type: 'notify',
+          messages: [{ key: { remoteJid: RAVI, fromMe: false, id: `N${n}` }, message: { conversation: `Message ${n}` }, messageTimestamp: ts - 1000 + n }],
+        } as never)
+      const stored = () => server.database.col.messages.countDocuments({ userId, threadId: `wa:${RAVI}` })
+
+      for (let n = 1; n <= 45; n++) say(socket, n)
+      await waitFor(async () => expect(await stored()).toBe(45))
+      expect(await server.current().store.trim()).toBe(5)
+      expect(await stored()).toBe(40)
+      const inbox = (await browser.get('/api/inbox')).json
+      const bodies = inbox.messages.map((m: { body: string }) => m.body)
+      expect(bodies).toHaveLength(40)
+      expect(bodies).toContain('Message 45')
+      expect(bodies).not.toContain('Message 5')
+
+      // Data stored before the limit existed is trimmed on start.
+      await server.restart()
+      const reopened = server.sockets.at(-1)!
+      reopened.emit('connection.update', { connection: 'open' })
+      for (let n = 46; n <= 48; n++) say(reopened, n)
+      await waitFor(async () => expect(await stored()).toBe(43))
+      expect(await server.current().store.trimAll()).toBe(3)
+      expect(await stored()).toBe(40)
+
       await browser.delete('/api/link/whatsapp')
     })
 
     it('explains when linking fails', async () => {
       const browser = await newUser('wa2@example.com')
       expect((await browser.post('/api/link/whatsapp', { phone: '12' })).status).toBe(400)
+    })
+  })
+
+  describe('signing out of Sytext', () => {
+    it('leaves WhatsApp and Telegram linked: messages keep coming in, and are there on signing back in', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('away@example.com')
+      const socket = await linkWhatsApp(browser)
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00005' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeDefined())
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const loggedOutBefore = tg.state.loggedOut
+
+      await browser.post('/api/auth/logout')
+      expect((await browser.get('/api/inbox')).status).toBe(401)
+
+      // Signed out, both links carry on.
+      const now = Math.floor(Date.now() / 1000)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'AWAY1' }, message: { conversation: 'Are you there?' }, messageTimestamp: now }],
+      } as never)
+      tg.emit({ type: 'message', message: { id: 16, chat: tg.asha, out: false, text: 'Ping', date: now } })
+      expect(server.current().whatsapp.isConnected(userId)).toBe(true)
+      expect(server.current().telegram.isConnected(userId)).toBe(true)
+      expect(socket.ended || socket.loggedOut).toBe(false)
+      expect(tg.state.loggedOut).toBe(loggedOutBefore)
+
+      // Back in: what arrived meanwhile is there.
+      expect((await browser.post('/api/auth/login', { email: 'away@example.com', password: 'long enough' })).status).toBe(200)
+      const inbox = await waitFor(async () => {
+        const json = (await browser.get('/api/inbox')).json
+        const messages = byId(json.messages)
+        expect(messages[`wa:${RAVI}:AWAY1`]).toMatchObject({ body: 'Are you there?' })
+        expect(messages['tga:5001:16']).toMatchObject({ body: 'Ping' })
+        return json
+      })
+      expect(inbox.accounts.map((a: { network: string; status: string }) => `${a.network}:${a.status}`).sort()).toEqual([
+        'telegram:connected',
+        'whatsapp:connected',
+      ])
+
+      await browser.delete('/api/link/whatsapp')
+      await browser.delete('/api/link/telegram')
     })
   })
 })

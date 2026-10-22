@@ -6,12 +6,12 @@ import { Logger, LogLevel } from 'telegram/extensions/Logger.js'
 import { computeCheck } from 'telegram/Password.js'
 import { StringSession } from 'telegram/sessions/index.js'
 import QRCode from 'qrcode'
-import type { ServerOlderMessages, TelegramCodeResult, TelegramVerifyResult } from '../../src/data/server/types.ts'
+import type { MessageHint, ServerOlderMessages, TelegramCodeResult, TelegramVerifyResult } from '../../src/data/server/types.ts'
 import { withMyReaction } from '../../src/data/reactions.ts'
 import type { Attachment, Message, QuotedMessage, Reaction } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
-import { createQueue, type Avatars } from '../inbox/avatars.ts'
+import { createLimiter, createQueue, type Avatars, type Picture } from '../inbox/avatars.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
 import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
@@ -430,8 +430,20 @@ export const createGramClient: CreateTgClient = (session, api) => {
 /** How much of each account is copied in when it's linked (and caught up after a restart). */
 const DIALOGS_TO_SYNC = 30
 const MESSAGES_PER_CHAT = 20
-/** How often a linked session is checked, to notice it was ended from another device. */
-const CHECK_EVERY_MS = 15 * 60_000
+/**
+ * How often a linked session is checked: to notice it was ended from another device, and to catch
+ * up on messages missed while the connection was down (the Telegram library doesn't).
+ */
+const CHECK_EVERY_MS = 10 * 60_000
+/** Checks in a row that couldn't reach Telegram before the connection is started over. */
+const FAILED_CHECKS_TO_RESTART = 2
+
+/** Telegram's own id of a message, from ours ("tga:<peer id>:<message id>"). */
+export function refFromId(threadId: string, id: string): number | undefined {
+  if (!id.startsWith(`${threadId}:`)) return undefined
+  const ref = Number(id.slice(threadId.length + 1))
+  return Number.isInteger(ref) && ref > 0 ? ref : undefined
+}
 
 /** Errors meaning the session is gone for good: ended from Settings → Devices, or the account deleted. */
 const ENDED = new Set(['AUTH_KEY_UNREGISTERED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'USER_DEACTIVATED', 'USER_DEACTIVATED_BAN'])
@@ -498,6 +510,8 @@ interface Session {
   client: TgClient
   stopped: boolean
   check: ReturnType<typeof setInterval>
+  /** Checks in a row that couldn't reach Telegram. */
+  failedChecks: number
 }
 
 export interface TelegramDeps {
@@ -524,6 +538,10 @@ export function createTelegram(deps: TelegramDeps) {
   const pictures = createQueue()
   const sessions = new Map<string, Session>()
   const retries = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Users whose session is being started, so two starts never overlap. */
+  const starting = new Set<string>()
+  /** Pictures someone is waiting to see, fetched a few at a time. */
+  const live = createLimiter(3)
   const keyOf = (userId: ObjectId) => userId.toHexString()
   const publish = (s: Session, event: Parameters<Hub['publish']>[1]) => hub.publish(keyOf(s.userId), event)
 
@@ -541,25 +559,33 @@ export function createTelegram(deps: TelegramDeps) {
     await p.client.disconnect().catch(() => undefined)
   }
 
-  /** Copies a person's or chat's picture to the server, in the background. */
+  /** Checks a person's or chat's picture, in the background. */
   function fetchPicture(s: Session, peer: TgPeer) {
     const id = `tga:${peer.id}`
     pictures.add(`${keyOf(s.userId)}:${id}`, async () => {
       if (s.stopped || (await avatars.fresh(s.userId, id))) return
-      const data = await s.client.picture(peer.id).catch(() => undefined)
-      if (s.stopped) return
-      const url = await avatars.save(s.userId, id, data ? { data, contentType: 'image/jpeg' } : null)
-      if (!url) return
-      if (peer.kind === 'group') {
-        const thread = await store.setThreadAvatar(s.userId, id, url)
-        if (thread) publish(s, { type: 'thread.updated', thread })
-      } else {
-        // The picture can be ready before the contact is: make sure there's one to put it on.
-        if (!(await store.contact(s.userId, id))) await upsertContact(s, peer)
-        const contact = await store.setContactAvatar(s.userId, id, url)
-        if (contact) publish(s, { type: 'contact.updated', contact })
-      }
+      await lookUpPicture(s, peer)
     })
+  }
+
+  /** Downloads a picture, records it, and puts its URL on the contact or chat. */
+  async function lookUpPicture(s: Session, peer: TgPeer): Promise<Picture | null> {
+    const id = `tga:${peer.id}`
+    const data = await s.client.picture(peer.id).catch(() => undefined)
+    if (s.stopped) return null
+    const picture = data ? { data, contentType: 'image/jpeg' } : null
+    const url = await avatars.save(s.userId, id, picture)
+    if (!url) return null
+    if (peer.kind === 'group') {
+      const thread = await store.setThreadAvatar(s.userId, id, url)
+      if (thread) publish(s, { type: 'thread.updated', thread })
+    } else {
+      // The picture can be ready before the contact is: make sure there's one to put it on.
+      if (!(await store.contact(s.userId, id))) await upsertContact(s, peer)
+      const contact = await store.setContactAvatar(s.userId, id, url)
+      if (contact) publish(s, { type: 'contact.updated', contact })
+    }
+    return picture
   }
 
   /** What a reply quotes: the stored message, or Telegram's copy if it isn't stored. */
@@ -582,8 +608,13 @@ export function createTelegram(deps: TelegramDeps) {
     if (await store.upsertContact(s.userId, contact)) publish(s, { type: 'contact.updated', contact })
   }
 
-  async function saveMessage(s: Session, m: TgMessage, { live, readOutboxMaxId = 0 }: { live: boolean; readOutboxMaxId?: number }) {
-    if (m.chat.skip) return
+  /** Stores a message; returns it, and whether it's new to the server. */
+  async function saveMessage(
+    s: Session,
+    m: TgMessage,
+    { live, readOutboxMaxId = 0 }: { live: boolean; readOutboxMaxId?: number },
+  ): Promise<{ message: Message; added: boolean } | null> {
+    if (m.chat.skip) return null
     const threadId = `tga:${m.chat.id}`
     const sentAt = new Date(m.date * 1000)
     const direct = m.chat.kind === 'direct'
@@ -625,14 +656,14 @@ export function createTelegram(deps: TelegramDeps) {
       ...(m.reactions?.length ? { reactions: m.reactions } : {}),
       ref: { id: m.id },
     }
-    if (!(await store.addMessage(s.userId, message))) return
-    if (!live) return
+    const { ref, ...wire } = message
+    void ref
+    const added = await store.addMessage(s.userId, message)
+    if (!added || !live) return { message: wire, added }
 
     if (!m.out) await store.incrementUnread(s.userId, threadId)
     const thread = await store.thread(s.userId, threadId)
     if (thread) publish(s, { type: 'thread.updated', thread })
-    const { ref, ...wire } = message
-    void ref
     publish(s, { type: 'message.created', message: wire })
 
     // Pictures that arrive live are copied to Cloudinary so the browser can show them.
@@ -645,6 +676,7 @@ export function createTelegram(deps: TelegramDeps) {
         await updateAndPublish(s, message.id, { attachments: [{ kind: 'image', name: 'Photo', url }] })
       })().catch(report)
     }
+    return { message: wire, added }
   }
 
   async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
@@ -656,7 +688,8 @@ export function createTelegram(deps: TelegramDeps) {
     if (s.stopped) return
     switch (update.type) {
       case 'message':
-        return saveMessage(s, update.message, { live: true })
+        await saveMessage(s, update.message, { live: true })
+        return
       case 'edited': {
         const m = update.message
         return updateAndPublish(s, `tga:${m.chat.id}:${m.id}`, { body: m.text || m.media?.body || '' })
@@ -688,9 +721,13 @@ export function createTelegram(deps: TelegramDeps) {
     }
   }
 
-  /** Copies in the latest chats; on later runs only the ones with something new. */
-  async function sync(s: Session) {
+  /**
+   * Copies in the latest chats; on later runs (catching up) only the ones with something new.
+   * The browser is told to reload when anything changed, or always with `announce`.
+   */
+  async function sync(s: Session, { announce = true } = {}) {
     const dialogs = await s.client.dialogs(DIALOGS_TO_SYNC)
+    let added = 0
     for (const d of dialogs) {
       if (s.stopped) return
       if (d.chat.skip) continue
@@ -709,11 +746,11 @@ export function createTelegram(deps: TelegramDeps) {
       fetchPicture(s, d.chat)
       if (latest && latest.getTime() >= d.date * 1000) continue
       for (const m of await s.client.history(d.chat.id, MESSAGES_PER_CHAT)) {
-        await saveMessage(s, m, { live: false, readOutboxMaxId: d.readOutboxMaxId })
+        if ((await saveMessage(s, m, { live: false, readOutboxMaxId: d.readOutboxMaxId }))?.added) added++
       }
     }
     if (s.stopped) return
-    publish(s, { type: 'reloaded' })
+    if (announce || added) publish(s, { type: 'reloaded' })
     const account = await accounts.get(s.userId, 'telegram')
     if (account?.status === 'connected' && account.detail) await accounts.set(s.userId, 'telegram', { status: 'connected' })
   }
@@ -725,7 +762,8 @@ export function createTelegram(deps: TelegramDeps) {
       userId,
       client,
       stopped: false,
-      check: setInterval(() => void check(s), CHECK_EVERY_MS),
+      check: setInterval(() => void check(s).catch(report), CHECK_EVERY_MS),
+      failedChecks: 0,
     }
     s.check.unref()
     sessions.set(keyOf(userId), s)
@@ -740,15 +778,26 @@ export function createTelegram(deps: TelegramDeps) {
     await s.client.disconnect().catch(() => undefined)
   }
 
-  /** Notices a session that was ended from another device. */
+  /** Notices a session that was ended from another device, and catches up on missed messages. */
   async function check(s: Session) {
     try {
       await s.client.me()
     } catch (error) {
-      if (!ENDED.has(errorCode(error) ?? '')) return // A network problem; the client reconnects on its own.
+      if (ENDED.has(errorCode(error) ?? '')) {
+        await stop(s)
+        await ended(s.userId)
+        return
+      }
+      // A network problem: the client reconnects on its own, but if it keeps failing, start over.
+      if (++s.failedChecks < FAILED_CHECKS_TO_RESTART) return
       await stop(s)
-      await ended(s.userId)
+      await accounts.set(s.userId, 'telegram', { status: 'error', detail: 'Can\'t reach Telegram. Retrying…' })
+      const account = await accounts.get(s.userId, 'telegram')
+      if (account?.session) await resume(s.userId, account.session)
+      return
     }
+    s.failedChecks = 0
+    await sync(s, { announce: false })
   }
 
   async function ended(userId: ObjectId) {
@@ -760,8 +809,19 @@ export function createTelegram(deps: TelegramDeps) {
   }
 
   async function resume(userId: ObjectId, sealedSession: string, attempt = 0) {
-    retries.delete(keyOf(userId))
-    if (sessions.has(keyOf(userId)) || !api) return
+    const key = keyOf(userId)
+    retries.delete(key)
+    if (sessions.has(key) || starting.has(key) || !api) return
+    starting.add(key)
+    try {
+      await connectAndSync(userId, sealedSession, attempt)
+    } finally {
+      starting.delete(key)
+    }
+  }
+
+  async function connectAndSync(userId: ObjectId, sealedSession: string, attempt: number) {
+    if (!api) return
     let session: string
     try {
       session = sealer.open(sealedSession)
@@ -959,15 +1019,19 @@ export function createTelegram(deps: TelegramDeps) {
       }
       await pictures.settled()
       await store.forgetNetwork(userId, 'tga:')
+      avatars.forget(userId, 'tga:')
       await accounts.remove(userId, 'telegram')
       hub.publish(keyOf(userId), { type: 'reloaded' })
     },
 
-    async send(userId: ObjectId, threadId: string, body: string, replyToId?: string): Promise<Message> {
+    /** `quotedHint` is what the device knows of the message replied to, in case the server no longer has it. */
+    async send(userId: ObjectId, threadId: string, body: string, replyToId?: string, quotedHint?: MessageHint): Promise<Message> {
       const s = connected(userId)
       const chatId = threadId.slice('tga:'.length)
-      const quoted = replyToId ? await store.message(userId, replyToId) : null
-      const quotedRef = Number(quoted?.ref?.id) || undefined
+      const stored = replyToId ? await store.message(userId, replyToId) : null
+      const hint = !stored && quotedHint?.id === replyToId ? quotedHint : undefined
+      const quoted = stored ?? (hint ? { id: hint.id, senderId: hint.senderId, body: hint.body ?? '' } : null)
+      const quotedRef = Number(stored?.ref?.id) || (hint ? refFromId(threadId, hint.id) : undefined)
       let sent: { id: number; date: number }
       try {
         sent = await s.client.send(chatId, body, quotedRef)
@@ -990,20 +1054,23 @@ export function createTelegram(deps: TelegramDeps) {
       return wire
     },
 
-    async react(userId: ObjectId, threadId: string, messageId: string, emoji: string | null): Promise<Message> {
+    /**
+     * Reacts to a message. Returns it as stored, or null when the server no longer keeps it (the
+     * device then updates its own copy).
+     */
+    async react(userId: ObjectId, threadId: string, messageId: string, emoji: string | null): Promise<Message | null> {
       const s = connected(userId)
       const target = await store.message(userId, messageId)
-      const ref = Number(target?.ref?.id)
-      if (!target || target.threadId !== threadId || !ref) throw new HttpError(404, 'That message is gone.')
+      if (target && target.threadId !== threadId) throw new HttpError(404, 'That message is gone.')
+      const ref = Number(target?.ref?.id) || refFromId(threadId, messageId)
+      if (!ref) throw new HttpError(404, 'That message is gone.')
       try {
         await s.client.react(threadId.slice('tga:'.length), ref, emoji)
       } catch (error) {
         throw telegramError(error)
       }
       // Telegram sends the new totals too; until then, assume mine changed as asked.
-      const updated = await store.setReactionTotals(userId, messageId, withMyReaction(target.reactions, emoji))
-      if (!updated) throw new HttpError(404, 'That message is gone.')
-      return updated
+      return target ? store.setReactionTotals(userId, messageId, withMyReaction(target.reactions, emoji)) : null
     },
 
     async setTyping(userId: ObjectId, threadId: string, typing: boolean) {
@@ -1011,24 +1078,24 @@ export function createTelegram(deps: TelegramDeps) {
       if (s) await s.client.setTyping(threadId.slice('tga:'.length), typing).catch(report)
     },
 
-    /** Older messages, fetched from Telegram (and kept, so the next time they're stored). */
-    async loadOlder(userId: ObjectId, threadId: string, beforeId: string): Promise<ServerOlderMessages> {
+    /** Older messages, fetched from Telegram (or, while it can't be reached, what's stored). */
+    async loadOlder(userId: ObjectId, threadId: string, before: { id: string } & Partial<MessageHint>): Promise<ServerOlderMessages> {
       const s = sessions.get(keyOf(userId))
-      const before = await store.message(userId, beforeId)
-      const ref = Number(before?.ref?.id)
-      let fetched = 0
-      if (s && ref) {
-        const chatId = threadId.slice('tga:'.length)
-        try {
-          const older = await s.client.history(chatId, OLDER_PAGE, ref)
-          fetched = older.length
-          for (const m of older) await saveMessage(s, m, { live: false })
-        } catch (error) {
-          throw telegramError(error)
-        }
+      const ref = refFromId(threadId, before.id)
+      if (!s || !ref) return store.older(userId, threadId, before, OLDER_PAGE)
+      let older: TgMessage[]
+      try {
+        older = await s.client.history(threadId.slice('tga:'.length), OLDER_PAGE, ref)
+      } catch (error) {
+        throw telegramError(error)
       }
-      const stored = await store.older(userId, threadId, beforeId, OLDER_PAGE)
-      return { messages: stored.messages, hasMore: stored.hasMore || fetched === OLDER_PAGE }
+      const messages: Message[] = []
+      // Oldest first, so replies find what they quote.
+      for (const m of [...older].reverse()) {
+        const saved = await saveMessage(s, m, { live: false })
+        if (saved) messages.push(saved.message)
+      }
+      return { messages, hasMore: older.length === OLDER_PAGE }
     },
 
     async markRead(userId: ObjectId, threadId: string) {
@@ -1040,12 +1107,25 @@ export function createTelegram(deps: TelegramDeps) {
       if (maxId) await s.client.markRead(threadId.slice('tga:'.length), maxId).catch(report)
     },
 
-    /** Reconnects every linked account, e.g. after a restart, and catches up on missed messages. */
+    /**
+     * Reconnects every linked account that isn't connected in this server, and catches up on
+     * missed messages: after a restart, and every few minutes after that, so a link that stopped
+     * for any reason picks up again by itself.
+     */
     async resumeAll() {
       if (!api) return
       for (const account of await accounts.toResume('telegram')) {
+        if (retries.has(keyOf(account.userId))) continue // Already set to try again.
         if (account.session) await resume(account.userId, account.session).catch(report)
       }
+    },
+
+    /** A picture someone is waiting to see that's no longer at hand: downloaded again. */
+    async picture(userId: ObjectId, id: string): Promise<Picture | null> {
+      const s = sessions.get(keyOf(userId))
+      if (!s || !id.startsWith('tga:')) return null
+      const peerId = id.slice('tga:'.length)
+      return live(() => lookUpPicture(s, { id: peerId, kind: Number(peerId) < 0 ? 'group' : 'direct', name: '' }))
     },
 
     async stopAll() {
@@ -1064,6 +1144,9 @@ export function createTelegram(deps: TelegramDeps) {
 
     /** Resolves once queued picture downloads are done (for tests). */
     picturesIdle: () => pictures.idle(),
+
+    /** Runs the regular check of every session now, instead of waiting for it (for tests). */
+    checkAll: () => Promise.all([...sessions.values()].map((s) => check(s))),
   }
 
   function connected(userId: ObjectId): Session {

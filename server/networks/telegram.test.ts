@@ -1,7 +1,7 @@
 import { returnBigInt as bigInt } from 'telegram/Helpers.js'
 import { Api } from 'telegram'
 import { describe, expect, it } from 'vitest'
-import { mediaOf, peerOf, reactionsOf } from './telegram.ts'
+import { mediaOf, peerOf, reactionsOf, refFromId } from './telegram.ts'
 
 const download = async () => undefined
 
@@ -69,5 +69,14 @@ describe('reactions from Telegram', () => {
       { emoji: '👍', count: 1, mine: false },
     ])
     expect(reactionsOf(undefined)).toEqual([])
+  })
+})
+
+describe("Telegram's ids of messages", () => {
+  it('are read from ours, for messages the server no longer keeps', () => {
+    expect(refFromId('tga:5001', 'tga:5001:12')).toBe(12)
+    expect(refFromId('tga:-100777', 'tga:-100777:7')).toBe(7)
+    expect(refFromId('tga:5001', 'tga:5002:12')).toBeUndefined()
+    expect(refFromId('tga:5001', 'tga:5001:nope')).toBeUndefined()
   })
 })

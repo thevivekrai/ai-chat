@@ -28,12 +28,12 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
-import type { ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
+import type { MessageHint, ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
 import type { Attachment, Message, MessageStatus, QuotedMessage } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
-import { createQueue, downloadImage, type Avatars } from '../inbox/avatars.ts'
+import { createLimiter, createQueue, downloadImage, type Avatars, type Picture } from '../inbox/avatars.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
 import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
@@ -226,6 +226,20 @@ function quoteOf(message: proto.IMessage | null | undefined): proto.IContextInfo
 
 /** How many older messages one "Load earlier" asks for. */
 const OLDER_PAGE = 30
+/** After another copy of the server took the link over (a deploy), leave it alone this long. */
+const REPLACED_GRACE_MS = 10 * 60_000
+
+/**
+ * The WhatsApp key of a message from what a device knows about it, for messages the server no
+ * longer keeps. Ids are "wa:<chat jid>:<message id>".
+ */
+export function keyFromHint(threadId: string, hint: Pick<MessageHint, 'id' | 'senderId'>): WAMessageKey | null {
+  if (!hint.id.startsWith(`${threadId}:`)) return null
+  const chatJid = threadId.slice('wa:'.length)
+  const fromMe = hint.senderId === 'me'
+  const participant = isJidGroup(chatJid) && !fromMe && hint.senderId.startsWith('wa:') ? hint.senderId.slice('wa:'.length) : undefined
+  return { remoteJid: chatJid, fromMe, id: hint.id.slice(threadId.length + 1), ...(participant ? { participant } : {}) }
+}
 
 /* ── Manager ─────────────────────────────────────────────────────────────────── */
 
@@ -263,7 +277,13 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   const { col, sealer, store, accounts, hub, media, avatars } = deps
   const createSocket = deps.createSocket ?? createBaileysSocket
   const sessions = new Map<string, Session>()
+  /** Users whose session is being started, so two starts never overlap. */
+  const starting = new Set<string>()
+  /** When another copy of the server last took each user's link over. */
+  const replacedAt = new Map<string, number>()
   const pictures = createQueue()
+  /** Pictures someone is waiting to see, fetched a couple at a time. */
+  const live = createLimiter(2)
   const keyOf = (userId: ObjectId) => userId.toHexString()
   const publish = (s: Session, event: Parameters<Hub['publish']>[1]) => hub.publish(keyOf(s.userId), event)
 
@@ -365,14 +385,27 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       }
       if (status === DisconnectReason.connectionReplaced) {
         // Another copy of this server took over the link, as happens during a deploy: let it have it.
+        replacedAt.set(keyOf(s.userId), Date.now())
         await stop(s)
         return
       }
       // A dropped network connection: try again, backing off.
-      s.retries++
-      if (s.retries === 3) await accounts.set(s.userId, 'whatsapp', { status: 'error', detail: 'Can\'t reach WhatsApp. Retrying…' })
-      setTimeout(() => void connect(s).catch(report), Math.min(60_000, 1000 * 2 ** s.retries))
+      await reconnectLater(s)
     }
+  }
+
+  /** Tries to connect again, backing off, for as long as the link is wanted. */
+  async function reconnectLater(s: Session) {
+    if (s.stopped) return
+    s.retries++
+    if (s.retries === 3) await accounts.set(s.userId, 'whatsapp', { status: 'error', detail: 'Can\'t reach WhatsApp. Retrying…' })
+    setTimeout(() => {
+      // A failed attempt (WhatsApp unreachable while setting up) is retried like a dropped connection.
+      connect(s).catch((error) => {
+        report(error)
+        void reconnectLater(s).catch(report)
+      })
+    }, Math.min(60_000, 1000 * 2 ** s.retries))
   }
 
   async function finishSync(s: Session) {
@@ -414,27 +447,34 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     })
   }
 
-  /** Copies a person's or group's picture to the server, in the background. */
+  /** Checks a person's or group's picture, in the background. */
   function fetchPicture(s: Session, jid: string) {
     const id = `wa:${jid}`
     pictures.add(`${keyOf(s.userId)}:${id}`, async () => {
       if (s.stopped || !s.socket || (await avatars.fresh(s.userId, id))) return
-      // WhatsApp answers "not found" for no picture, and for pictures hidden by privacy settings.
-      const link = await s.socket.profilePictureUrl(jid, 'preview').catch(() => undefined)
-      const image = link ? await downloadImage(link).catch(() => null) : null
-      if (s.stopped) return
-      const url = await avatars.save(s.userId, id, image)
-      if (!url) return
-      if (isJidGroup(jid)) {
-        const thread = await store.setThreadAvatar(s.userId, id, url)
-        if (thread) publish(s, { type: 'thread.updated', thread })
-      } else {
-        // The picture can be ready before the contact is: make sure there's one to put it on.
-        if (!(await store.contact(s.userId, id))) await upsertContact(s, jid)
-        const contact = await store.setContactAvatar(s.userId, id, url)
-        if (contact) publish(s, { type: 'contact.updated', contact })
-      }
+      await lookUpPicture(s, jid)
     })
+  }
+
+  /** Asks WhatsApp for a picture, records it, and puts its URL on the contact or group. */
+  async function lookUpPicture(s: Session, jid: string): Promise<Picture | null> {
+    const id = `wa:${jid}`
+    // WhatsApp answers "not found" for no picture, and for pictures hidden by privacy settings.
+    const link = await s.socket?.profilePictureUrl(jid, 'preview').catch(() => undefined)
+    const image = link ? await downloadImage(link).catch(() => null) : null
+    if (s.stopped) return null
+    const url = await avatars.save(s.userId, id, image, link)
+    if (!url) return null
+    if (isJidGroup(jid)) {
+      const thread = await store.setThreadAvatar(s.userId, id, url)
+      if (thread) publish(s, { type: 'thread.updated', thread })
+    } else {
+      // The picture can be ready before the contact is: make sure there's one to put it on.
+      if (!(await store.contact(s.userId, id))) await upsertContact(s, jid)
+      const contact = await store.setContactAvatar(s.userId, id, url)
+      if (contact) publish(s, { type: 'contact.updated', contact })
+    }
+    return image
   }
 
   /** Typing ("composing") and recording show as typing; anything else ends it. */
@@ -669,7 +709,14 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       historyAsked: new Map(),
     }
     sessions.set(keyOf(userId), s)
-    await connect(s)
+    if (linking) await connect(s)
+    else {
+      // Resuming: if WhatsApp can't be reached now, keep trying rather than give up on the link.
+      await connect(s).catch((error) => {
+        report(error)
+        void reconnectLater(s).catch(report)
+      })
+    }
     return s
   }
 
@@ -731,15 +778,19 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       await pictures.settled()
       await col.waAuth.deleteMany({ userId })
       await store.forgetNetwork(userId, 'wa:')
+      avatars.forget(userId, 'wa:')
       await accounts.remove(userId, 'whatsapp')
       hub.publish(keyOf(userId), { type: 'reloaded' })
     },
 
-    async send(userId: ObjectId, threadId: string, body: string, replyToId?: string): Promise<Message> {
+    /** `quoted` is what the device knows of the message replied to, in case the server no longer has it. */
+    async send(userId: ObjectId, threadId: string, body: string, replyToId?: string, quotedHint?: MessageHint): Promise<Message> {
       const socket = connected(userId)
       const jid = threadId.slice('wa:'.length)
-      const quoted = replyToId ? await store.message(userId, replyToId) : null
-      const quotedKey = (quoted?.ref as { key?: WAMessageKey } | undefined)?.key
+      const stored = replyToId ? await store.message(userId, replyToId) : null
+      const hint = !stored && quotedHint?.id === replyToId ? quotedHint : undefined
+      const quoted = stored ?? (hint ? { id: hint.id, senderId: hint.senderId, body: hint.body ?? '' } : null)
+      const quotedKey = (stored?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint ? keyFromHint(threadId, hint) : null)
       const sent = await socket.sendMessage(
         jid,
         { text: body },
@@ -763,15 +814,19 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       return wire
     },
 
-    async react(userId: ObjectId, threadId: string, messageId: string, emoji: string | null): Promise<Message> {
+    /**
+     * Reacts to a message. Returns it as stored, or null when the server no longer keeps it (the
+     * device then updates its own copy); `hint` is what the device knows of it.
+     */
+    async react(userId: ObjectId, threadId: string, messageId: string, emoji: string | null, hint?: MessageHint): Promise<Message | null> {
       const socket = connected(userId)
       const target = await store.message(userId, messageId)
-      const key = (target?.ref as { key?: WAMessageKey } | undefined)?.key
-      if (!target || target.threadId !== threadId || !key) throw new HttpError(404, 'That message is gone.')
+      if (target && target.threadId !== threadId) throw new HttpError(404, 'That message is gone.')
+      const key =
+        (target?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint?.id === messageId ? keyFromHint(threadId, hint) : null)
+      if (!key) throw new HttpError(404, 'That message is gone.')
       await socket.sendMessage(threadId.slice('wa:'.length), { react: { text: emoji ?? '', key } })
-      const updated = await store.setReaction(userId, messageId, 'me', emoji)
-      if (!updated) throw new HttpError(404, 'That message is gone.')
-      return updated
+      return target ? store.setReaction(userId, messageId, 'me', emoji) : null
     },
 
     async setTyping(userId: ObjectId, threadId: string, typing: boolean) {
@@ -786,18 +841,21 @@ export function createWhatsApp(deps: WhatsAppDeps) {
      * Older messages: what's stored first. Beyond that, the phone is asked for more; they arrive
      * a little later as new messages in the chat.
      */
-    async loadOlder(userId: ObjectId, threadId: string, beforeId: string): Promise<ServerOlderMessages> {
-      const stored = await store.older(userId, threadId, beforeId, OLDER_PAGE)
+    async loadOlder(userId: ObjectId, threadId: string, before: { id: string } & Partial<MessageHint>): Promise<ServerOlderMessages> {
+      const stored = await store.older(userId, threadId, before, OLDER_PAGE)
       if (stored.hasMore) return stored
       const s = sessions.get(keyOf(userId))
-      const oldestId = stored.messages[0]?.id ?? beforeId
+      const oldestId = stored.messages[0]?.id ?? before.id
       // Asking again from the same message means the phone had nothing more.
       if (!s?.socket || !s.opened || s.historyAsked.get(threadId) === oldestId) return stored
+      // The phone is asked from the oldest message known, as the server has it or as the device does.
       const oldest = await store.message(userId, oldestId)
-      const key = (oldest?.ref as { key?: WAMessageKey } | undefined)?.key
-      if (!oldest || !key) return stored
+      const hint = !oldest && before.senderId && before.sentAt ? { id: before.id, senderId: before.senderId, sentAt: before.sentAt } : null
+      const key = (oldest?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint ? keyFromHint(threadId, hint) : null)
+      const sentAt = Date.parse(oldest?.sentAt ?? hint?.sentAt ?? '')
+      if (!key || Number.isNaN(sentAt)) return stored
       s.historyAsked.set(threadId, oldestId)
-      await s.socket.fetchMessageHistory(50, key, Math.floor(Date.parse(oldest.sentAt) / 1000)).catch(report)
+      await s.socket.fetchMessageHistory(50, key, Math.floor(sentAt / 1000)).catch(report)
       return { messages: stored.messages, hasMore: true }
     },
 
@@ -813,28 +871,29 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       if (keys.length) await s.socket.readMessages(keys).catch(report)
     },
 
-    /** Reconnects every linked account, e.g. after a restart. */
+    /**
+     * Reconnects every linked account that isn't connected in this server: after a restart, and
+     * every few minutes after that, so a link that stopped for any reason picks up again by itself.
+     */
     async resumeAll() {
       for (const account of await accounts.toResume('whatsapp')) {
-        if (sessions.has(keyOf(account.userId))) continue
-        let auth: Awaited<ReturnType<typeof mongoAuthState>>
+        const key = keyOf(account.userId)
+        if (sessions.has(key) || starting.has(key)) continue
+        if (Date.now() - (replacedAt.get(key) ?? 0) < REPLACED_GRACE_MS) continue
+        starting.add(key)
         try {
-          auth = await mongoAuthState(col, sealer, account.userId)
-        } catch {
-          // Sealed with another key: the link can't be used any more.
-          await col.waAuth.deleteMany({ userId: account.userId })
-          await accounts.set(account.userId, 'whatsapp', {
-            status: 'disconnected',
-            detail: "The server's encryption key changed, so the link can't be used. Link WhatsApp again.",
-          })
-          continue
+          await resume(account)
+        } finally {
+          starting.delete(key)
         }
-        if (!auth.state.creds.registered) {
-          await accounts.set(account.userId, 'whatsapp', { status: 'disconnected', detail: 'The link was never finished. Link again.' })
-          continue
-        }
-        await startSession(account.userId, null).catch(report)
       }
+    },
+
+    /** A picture someone is waiting to see that's no longer at hand: asked of WhatsApp again. */
+    async picture(userId: ObjectId, id: string): Promise<Picture | null> {
+      const s = sessions.get(keyOf(userId))
+      if (!s?.socket || !s.opened || !id.startsWith('wa:')) return null
+      return live(() => lookUpPicture(s, id.slice('wa:'.length)))
     },
 
     async stopAll() {
@@ -847,6 +906,27 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
     /** Resolves once queued picture downloads are done (for tests). */
     picturesIdle: () => pictures.idle(),
+  }
+
+  /** Reconnects one linked account from its stored keys. */
+  async function resume(account: { userId: ObjectId }) {
+    let auth: Awaited<ReturnType<typeof mongoAuthState>>
+    try {
+      auth = await mongoAuthState(col, sealer, account.userId)
+    } catch {
+      // Sealed with another key: the link can't be used any more.
+      await col.waAuth.deleteMany({ userId: account.userId })
+      await accounts.set(account.userId, 'whatsapp', {
+        status: 'disconnected',
+        detail: "The server's encryption key changed, so the link can't be used. Link WhatsApp again.",
+      })
+      return
+    }
+    if (!auth.state.creds.registered) {
+      await accounts.set(account.userId, 'whatsapp', { status: 'disconnected', detail: 'The link was never finished. Link again.' })
+      return
+    }
+    await startSession(account.userId, null).catch(report)
   }
 }
 

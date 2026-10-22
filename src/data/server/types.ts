@@ -48,7 +48,25 @@ export interface ServerFeatures {
   uploads: boolean
 }
 
-/** Linked chats on load. */
+/**
+ * The server keeps only the latest messages of each chat, to hand them to the user's devices;
+ * each device keeps its own copy of everything older, and anything older still comes from the
+ * network when asked for. This keeps the server's database small however much people chat.
+ */
+export const MESSAGES_KEPT_PER_CHAT = 40
+
+/**
+ * What a device knows about a message the server may no longer keep: enough for the network to
+ * find it (to react to it, quote it or load what came before it).
+ */
+export interface MessageHint {
+  id: string
+  senderId: string
+  sentAt: string
+  body?: string
+}
+
+/** Linked chats on load: every chat, and the latest messages of each (as many as the server keeps). */
 export interface ServerInbox {
   threads: Thread[]
   contacts: Contact[]

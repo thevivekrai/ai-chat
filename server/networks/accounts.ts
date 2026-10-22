@@ -69,9 +69,14 @@ export function createAccounts(col: Collections, hub: Hub) {
       hub.publish(userId.toHexString(), { type: 'account.updated', account: { network, status: 'unlinked' } })
     },
 
-    /** Accounts to reconnect when the server starts. */
+    /** Accounts to reconnect when the server starts (and whenever one isn't connected). */
     async toResume(network: LinkedNetwork) {
       return col.accounts.find({ network, status: { $in: ['connected', 'error'] } }).toArray()
+    },
+
+    /** Whether anyone has an account linked that the server should stay connected to. */
+    async anyLinked(): Promise<boolean> {
+      return (await col.accounts.countDocuments({ status: { $in: ['connected', 'error'] } }, { limit: 1 })) > 0
     },
   }
 }
