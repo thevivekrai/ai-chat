@@ -15,7 +15,7 @@ export function MobileNavDrawer() {
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <motion.div
-            className="absolute inset-0 bg-[rgb(20_22_60/0.18)] backdrop-blur-[3px] dark:bg-black/45"
+            className="absolute inset-0 bg-[rgb(15_23_42/0.12)] backdrop-blur-[3px] dark:bg-black/45"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

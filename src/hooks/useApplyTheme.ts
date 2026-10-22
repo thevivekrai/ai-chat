@@ -10,6 +10,6 @@ export function useApplyTheme() {
 
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#07070f' : '#eceef9')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0b0d10' : '#e8ebf0')
   }, [dark])
 }

@@ -122,100 +122,114 @@
 
 :root {
   color-scheme: light;
-  --canvas: #eceef9;
-  --glass: rgb(255 255 255 / 0.56);
-  --glass-thick: rgb(250 250 255 / 0.84);
+  --canvas: #e8ebf0;
+  /* Clear glass: barely tinted, so what's behind it shows through. */
+  --glass: rgb(255 255 255 / 0.22);
+  --glass-thick: rgb(255 255 255 / 0.7);
   /* Kept modest on purpose: software-composited browsers skip larger backdrop blurs. */
   --glass-blur: 12px;
-  --surface: rgb(255 255 255 / 0.66);
-  --surface-solid: #f5f6fc;
-  --surface-2: rgb(28 32 84 / 0.045);
-  --surface-3: rgb(28 32 84 / 0.09);
-  --line: rgb(28 32 84 / 0.085);
-  --line-strong: rgb(28 32 84 / 0.17);
-  --fg: #12131b;
-  --muted: #4d5061;
-  --faint: #7a7d8f;
+  --glass-saturate: 115%;
+  --sheen: linear-gradient(135deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.06) 34%, rgb(255 255 255 / 0) 60%);
+  --surface: rgb(255 255 255 / 0.5);
+  --surface-solid: #f4f6f9;
+  --surface-2: rgb(15 23 42 / 0.045);
+  --surface-3: rgb(15 23 42 / 0.09);
+  --line: rgb(15 23 42 / 0.09);
+  --line-strong: rgb(15 23 42 / 0.18);
+  --fg: #0e1116;
+  --muted: #454c59;
+  --faint: #727987;
   --accent: #5b5bd6;
   --accent-hover: #4d4dc9;
   --accent-fg: #ffffff;
-  --accent-soft: rgb(91 91 214 / 0.12);
+  --accent-soft: rgb(91 91 214 / 0.1);
   --accent-ink: #3d3dae;
-  --bubble-in: rgb(255 255 255 / 0.8);
-  --pill: rgb(255 255 255 / 0.74);
-  --pill-accent: rgb(229 229 255 / 0.9);
+  --bubble-in: rgb(255 255 255 / 0.62);
+  --pill: rgb(255 255 255 / 0.62);
+  --pill-accent: rgb(255 255 255 / 0.72);
   --ring: rgb(91 91 214 / 0.4);
-  /* The bright rim along a slab's edge: strongest where light would catch it (top left). */
+  /* The bright rim along a slab's edge: strongest where light would catch it (top left, bottom right). */
   --edge: linear-gradient(
-    160deg,
-    rgb(255 255 255 / 0.95),
-    rgb(255 255 255 / 0.35) 28%,
-    rgb(255 255 255 / 0.1) 55%,
-    rgb(255 255 255 / 0.6)
+    150deg,
+    rgb(255 255 255 / 1),
+    rgb(255 255 255 / 0.28) 26%,
+    rgb(255 255 255 / 0.05) 52%,
+    rgb(255 255 255 / 0.3) 78%,
+    rgb(255 255 255 / 0.85)
   );
-  --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.7), 0 1px 2px rgb(24 26 70 / 0.05), 0 8px 24px -12px rgb(24 26 70 / 0.18);
-  --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.8), 0 28px 64px -18px rgb(24 26 70 / 0.38), 0 2px 10px rgb(24 26 70 / 0.08);
-  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.75), 0 1px 1px rgb(24 26 70 / 0.04), 0 14px 36px -16px rgb(24 26 70 / 0.3);
-  --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 0.95), 0 0 0 1px rgb(255 255 255 / 0.5), 0 4px 14px -6px rgb(24 26 70 / 0.22);
-  --sh-bubble: inset 0 0 0 1px rgb(255 255 255 / 0.7), 0 1px 2px rgb(24 26 70 / 0.07);
-  --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.28), 0 3px 10px -4px rgb(70 70 200 / 0.55);
-  --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.32), 0 6px 18px -8px rgb(70 70 200 / 0.75);
+  --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.8), 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 22px -12px rgb(15 23 42 / 0.16);
+  --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 0 22px 0 rgb(255 255 255 / 0.35), 0 26px 60px -20px rgb(15 23 42 / 0.32), 0 2px 8px rgb(15 23 42 / 0.07);
+  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 -1px 0 0 rgb(255 255 255 / 0.4), inset 0 0 26px 0 rgb(255 255 255 / 0.3), 0 1px 1px rgb(15 23 42 / 0.04), 0 14px 34px -16px rgb(15 23 42 / 0.26);
+  --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 1), 0 0 0 1px rgb(255 255 255 / 0.55), 0 4px 12px -6px rgb(15 23 42 / 0.22);
+  --sh-bubble: inset 0 0 0 1px rgb(255 255 255 / 0.7), 0 1px 2px rgb(15 23 42 / 0.07);
+  --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.3), 0 3px 9px -4px rgb(70 70 200 / 0.45);
+  --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.32), 0 5px 14px -7px rgb(70 70 200 / 0.6);
 
-  /* Wallpaper */
-  --wall-base: linear-gradient(140deg, #eef0fc 0%, #f6eef8 48%, #eaf3f9 100%);
-  --blob-1: rgb(118 112 255 / 0.5);
-  --blob-2: rgb(255 132 196 / 0.42);
-  --blob-3: rgb(84 196 250 / 0.42);
-  --blob-4: rgb(255 186 116 / 0.36);
-  --blob-5: rgb(186 136 255 / 0.32);
-  --grain: 0.05;
+  /* Wallpaper: silver, with soft light and shade for the glass to catch. No hue. */
+  --wall-base: linear-gradient(160deg, #cdd3dc 0%, #e9ecf1 46%, #c4cbd6 100%);
+  --blob-1: rgb(255 255 255 / 1);
+  --blob-2: rgb(71 85 105 / 0.5);
+  --blob-3: rgb(255 255 255 / 0.95);
+  --blob-4: rgb(71 85 105 / 0.42);
+  --blob-5: rgb(255 255 255 / 0.8);
+  /* Crisp shapes: sharp outside the glass, softened behind it, which is what makes it read as glass. */
+  --shape-disc: rgb(255 255 255 / 0.75);
+  --shape-ring: rgb(51 65 85 / 0.32);
+  --shape-dim: rgb(51 65 85 / 0.14);
+  --grain: 0.04;
 }
 
 .dark {
   color-scheme: dark;
-  --canvas: #07070f;
-  --glass: rgb(20 21 33 / 0.58);
-  --glass-thick: rgb(26 27 41 / 0.86);
-  --surface: rgb(255 255 255 / 0.065);
-  --surface-solid: #1a1b28;
+  --canvas: #0b0d10;
+  --glass: rgb(255 255 255 / 0.055);
+  --glass-thick: rgb(28 30 36 / 0.8);
+  --glass-saturate: 115%;
+  --sheen: linear-gradient(135deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.02) 34%, rgb(255 255 255 / 0) 60%);
+  --surface: rgb(255 255 255 / 0.06);
+  --surface-solid: #1b1e24;
   --surface-2: rgb(255 255 255 / 0.055);
   --surface-3: rgb(255 255 255 / 0.1);
-  --line: rgb(255 255 255 / 0.085);
-  --line-strong: rgb(255 255 255 / 0.17);
-  --fg: #eef0f7;
-  --muted: #acafbf;
-  --faint: #7c7f92;
+  --line: rgb(255 255 255 / 0.09);
+  --line-strong: rgb(255 255 255 / 0.18);
+  --fg: #eef0f4;
+  --muted: #a9aeb9;
+  --faint: #777d8a;
   --accent: #6767e6;
   --accent-hover: #7777ee;
   --accent-fg: #ffffff;
-  --accent-soft: rgb(124 124 255 / 0.17);
+  --accent-soft: rgb(124 124 255 / 0.15);
   --accent-ink: #b2b4ff;
-  --bubble-in: rgb(255 255 255 / 0.085);
+  --bubble-in: rgb(255 255 255 / 0.09);
   --pill: rgb(255 255 255 / 0.11);
-  --pill-accent: rgb(132 132 255 / 0.22);
+  --pill-accent: rgb(255 255 255 / 0.14);
   --ring: rgb(150 150 255 / 0.5);
   --edge: linear-gradient(
-    160deg,
-    rgb(255 255 255 / 0.24),
-    rgb(255 255 255 / 0.07) 30%,
-    rgb(255 255 255 / 0.03) 58%,
-    rgb(255 255 255 / 0.12)
+    150deg,
+    rgb(255 255 255 / 0.34),
+    rgb(255 255 255 / 0.07) 26%,
+    rgb(255 255 255 / 0.02) 52%,
+    rgb(255 255 255 / 0.09) 78%,
+    rgb(255 255 255 / 0.26)
   );
-  --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.35), 0 10px 28px -14px rgb(0 0 0 / 0.6);
-  --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.08), 0 30px 70px -18px rgb(0 0 0 / 0.75), 0 2px 10px rgb(0 0 0 / 0.4);
-  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.07), 0 1px 1px rgb(0 0 0 / 0.3), 0 18px 44px -18px rgb(0 0 0 / 0.7);
-  --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 0.14), 0 0 0 1px rgb(255 255 255 / 0.05), 0 6px 16px -8px rgb(0 0 0 / 0.7);
+  --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.07), 0 1px 2px rgb(0 0 0 / 0.35), 0 10px 28px -14px rgb(0 0 0 / 0.6);
+  --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.1), inset 0 0 22px 0 rgb(255 255 255 / 0.04), 0 30px 70px -18px rgb(0 0 0 / 0.75), 0 2px 10px rgb(0 0 0 / 0.4);
+  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.12), inset 0 -1px 0 0 rgb(255 255 255 / 0.04), inset 0 0 26px 0 rgb(255 255 255 / 0.03), 0 1px 1px rgb(0 0 0 / 0.3), 0 18px 44px -18px rgb(0 0 0 / 0.7);
+  --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 0.16), 0 0 0 1px rgb(255 255 255 / 0.05), 0 6px 16px -8px rgb(0 0 0 / 0.7);
   --sh-bubble: inset 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.25);
-  --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.22), 0 4px 12px -5px rgb(80 80 255 / 0.55);
-  --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.25), 0 8px 22px -10px rgb(90 90 255 / 0.8);
+  --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.22), 0 4px 10px -5px rgb(80 80 255 / 0.45);
+  --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.25), 0 6px 18px -9px rgb(90 90 255 / 0.6);
 
-  --wall-base: linear-gradient(140deg, #08081a 0%, #0c0a1a 50%, #060c16 100%);
-  --blob-1: rgb(92 84 240 / 0.42);
-  --blob-2: rgb(214 52 140 / 0.26);
-  --blob-3: rgb(22 150 220 / 0.28);
-  --blob-4: rgb(230 110 40 / 0.16);
-  --blob-5: rgb(150 70 240 / 0.28);
-  --grain: 0.07;
+  --wall-base: linear-gradient(160deg, #07080a 0%, #11141a 48%, #06070a 100%);
+  --blob-1: rgb(255 255 255 / 0.2);
+  --blob-2: rgb(120 138 168 / 0.34);
+  --blob-3: rgb(255 255 255 / 0.14);
+  --blob-4: rgb(130 148 178 / 0.28);
+  --blob-5: rgb(255 255 255 / 0.1);
+  --shape-disc: rgb(255 255 255 / 0.08);
+  --shape-ring: rgb(255 255 255 / 0.2);
+  --shape-dim: rgb(140 160 195 / 0.16);
+  --grain: 0.06;
 }
 
 @layer base {
@@ -240,12 +254,12 @@
     color: inherit;
   }
   dialog::backdrop {
-    background: rgb(20 22 60 / 0.16);
-    -webkit-backdrop-filter: blur(6px) saturate(120%);
-    backdrop-filter: blur(6px) saturate(120%);
+    background: rgb(15 23 42 / 0.1);
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
   }
   .dark dialog::backdrop {
-    background: rgb(0 0 0 / 0.42);
+    background: rgb(0 0 0 / 0.4);
   }
   button:not(:disabled),
   [role='button']:not([aria-disabled='true']) {
@@ -256,15 +270,17 @@
 /* A translucent slab: blurs and brightens whatever is behind it. */
 @utility glass {
   background-color: var(--glass);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(175%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(175%);
+  background-image: var(--sheen);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 /* Denser glass for things that float above the slabs: menus, dialogs, toasts, sheets. */
 @utility glass-thick {
   background-color: var(--glass-thick);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  background-image: var(--sheen);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 /* The light-catching rim. The element must be positioned (relative, absolute or fixed). */
@@ -364,6 +380,18 @@
     background: radial-gradient(closest-side, var(--blob-5), transparent);
     animation: drift-5 70s ease-in-out infinite alternate;
   }
+  .wallpaper::before {
+    content: '';
+    position: absolute;
+    inset: -12vmax;
+    background:
+      radial-gradient(circle at 24% 34%, var(--shape-disc) 0 13vmax, transparent calc(13vmax + 1px)),
+      radial-gradient(circle at 74% 72%, transparent 0 17vmax, var(--shape-ring) 17vmax calc(17vmax + 2px), transparent calc(17vmax + 3px)),
+      radial-gradient(circle at 64% 22%, var(--shape-dim) 0 8vmax, transparent calc(8vmax + 1px)),
+      radial-gradient(circle at 12% 84%, transparent 0 9vmax, var(--shape-ring) 9vmax calc(9vmax + 2px), transparent calc(9vmax + 3px));
+    animation: drift-shapes 90s ease-in-out infinite alternate;
+    will-change: transform;
+  }
   /* Fine grain keeps the gradients from banding and gives the glass something to catch. */
   .wallpaper::after {
     content: '';
@@ -373,6 +401,11 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
+  @keyframes drift-shapes {
+    to {
+      transform: translate3d(5vw, -4vh, 0) rotate(2deg);
+    }
+  }
   @keyframes drift-1 {
     to {
       transform: translate3d(9vw, 7vh, 0) scale(1.12);
@@ -402,7 +435,8 @@
 
 /* Phones and small tablets keep a still wallpaper: re-blurring every frame costs battery. */
 @media (max-width: 47.99rem) {
-  .wallpaper > span {
+  .wallpaper > span,
+  .wallpaper::before {
     animation: none !important;
   }
 }
@@ -443,7 +477,8 @@
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
-  .wallpaper > span {
+  .wallpaper > span,
+  .wallpaper::before {
     animation: none !important;
   }
 }

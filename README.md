@@ -14,8 +14,9 @@ It runs entirely in the browser, with no server of its own:
 - **Demo inbox.** 15 sample conversations across five networks, generated relative to now, in
   English and Hinglish. It's on by default and can be turned off once your own chats are in.
 
-The interface is "liquid glass": translucent, blurred columns floating over a soft, slowly drifting
-colour field, in light and dark.
+The interface is clear "liquid glass": nearly untinted, lightly blurred columns with bright specular
+edges, floating over a neutral silver (or graphite) backdrop of soft light and a few crisp shapes
+that the glass softens as they pass behind it. Light and dark.
 
 ![Needs-reply queue with AI priorities, a conversation, suggested drafts and the AI panel](docs/screenshots/inbox-light.jpg)
 
