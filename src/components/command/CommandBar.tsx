@@ -23,7 +23,7 @@ import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Modal } from '@/components/ui/Modal'
-import { NetworkDot } from '@/components/ui/NetworkDot'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { api } from '@/data/api'
 import type { Message, SearchHit, Thread } from '@/data/types'
@@ -293,7 +293,7 @@ function CommandBody({ close }: { close(): void }) {
                   tall
                 >
                   <span className="flex items-center gap-1.5 text-xs text-muted">
-                    <NetworkDot network={thread.network} />
+                    <NetworkIcon network={thread.network} />
                     <span className="truncate font-medium text-fg">{thread.title}</span>
                     <span className="shrink-0">· {NETWORKS[thread.network].name}</span>
                     <span className="shrink-0">· {formatAgo(message.sentAt, now)}</span>

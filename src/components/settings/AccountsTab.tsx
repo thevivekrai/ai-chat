@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ExternalLink, Loader2, RotateCcw, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { NetworkDot } from '@/components/ui/NetworkDot'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Switch } from '@/components/ui/Switch'
 import type { ConnectorId, ConnectorStatus } from '@/data/api'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
@@ -59,7 +59,7 @@ function TelegramCard({ status }: { status: ConnectorStatus | null }) {
   return (
     <Card>
       <CardHeader
-        icon={<NetworkDot network="telegram" className="mt-1 size-2.5" />}
+        icon={<NetworkIcon network="telegram" className="size-5" />}
         title={status?.account ? `Telegram bot · ${status.account}` : 'Telegram bot'}
         aside={status && <StatusPill status={status} />}
       >
@@ -141,7 +141,7 @@ function MatrixCard({ status }: { status: ConnectorStatus | null }) {
   return (
     <Card>
       <CardHeader
-        icon={<NetworkDot network="matrix" className="mt-1 size-2.5" />}
+        icon={<NetworkIcon network="matrix" className="size-5" />}
         title={status?.account ? `Matrix · ${status.account}` : 'Matrix'}
         aside={status && <StatusPill status={status} />}
       >

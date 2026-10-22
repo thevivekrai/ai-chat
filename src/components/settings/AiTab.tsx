@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { CLAUDE_MODELS, testClaudeKey, type ClaudeModel } from '@/ai'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
-import { NetworkDot } from '@/components/ui/NetworkDot'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Switch } from '@/components/ui/Switch'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
@@ -224,7 +224,7 @@ function ConsentCard() {
                   <Avatar name={t.title} seed={t.id} size="xs" group={t.kind === 'group'} />
                   <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
                   <span className="flex shrink-0 items-center gap-1.5 text-xs text-faint">
-                    <NetworkDot network={t.network} /> {NETWORKS[t.network].name}
+                    <NetworkIcon network={t.network} /> {NETWORKS[t.network].name}
                   </span>
                 </label>
               </li>

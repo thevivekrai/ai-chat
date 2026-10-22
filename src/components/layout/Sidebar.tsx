@@ -4,6 +4,7 @@ import { CalendarClock, Hourglass, Inbox, Keyboard, ListTodo, MessagesSquare, Sp
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { cn } from '@/lib/cn'
 import { NETWORK_ORDER, NETWORKS } from '@/lib/networks'
 import { turnOnAi } from '@/store/actions'
@@ -116,7 +117,7 @@ export function Sidebar({ className }: { className?: string }) {
                       : 'border-line bg-surface text-muted hover:border-line-strong hover:text-fg',
                   )}
                 >
-                  <span className={cn('size-2 rounded-full', NETWORKS[id].dot)} aria-hidden />
+                  <NetworkIcon network={id} className="size-3.5" />
                   {NETWORKS[id].name}
                 </button>
               )

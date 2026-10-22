@@ -1,7 +1,7 @@
 import type { NetworkId } from '@/data/types'
 import { cn } from '@/lib/cn'
 import { hashString, initials, isEmojiAvatar } from '@/lib/format'
-import { NETWORKS } from '@/lib/networks'
+import { NetworkIcon } from './NetworkIcon'
 
 const PALETTE = [
   'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
@@ -21,7 +21,7 @@ const SIZES = {
   lg: 'size-12 text-[15px]',
 }
 
-const DOT_SIZES = { xs: 'size-2', sm: 'size-2.5', md: 'size-3', lg: 'size-3.5' }
+const BADGE_SIZES = { xs: 'size-3.5', sm: 'size-4', md: 'size-5', lg: 'size-[22px]' }
 
 const EMOJI_SIZES = { xs: 'text-sm', sm: 'text-base', md: 'text-xl', lg: 'text-2xl' }
 
@@ -53,13 +53,9 @@ export function Avatar({ name, seed = name, size = 'md', group = false, network,
         {label}
       </span>
       {network && (
-        <span
-          title={NETWORKS[network].name}
-          className={cn(
-            'absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-surface-solid',
-            NETWORKS[network].dot,
-            DOT_SIZES[size],
-          )}
+        <NetworkIcon
+          network={network}
+          className={cn('absolute -right-1 -bottom-1 ring-2 ring-surface-solid', BADGE_SIZES[size])}
         />
       )}
     </span>

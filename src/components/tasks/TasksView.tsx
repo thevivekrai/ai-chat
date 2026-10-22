@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { ExtractedTask } from '@/ai'
 import { EmptyState } from '@/components/threads/EmptyStates'
 import { Button } from '@/components/ui/Button'
-import { NetworkDot } from '@/components/ui/NetworkDot'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Panel } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import type { NetworkId, Task, Thread } from '@/data/types'
@@ -245,7 +245,7 @@ function TaskMeta({
           className="inline-flex min-w-0 items-center gap-1.5 hover:text-fg"
           title="Open the message"
         >
-          <NetworkDot network={thread.network} />
+          <NetworkIcon network={thread.network} />
           <span className="truncate">{thread.title}</span>
         </button>
       )}

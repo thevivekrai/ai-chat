@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
-import { NetworkDot } from '@/components/ui/NetworkDot'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Menu } from '@/components/ui/Popover'
 import { useBreakpoint } from '@/lib/media'
 import { NETWORKS } from '@/lib/networks'
@@ -56,7 +56,7 @@ export function ConversationHeader({ threadId }: { threadId: string }) {
       <div className="min-w-0 flex-1">
         <h2 className="truncate text-[15px] leading-tight font-semibold">{thread.title}</h2>
         <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
-          <NetworkDot network={thread.network} />
+          <NetworkIcon network={thread.network} />
           <span className="truncate">{subtitle}</span>
         </p>
       </div>
