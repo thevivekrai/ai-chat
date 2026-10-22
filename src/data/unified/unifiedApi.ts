@@ -5,6 +5,8 @@ import { TelegramConnector } from '../connectors/telegram/telegramConnector'
 import type { Connector, ConnectorEvent, ConnectorId } from '../connectors/types'
 import { createMockApi } from '../mock/mockApi'
 import { searchMessages } from '../search'
+import { serverApi } from '../server/serverApi'
+import { ServerConnector } from '../server/serverConnector'
 import type { InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
 import { ME_ID } from '../types'
 import {
@@ -21,7 +23,8 @@ import {
 /**
  * The inbox as one API over every source: the demo inbox and any connected accounts.
  *
- * - Reads merge every source; writes are routed by id prefix ("tg:", "mx:", none for demo chats).
+ * - Reads merge every source; writes are routed by id prefix ("tg:", "mx:", "wa:"/"tga:" for
+ *   accounts linked on the Tidings server, none for demo chats).
  * - Done/snoozed state, tasks and "send later" for real accounts live on this device, since the
  *   networks have no such thing. Scheduled messages go out while the app is open; one that was
  *   due while it was closed waits for the user rather than arriving hours late.
@@ -34,11 +37,12 @@ const MISSED_AFTER_MS = 60 * 60 * 1000
 
 const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 
-type SourceId = 'demo' | ConnectorId
+type SourceId = 'demo' | ConnectorId | 'server'
 
 export function sourceOf(id: string): SourceId {
   if (id.startsWith('tg:')) return 'telegram'
   if (id.startsWith('mx:')) return 'matrix'
+  if (id.startsWith('wa:') || id.startsWith('tga:')) return 'server'
   return 'demo'
 }
 
@@ -53,6 +57,9 @@ export function createUnifiedApi(): InboxApi {
   let config = loadConfig()
   let local: LocalState = loadLocal()
   const connectors = new Map<ConnectorId, { connector: Connector; detach: () => void }>()
+  /** Accounts linked on the Tidings server, while signed in to it. */
+  let server: { connector: ServerConnector; name: string; detach: () => void } | null = null
+  const signedOutListeners = new Set<() => void>()
   /** Latest copy of every connector thread, for events that need the whole thread. */
   const threadCache = new Map<string, Thread>()
   const listeners = new Set<(event: InboxEvent) => void>()
@@ -81,12 +88,17 @@ export function createUnifiedApi(): InboxApi {
 
   for (const id of ['telegram', 'matrix'] as const) attach(id)
 
+  /** Every connected source besides the demo inbox. */
+  const sources = (): Connector[] => [...[...connectors.values()].map((e) => e.connector), ...(server ? [server.connector] : [])]
+
   function connectorFor(threadId: string): Connector {
     const source = sourceOf(threadId)
-    const entry = source === 'demo' ? undefined : connectors.get(source)
-    if (!entry) throw new Error('This account is no longer connected.')
-    return entry.connector
+    const connector = source === 'demo' ? undefined : source === 'server' ? server?.connector : connectors.get(source)?.connector
+    if (!connector) throw new Error('This account is no longer connected.')
+    return connector
   }
+
+  const hasSource = (source: SourceId) => (source === 'server' ? !!server : source !== 'demo' && connectors.has(source))
 
   /** Adds this device's done/snoozed state to a connector's thread. */
   function withLocalState(thread: Thread): Thread {
@@ -126,7 +138,7 @@ export function createUnifiedApi(): InboxApi {
       local = { ...local, tasks: [...local.tasks, ...demoSnapshot.tasks], importedDemoTasks: true }
       persistLocal()
     }
-    const parts = [...connectors.values()].map(({ connector }) => connector.snapshot())
+    const parts = sources().map((connector) => connector.snapshot())
     const liveThreadIds = new Set(parts.flatMap((p) => p.threads.map((t) => t.id)))
     const demoThreadIds = new Set(demoSnapshot?.threads.map((t) => t.id))
     // A regenerated demo can drop chats; tasks that pointed into them would have nowhere to go.
@@ -136,8 +148,8 @@ export function createUnifiedApi(): InboxApi {
     return {
       me: {
         id: ME_ID,
-        // In the demo you're its persona; otherwise the name your accounts know you by.
-        name: demoSnapshot?.me.name ?? parts.find((p) => p.selfName)?.selfName ?? 'Me',
+        // Your name when signed in; in the demo, its persona; otherwise what your accounts call you.
+        name: server?.name || demoSnapshot?.me.name || parts.find((p) => p.selfName)?.selfName || 'Me',
       },
       contacts: [...(demoSnapshot?.contacts ?? []), ...parts.flatMap((p) => p.contacts)],
       threads: [...(demoSnapshot?.threads ?? []), ...parts.flatMap((p) => p.threads.map(withLocalState))],
@@ -185,7 +197,7 @@ export function createUnifiedApi(): InboxApi {
     for (const item of local.scheduled) {
       if (item.error || sending.has(item.id) || Date.parse(item.sendAt) > now) continue
       const source = sourceOf(item.threadId)
-      if (source === 'demo' || !connectors.has(source)) continue
+      if (source === 'demo' || !hasSource(source)) continue
       if (now - Date.parse(item.sendAt) > MISSED_AFTER_MS) {
         updateScheduled({ ...item, error: 'Not sent: the app was closed at the scheduled time.' })
         continue
@@ -218,7 +230,7 @@ export function createUnifiedApi(): InboxApi {
   function start() {
     running = true
     let offDemo = config.demo ? demoApi.subscribe(onDemoEvent) : null
-    for (const { connector } of connectors.values()) connector.start()
+    for (const connector of sources()) connector.start()
     const timer = setInterval(() => void deliverDue(), SCHEDULER_INTERVAL_MS)
     void deliverDue()
 
@@ -243,7 +255,7 @@ export function createUnifiedApi(): InboxApi {
       clearInterval(timer)
       if (pending) clearTimeout(pending)
       if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage)
-      for (const { connector } of connectors.values()) connector.stop()
+      for (const connector of sources()) connector.stop()
       showDemo = null
     }
   }
@@ -264,10 +276,16 @@ export function createUnifiedApi(): InboxApi {
   /* ── Connections ─────────────────────────────────────────────────────────── */
 
   function connectionsState(): ConnectionsState {
+    const linked = server?.connector.accounts() ?? []
     return {
       demo: config.demo,
       telegram: connectors.get('telegram')?.connector.status() ?? null,
       matrix: connectors.get('matrix')?.connector.status() ?? null,
+      server: server && {
+        status: server.connector.status(),
+        whatsapp: linked.find((a) => a.network === 'whatsapp') ?? null,
+        telegram: linked.find((a) => a.network === 'telegram') ?? null,
+      },
     }
   }
 
@@ -281,15 +299,21 @@ export function createUnifiedApi(): InboxApi {
     reconcile(next)
   }
 
-  /** Removes everything this device kept for one source's chats. */
-  function forgetLocal(source: SourceId) {
+  /** Removes everything this device kept for one source's chats (and, if asked, tasks from them). */
+  function forgetLocal(source: SourceId, { tasks = false } = {}) {
     const keep = (threadId: string) => sourceOf(threadId) !== source
     local = {
       ...local,
       threadState: Object.fromEntries(Object.entries(local.threadState).filter(([id]) => keep(id))),
       scheduled: local.scheduled.filter((s) => keep(s.threadId)),
+      tasks: tasks ? local.tasks.filter((t) => !t.source || keep(t.source.threadId)) : local.tasks,
     }
     persistLocal()
+  }
+
+  function requireServer(): ServerConnector {
+    if (!server) throw new Error('Sign in to link accounts.')
+    return server.connector
   }
 
   const connections: ConnectionsApi = {
@@ -342,6 +366,80 @@ export function createUnifiedApi(): InboxApi {
 
     async applyFix(id, fixId) {
       await connectors.get(id)?.connector.applyFix?.(fixId)
+    },
+
+    async setServerSession(user) {
+      if (user && server) {
+        server.name = user.name
+        return
+      }
+      if (!user && !server) return
+      if (user) {
+        const connector = new ServerConnector({ onSignedOut: () => signedOutListeners.forEach((listener) => listener()) })
+        const offEvents = connector.subscribe((event) => onConnectorEvent(event))
+        const offStatus = connector.onStatus(() => notifyConnections())
+        const offAccounts = connector.onAccounts(() => notifyConnections())
+        server = { connector, name: user.name, detach: () => (offEvents(), offStatus(), offAccounts(), void connector.forget()) }
+        if (running) connector.start()
+      } else {
+        server?.detach()
+        server = null
+        // Signed out: nothing of that account's chats stays on this device.
+        forgetLocal('server', { tasks: true })
+      }
+      notifyConnections()
+      await reloadAll()
+    },
+
+    onSignedOut(listener) {
+      signedOutListeners.add(listener)
+      return () => signedOutListeners.delete(listener)
+    },
+
+    async linkWhatsApp(request) {
+      const connector = requireServer()
+      const result = await serverApi.linkWhatsApp(request)
+      void connector.refreshAccounts().catch(() => undefined)
+      return result
+    },
+
+    onWhatsAppQr(listener) {
+      return server ? server.connector.onQr(listener) : () => {}
+    },
+
+    async requestTelegramCode(phone) {
+      const connector = requireServer()
+      const result = await serverApi.telegramCode(phone)
+      void connector.refreshAccounts().catch(() => undefined)
+      return result
+    },
+
+    async verifyTelegramCode(code) {
+      const connector = requireServer()
+      const result = await serverApi.telegramVerify(code)
+      void connector.refreshAccounts().catch(() => undefined)
+      return result
+    },
+
+    async verifyTelegramPassword(password) {
+      const connector = requireServer()
+      const result = await serverApi.telegramPassword(password)
+      void connector.refreshAccounts().catch(() => undefined)
+      return result
+    },
+
+    async unlink(network) {
+      const connector = requireServer()
+      await (network === 'whatsapp' ? serverApi.unlinkWhatsApp() : serverApi.unlinkTelegram())
+      // Done/snoozed state and scheduled sends for that network's chats go too.
+      const prefix = network === 'whatsapp' ? 'wa:' : 'tga:'
+      local = {
+        ...local,
+        threadState: Object.fromEntries(Object.entries(local.threadState).filter(([id]) => !id.startsWith(prefix))),
+        scheduled: local.scheduled.filter((s) => !s.threadId.startsWith(prefix)),
+      }
+      persistLocal()
+      await connector.refreshAccounts()
     },
   }
 
@@ -404,7 +502,7 @@ export function createUnifiedApi(): InboxApi {
     async searchMessages(query, options) {
       const limit = options?.limit ?? 20
       const demoHits = config.demo ? await demoApi.searchMessages(query, { limit }) : []
-      const parts = [...connectors.values()].map(({ connector }) => connector.snapshot())
+      const parts = sources().map((connector) => connector.snapshot())
       const connectorHits = searchMessages(
         {
           threads: parts.flatMap((p) => p.threads),

@@ -7,4 +7,5 @@ export const useConnections = create<ConnectionsState>(() => api.connections.get
 api.connections.subscribe((state) => useConnections.setState(state, true))
 
 /** Whether any real account is connected (as opposed to only the demo inbox). */
-export const hasRealAccount = (s: ConnectionsState) => !!(s.telegram || s.matrix)
+export const hasRealAccount = (s: ConnectionsState) =>
+  !!(s.telegram || s.matrix || s.server?.whatsapp || s.server?.telegram)

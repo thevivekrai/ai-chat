@@ -32,6 +32,8 @@ interface InboxState {
 
   /** Loads the inbox and subscribes to backend events. Returns an unsubscribe function. */
   connect(): () => void
+  /** Drops everything loaded (on sign-out), so the next `connect` starts fresh. */
+  clear(): void
   /** Loads (or reloads) the inbox snapshot. */
   load(): Promise<void>
   applyEvent(event: InboxEvent): void
@@ -99,8 +101,13 @@ export const useInbox = create<InboxState>()((set, get) => {
 
     connect() {
       const unsubscribe = api.subscribe((event) => get().applyEvent(event))
-      if (get().status === 'idle' || get().status === 'error') void get().load()
+      // Always from a fresh snapshot: who's signed in may have changed since the last time.
+      if (get().status !== 'loading') void get().load()
       return unsubscribe
+    },
+
+    clear() {
+      set({ status: 'idle', error: null, me: { id: ME_ID, name: 'Me' }, contacts: {}, threads: {}, messages: {}, scheduled: [], tasks: [] })
     },
 
     async load() {

@@ -1,32 +1,57 @@
 import { useEffect } from 'react'
 import { MotionConfig } from 'motion/react'
+import { AuthScreen } from '@/components/auth/AuthScreen'
 import { CommandBar } from '@/components/command/CommandBar'
 import { AppShell } from '@/components/layout/AppShell'
+import { LogoMark } from '@/components/layout/LogoMark'
+import { Wallpaper } from '@/components/layout/Wallpaper'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { ShortcutsDialog } from '@/components/shortcuts/ShortcutsDialog'
 import { Toaster } from '@/components/ui/Toaster'
 import { useAiAutopilot } from '@/hooks/useAiAutopilot'
 import { useApplyTheme } from '@/hooks/useApplyTheme'
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
-import { watchAiProblems } from '@/store/actions'
+import { watchAiProblems, watchSession } from '@/store/actions'
 import { startClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
+import { useSession } from '@/store/session'
 
 export function App() {
-  useEffect(() => useInbox.getState().connect(), [])
+  const status = useSession((s) => s.status)
+  useEffect(() => void useSession.getState().init(), [])
+  useEffect(() => watchSession(), [])
   useEffect(() => startClock(), [])
   useEffect(() => watchAiProblems(), [])
   useApplyTheme()
+
+  return (
+    <MotionConfig reducedMotion="user">
+      {status === 'checking' ? <Splash /> : status === 'signed-out' ? <AuthScreen /> : <Inbox />}
+      <Toaster />
+    </MotionConfig>
+  )
+}
+
+function Inbox() {
+  useEffect(() => useInbox.getState().connect(), [])
   useAiAutopilot()
   useGlobalShortcuts()
 
   return (
-    <MotionConfig reducedMotion="user">
+    <>
       <AppShell />
       <CommandBar />
       <SettingsDialog />
       <ShortcutsDialog />
-      <Toaster />
-    </MotionConfig>
+    </>
+  )
+}
+
+function Splash() {
+  return (
+    <div className="grid h-dvh place-items-center">
+      <Wallpaper />
+      <LogoMark className="relative size-12 animate-pulse" />
+    </div>
   )
 }

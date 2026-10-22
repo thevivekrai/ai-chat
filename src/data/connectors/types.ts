@@ -7,6 +7,8 @@ import type { Contact, Message, Thread } from '../types'
  * tasks, and scheduled sends.
  *
  * Ids are prefixed per connector ("tg:", "mx:") so any id can be routed back to its source.
+ * Accounts linked on the Tidings server come in through one more connector (../server), with
+ * "wa:" and "tga:" ids.
  */
 export type ConnectorId = 'telegram' | 'matrix'
 
@@ -38,7 +40,7 @@ export interface ConnectorStatus {
 }
 
 export interface Connector {
-  readonly id: ConnectorId
+  readonly id: ConnectorId | 'server'
   /** Everything known right now: cached on this device or synced so far. */
   snapshot(): ConnectorSnapshot
   /** Starts syncing in the background. */

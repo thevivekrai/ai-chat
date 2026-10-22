@@ -17,5 +17,7 @@ export function useAsyncAction() {
       setBusy(false)
     }
   }
-  return { busy, error, run }
+  /** Clears a shown error, e.g. when the form it belonged to changes. */
+  const reset = () => setError(null)
+  return { busy, error, run, reset }
 }

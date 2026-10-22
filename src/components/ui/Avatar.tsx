@@ -32,26 +32,38 @@ interface AvatarProps {
   size?: keyof typeof SIZES
   group?: boolean
   network?: NetworkId
+  /** A photo to show instead of initials. */
+  imageUrl?: string
   className?: string
 }
 
-export function Avatar({ name, seed = name, size = 'md', group = false, network, className }: AvatarProps) {
+export function Avatar({ name, seed = name, size = 'md', group = false, network, imageUrl, className }: AvatarProps) {
   const label = initials(name)
   const emoji = isEmojiAvatar(label)
   return (
     <span className={cn('relative inline-flex shrink-0', className)}>
-      <span
-        aria-hidden
-        className={cn(
-          'inline-flex items-center justify-center font-semibold tracking-tight select-none',
-          group ? 'rounded-[30%]' : 'rounded-full',
-          emoji ? 'bg-surface-2 ring-1 ring-line ring-inset' : PALETTE[hashString(seed) % PALETTE.length],
-          SIZES[size],
-          emoji && EMOJI_SIZES[size],
-        )}
-      >
-        {label}
-      </span>
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          // Google's profile photos refuse requests that carry a referrer.
+          referrerPolicy="no-referrer"
+          className={cn('object-cover ring-1 ring-line', group ? 'rounded-[30%]' : 'rounded-full', SIZES[size])}
+        />
+      ) : (
+        <span
+          aria-hidden
+          className={cn(
+            'inline-flex items-center justify-center font-semibold tracking-tight select-none',
+            group ? 'rounded-[30%]' : 'rounded-full',
+            emoji ? 'bg-surface-2 ring-1 ring-line ring-inset' : PALETTE[hashString(seed) % PALETTE.length],
+            SIZES[size],
+            emoji && EMOJI_SIZES[size],
+          )}
+        >
+          {label}
+        </span>
+      )}
       {network && (
         <NetworkIcon
           network={network}

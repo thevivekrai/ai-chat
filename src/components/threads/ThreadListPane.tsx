@@ -13,6 +13,7 @@ import { useClock } from '@/store/clock'
 import { hasRealAccount, useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
 import { selectViewThreads, useThreadViews } from '@/store/selectors'
+import { useSession } from '@/store/session'
 import { useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
 import { AllCaughtUp, EmptyState, NoMatches } from './EmptyStates'
@@ -197,18 +198,29 @@ export function ThreadListPane({ view }: { view: ListView }) {
 }
 
 function ConnectHint() {
+  const session = useSession((s) => s.status)
   return (
     <div className="flex items-start gap-3 border-b border-line px-4 py-3">
       <Link2 className="mt-0.5 size-4 shrink-0 text-accent-ink" aria-hidden />
       <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
         These are demo chats.{' '}
-        <button
-          type="button"
-          className="font-medium text-accent-ink hover:underline"
-          onClick={() => useUi.getState().openSettings('accounts')}
-        >
-          Connect Telegram or Matrix
-        </button>{' '}
+        {session === 'guest' ? (
+          <button
+            type="button"
+            className="font-medium text-accent-ink hover:underline"
+            onClick={() => useSession.getState().showSignIn()}
+          >
+            Sign in to link WhatsApp or Telegram
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="font-medium text-accent-ink hover:underline"
+            onClick={() => useUi.getState().openSettings('accounts')}
+          >
+            {session === 'signed-in' ? 'Link WhatsApp or Telegram' : 'Connect Telegram or Matrix'}
+          </button>
+        )}{' '}
         to bring in your own.
       </p>
       <button

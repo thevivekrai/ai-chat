@@ -4,7 +4,7 @@ import type { NetworkId } from '@/data/types'
 
 export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks'
 export type Dialog = 'command' | 'settings' | 'shortcuts'
-export type SettingsTab = 'accounts' | 'ai' | 'appearance'
+export type SettingsTab = 'profile' | 'accounts' | 'ai' | 'appearance'
 
 interface UiState {
   view: View

@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
+import type { ConnectorStatus, PublicAccount } from '@/data/api'
 import { cn } from '@/lib/cn'
 import { NETWORK_ORDER, NETWORKS } from '@/lib/networks'
 import { turnOnAi } from '@/store/actions'
@@ -147,10 +148,35 @@ const ACCOUNT_STATE = {
   error: { label: 'Needs attention', dot: 'bg-rose-500' },
 } as const
 
+/**
+ * How a linked account reads in the sidebar. Accounts still being linked, or whose linking didn't
+ * finish, aren't shown; one that stopped working while it has chats here needs attention.
+ */
+function linkedState(
+  account: PublicAccount | null | undefined,
+  stream: ConnectorStatus | undefined,
+  hasChats: boolean,
+): ConnectorStatus | null {
+  if (!account || account.status === 'linking' || account.status === 'unlinked') return null
+  if (account.status === 'error' || account.status === 'disconnected') return hasChats ? { state: 'error' } : null
+  // Connected on the server, but this tab's live connection to it is down.
+  return { state: stream?.state === 'online' ? 'online' : 'connecting' }
+}
+
 /** Connected accounts at a glance; opens Settings → Accounts. */
 function AccountsStatus() {
-  const { telegram, matrix } = useConnections(useShallow((s) => ({ telegram: s.telegram, matrix: s.matrix })))
+  const { telegram, matrix, server } = useConnections(
+    useShallow((s) => ({ telegram: s.telegram, matrix: s.matrix, server: s.server })),
+  )
+  const chats = useInbox(
+    useShallow((s) => {
+      const ids = Object.keys(s.threads)
+      return { whatsapp: ids.some((id) => id.startsWith('wa:')), telegram: ids.some((id) => id.startsWith('tga:')) }
+    }),
+  )
   const rows = [
+    { id: 'whatsapp', label: 'WhatsApp', status: linkedState(server?.whatsapp, server?.status, chats.whatsapp) },
+    { id: 'telegram-linked', label: 'Telegram', status: linkedState(server?.telegram, server?.status, chats.telegram) },
     { id: 'telegram', label: 'Telegram bot', status: telegram },
     { id: 'matrix', label: 'Matrix', status: matrix },
   ].filter((r) => r.status)

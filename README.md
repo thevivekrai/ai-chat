@@ -5,14 +5,22 @@ waiting on them, and replying takes effort. Tidings puts every chat in one place
 needs a reply** (sorted by AI priority and how long they've waited) and **drafts the reply** for you.
 Nothing is ever sent automatically.
 
-It runs entirely in the browser, with no server of its own:
-
-- **Real accounts.** Connect a **Telegram bot**, and a **Matrix** account. Through Matrix bridges
-  you also get WhatsApp, Instagram, Slack and SMS.
+- **Accounts.** Sign in with **Google**, or with an **email and password**.
+- **Your own WhatsApp and Telegram.** Link **WhatsApp** by typing the 8-character code Tidings
+  shows into *Linked devices* on your phone (or scanning a QR code), the way WhatsApp Web links.
+  Link **Telegram** with your phone number, the login code Telegram sends you and, if you use it,
+  your two-step password. Your chats sync to the inbox on every device you sign in on, and you
+  reply from Tidings.
+- **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
+  Matrix bridges: WhatsApp, Instagram, Slack and SMS).
 - **Real AI.** Add your **Claude API key** and every AI feature calls Claude. Without one, a
   built-in demo AI runs on the device.
 - **Demo inbox.** 15 sample conversations across five networks, generated relative to now, in
-  English and Hinglish. It's on by default and can be turned off once your own chats are in.
+  English and Hinglish. Try it without an account, too.
+
+Tidings is a web app plus a small Node server (`server/`) that handles sign-in and keeps the
+WhatsApp and Telegram links running. Without the server (say, built as a static site) the app still
+works: just the demo, the browser connections and AI, with no accounts.
 
 The interface is clear "liquid glass": nearly untinted, lightly blurred columns with bright specular
 edges, floating over a neutral silver (or graphite) backdrop of soft light and a few crisp shapes
@@ -22,18 +30,56 @@ that the glass softens as they pass behind it. Light and dark.
 
 ## Run it
 
-Requires Node 20.19+ or 22.12+.
+Requires Node 22.12+ and, for accounts, a MongoDB database (local, or a free MongoDB Atlas cluster).
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm test           # unit tests (Vitest)
-npm run build      # typecheck + production build
+cp .env.example .env    # then fill in MONGODB_URI and JWT_SECRET at least
+npm run dev:server      # the API on :5001, restarting on changes
+npm run dev             # the app on http://localhost:5173 (forwards /api to the server)
+npm test                # unit tests (Vitest); see Tests for the database ones
+npm run build           # typecheck, the web app (dist/) and the server (dist-server/)
+npm start               # production: the API and the built app on $PORT
 npm run lint
 ```
 
-It's a static site: `npm run build` produces `dist/`, which any static host can serve.
-`render.yaml` deploys it as a Render static site.
+### Deploy on Render
+
+`render.yaml` describes one **Web Service** that serves both the API and the app. Either create it
+from the Blueprint, or make a Web Service by hand with:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npm ci --include=dev && npm run build` |
+| Start command | `npm start` |
+| Health check path | `/api/health` |
+
+Then set the environment variables (**Environment** tab). `MONGODB_URI` and `JWT_SECRET` are
+required; `.env.example` explains every variable:
+
+| Variable | What it does |
+| --- | --- |
+| `MONGODB_URI` | Your database. With MongoDB Atlas, allow connections from Render (Network Access). |
+| `JWT_SECRET` | Signs sessions: 32+ random characters (`openssl rand -base64 48`). |
+| `DATA_ENCRYPTION_KEY` | Encrypts stored chats and sessions (`openssl rand -base64 32`; the Blueprint generates one). |
+| `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
+| `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Profile photos, and pictures in linked chats. |
+
+`PORT` is optional: the server listens where Render tells it to.
+
+Keep these values out of the repository, screenshots and chats. If one has been shared, rotate it:
+a new database user password (and `MONGODB_URI`), a new Cloudinary API secret, and a new
+`JWT_SECRET` (which signs everyone out).
+
+Things to know about hosting:
+
+- **Run one instance.** Each WhatsApp and Telegram link lives in the server process, and WhatsApp
+  allows one connection per linked device.
+- **Free instances sleep** after 15 minutes without visits, and linked accounts only sync while the
+  server runs. When it wakes, it reconnects and catches up: Telegram fetches what's new in your
+  recent chats, and WhatsApp delivers what it held for the linked device. For syncing around the
+  clock, use an always-on instance.
 
 **Try this:** click **Turn on AI** · press `J`/`K` to move through the queue · `R` for drafts,
 `1`–`3` to pick one, edit, `Enter` to send · `E` to mark done · `⌘K`/`Ctrl+K` and ask *"what did
@@ -47,11 +93,77 @@ the supplier quote me?"* · then open **Settings** to connect your own accounts 
 | `1` `2` `3` | Use a draft | `⌘K` / `Ctrl+K` | Search & ask across chats |
 | `Tab` | Next `[blank]` in a draft | `/` · `?` · `Esc` | Filter list · Help · Close |
 
-## Connect your accounts
+## Sign in
 
-Everything is in **Settings → Accounts**. Messages travel directly between your browser and each
-network, and are kept in this browser's storage. Tokens are stored there too, so use a browser
-profile you trust; **Disconnect** deletes an account's token and chats from the device.
+The first screen offers **Continue with Google**, email and password, or the demo without an
+account.
+
+- **Sessions** are a signed token in an `httpOnly`, `SameSite=Lax` cookie (secure in production),
+  valid for 30 days. Every change to the server must be sent as JSON, which a page on another site
+  can't do without the server's permission, so the cookie can't be used from elsewhere (CSRF).
+- **Passwords** are hashed with scrypt. Sign-in attempts are rate-limited per IP address.
+- **Google**: the ID token from Google's button is verified on the server (signature, issuer,
+  audience, expiry, verified email). Signing in with Google to an existing account with the same
+  email links the two, and turns that account's password off and ends its sessions, since email
+  addresses aren't verified on sign-up and whoever set the password may not own the address. The
+  user can then set a new password under **Settings → Profile**.
+
+To turn on Google sign-in, create an OAuth client id of type *Web application* in the
+[Google Cloud console](https://console.cloud.google.com/apis/credentials), add your site's address
+(and `http://localhost:5173`) under *Authorized JavaScript origins*, and set `GOOGLE_CLIENT_ID`.
+
+**Settings → Profile** changes your name, photo (with Cloudinary set up) and password, and signs out.
+
+## Link WhatsApp and Telegram
+
+In **Settings → Accounts** (or the account menu → *WhatsApp and Telegram*), once signed in.
+
+### WhatsApp
+
+Enter your number and Tidings shows an 8-character code. On your phone, open WhatsApp →
+**Settings → Linked devices → Link a device → Link with phone number instead**, and type it in. Or
+choose **QR code** and scan it from the same screen. Tidings becomes one of your linked devices,
+like WhatsApp Web; your phone doesn't have to stay online.
+
+![Linking WhatsApp: the pairing code and where to enter it](docs/screenshots/link-whatsapp.jpg)
+
+- It brings in your recent chats (up to 40 messages each) and every new message after that, with
+  delivery and read ticks for yours, edits and deletions. Pictures that arrive are copied to
+  Cloudinary so the app can show them; other media shows as a labelled attachment.
+- Reading a chat in Tidings marks it read on WhatsApp; replies go out from your number.
+- **Unlink** logs the device out (it disappears from *Linked devices*) and deletes its chats from
+  the server. If you remove the device from your phone instead, syncing stops and Settings offers
+  to link again or remove its chats.
+- It uses [Baileys](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web client.
+  WhatsApp doesn't support third-party clients and can restrict numbers that use them; the app
+  says so before linking.
+
+### Telegram
+
+Enter your number; Telegram sends a login code to your Telegram app (or by SMS). Enter it, and your
+two-step verification password if you have one. Tidings signs in as you, like Telegram on a new
+device, and shows up in Telegram under **Settings → Devices**, where you can end it.
+
+- Your 30 most recent chats come in (20 messages each; broadcast channels are left out), then
+  everything new, with read status both ways, edits, and pictures as above.
+- **Unlink** ends the session in Telegram and deletes its chats from the server.
+- The server needs an `api_id` and `api_hash` for the deployment from
+  [my.telegram.org](https://my.telegram.org) → *API development tools*. It uses
+  [GramJS](https://gram.js.org), a client for Telegram's own API (MTProto).
+
+### What the server keeps
+
+Per user: the linked sessions, and the synced chats, contacts and messages. Session keys, chat and
+contact names, message text and attachments are **encrypted at rest** (AES-256-GCM, with
+`DATA_ENCRYPTION_KEY`), so a copy of the database alone reveals no chats. Ids, times and counts stay
+readable so the database can sort them. Done/snoozed state, tasks and AI results stay in the
+browser, as for every other source; signing out clears those for linked chats from the browser.
+
+## More connections, from the browser
+
+Also in **Settings → Accounts**. These talk to their networks directly from your browser, without
+the server, and keep their messages in this browser's storage. Tokens are stored there too, so use
+a browser profile you trust; **Disconnect** deletes an account's token and chats from the device.
 
 ### Telegram bot
 
@@ -168,9 +280,32 @@ The "Needs reply" queue is derived (`store/selectors.ts`). A chat is in it when:
 - it expects a response (AI decides when allowed, simple on-device rules otherwise);
 - it isn't done, snoozed or scheduled.
 
-Ids carry their source (`tg:…`, `mx:…`, none for demo chats), so writes route without lookups. To
-add a network, implement `Connector` (`src/data/connectors/types.ts`) and register it in
-`src/data/unified/unifiedApi.ts`.
+Ids carry their source (`wa:…` and `tga:…` from the server, `tg:…`, `mx:…`, none for demo chats),
+so writes route without lookups. To add a network, implement `Connector`
+(`src/data/connectors/types.ts`) and register it in `src/data/unified/unifiedApi.ts`.
+
+The server (Express 5, MongoDB, TypeScript run by `tsx` in development and bundled by Vite for
+production):
+
+```
+server/
+  index.ts            ← reads the environment, connects, starts, reconnects linked accounts
+  app.ts              ← the HTTP app: security headers, JSON-only API, the built web app
+  config.ts           ← environment variables; what's required, what turns features on
+  auth/               ← sign-up, sign-in, Google ID tokens, scrypt passwords, session tokens
+  networks/
+    whatsapp.ts       ← Baileys: pairing code / QR, sessions in MongoDB, history, live sync
+    telegram.ts       ← GramJS: phone + code + 2FA, sessions, dialogs, live sync
+    accounts.ts       ← linked accounts and their status
+    routes.ts         ← /api/link/…
+  inbox/              ← per-user chat store (encrypted fields) and /api/inbox, /api/threads/…
+  realtime.ts         ← server-sent events (/api/events) to the user's open tabs
+  crypto.ts           ← AES-256-GCM for data at rest
+```
+
+In the browser, `src/data/server/` is the client: `serverApi.ts` for HTTP, and `ServerConnector`,
+which loads `/api/inbox` and then follows `/api/events`, reloading whenever the stream reconnects
+so nothing is missed. The wire types (`src/data/server/types.ts`) are shared by both sides.
 
 The Matrix SDK (~900 kB) and the Claude SDK are separate chunks, downloaded only once Matrix is
 connected or a key is saved.
@@ -178,6 +313,20 @@ connected or a key is saved.
 ### Tests
 
 - **Unit tests (`npm test`)** cover the demo data, search, selectors and reply rules, and the demo AI.
+- **Server.** Sealing, passwords, session tokens, Google ID tokens (against a local key set),
+  config, and mapping Telegram's objects. With `TEST_MONGODB_URI` set (any MongoDB; each run uses
+  and drops its own database), integration tests run the whole API against fake WhatsApp and
+  Telegram transports: sign-up and sign-in, Google account linking, CSRF and forged cookies,
+  linking both networks step by step, history, live messages, edits, read receipts, sending,
+  restarts, ended sessions, unlinking, and that stored text is encrypted.
+
+  ```bash
+  TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test
+  ```
+- **Server connector.** Loading, live events, routing sends and read markers, holding back the
+  echo of a message being sent, and clean-up on sign-out.
+- **In a browser.** `server/testing/e2e.ts` runs the app against the same fakes, with a control
+  port standing in for the phone, for clicking through linking end to end.
 - **Claude requests.** A stubbed `fetch` checks the request shape (model, effort, structured
   output, fallbacks, no sampling parameters), refusals and error mapping.
 - **Telegram connector.** Tested against an in-memory Bot API.
@@ -188,6 +337,10 @@ The connectors were also run end-to-end in a browser against a local Synapse hom
 simulated WhatsApp bridge room) and a local Telegram Bot API server.
 
 ## Limits and next steps
+
+- **WhatsApp and Telegram media.** Pictures are shown; other media are labelled, and sending is
+  text only.
+- **One server instance**, and linked accounts sync only while it runs (see Deploy).
 
 - **Encryption.** Matrix end-to-end encrypted rooms (matrix-js-sdk's Rust crypto plus device
   verification).

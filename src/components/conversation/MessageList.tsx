@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { AlertCircle, CalendarClock, Check, CheckCheck, Clock3, FileText } from 'lucide-react'
+import { AlertCircle, CalendarClock, Check, CheckCheck, Clock3, FileText, ImageIcon } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
@@ -216,31 +216,52 @@ function MessageGroup({ messages, fromMe, sender, showSender, highlights, flash 
                   flashing && 'animate-flash',
                 )}
               >
-                {m.attachments?.map((a) => (
-                  <div
-                    key={a.name}
-                    className={cn(
-                      'mb-1.5 flex items-center gap-2.5 rounded-xl px-2.5 py-2',
-                      fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line',
-                    )}
-                  >
-                    <span
+                {m.attachments?.map((a, index) =>
+                  a.kind === 'image' && a.url ? (
+                    <a
+                      key={`${a.name}-${index}`}
+                      href={a.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="-mx-1.5 -mt-0.5 mb-1.5 block"
+                    >
+                      <img
+                        src={a.url}
+                        alt={a.name}
+                        loading="lazy"
+                        className="max-h-72 w-auto max-w-full rounded-xl object-cover"
+                      />
+                    </a>
+                  ) : (
+                    <div
+                      key={`${a.name}-${index}`}
                       className={cn(
-                        'grid size-9 shrink-0 place-items-center rounded-lg',
-                        fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink',
+                        'mb-1.5 flex items-center gap-2.5 rounded-xl px-2.5 py-2',
+                        fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line',
                       )}
                     >
-                      <FileText className="size-4" aria-hidden />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-[13px] font-medium">{a.name}</span>
-                      <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>
-                        {a.name.split('.').pop()?.toUpperCase()}
-                        {a.size ? ` · ${a.size}` : ''}
+                      <span
+                        className={cn(
+                          'grid size-9 shrink-0 place-items-center rounded-lg',
+                          fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink',
+                        )}
+                      >
+                        {a.kind === 'image' ? (
+                          <ImageIcon className="size-4" aria-hidden />
+                        ) : (
+                          <FileText className="size-4" aria-hidden />
+                        )}
                       </span>
-                    </span>
-                  </div>
-                ))}
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-medium">{a.name}</span>
+                        <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>
+                          {a.kind === 'image' ? 'Image' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'}
+                          {a.size ? ` · ${a.size}` : ''}
+                        </span>
+                      </span>
+                    </div>
+                  ),
+                )}
                 <RichText text={m.body} highlights={highlights.get(m.id)} onAccent={fromMe} />
               </div>
               {m.status === 'failed' && (

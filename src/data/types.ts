@@ -55,6 +55,8 @@ export interface Attachment {
   kind: 'file' | 'image'
   name: string
   size?: string
+  /** Where the file can be viewed, once it has been copied off the network (images only). */
+  url?: string
 }
 
 export interface Message {

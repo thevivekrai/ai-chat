@@ -1,0 +1,687 @@
+import makeWASocket, {
+  BufferJSON,
+  DisconnectReason,
+  downloadMediaMessage,
+  fetchLatestWaWebVersion,
+  getContentType,
+  initAuthCreds,
+  isJidBroadcast,
+  isJidGroup,
+  isJidNewsletter,
+  isLidUser,
+  isPnUser,
+  jidNormalizedUser,
+  makeCacheableSignalKeyStore,
+  normalizeMessageContent,
+  proto,
+  toNumber,
+  type AuthenticationCreds,
+  type AuthenticationState,
+  type BaileysEventMap,
+  type Chat as WaChat,
+  type Contact as WaContact,
+  type SignalDataSet,
+  type SignalDataTypeMap,
+  type WAMessage,
+  type WAMessageKey,
+  type WAVersion,
+} from '@whiskeysockets/baileys'
+import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
+import QRCode from 'qrcode'
+import type { WhatsAppLinkResult } from '../../src/data/server/types.ts'
+import type { Attachment, Message, MessageStatus } from '../../src/data/types.ts'
+import type { Sealer } from '../crypto.ts'
+import type { Collections, WaAuthDoc } from '../db.ts'
+import { HttpError } from '../http.ts'
+import type { InboxStore, StoredMessage } from '../inbox/store.ts'
+import type { Media } from '../media.ts'
+import type { Hub } from '../realtime.ts'
+import type { Accounts } from './accounts.ts'
+
+/**
+ * WhatsApp through "Linked devices", the same way WhatsApp Web works: the user links this server
+ * with an 8-character code (or a QR code) from WhatsApp on their phone. The session keys live in
+ * MongoDB, sealed, so the link survives restarts.
+ *
+ * This uses Baileys, an unofficial WhatsApp Web client. WhatsApp doesn't sanction third-party
+ * clients and can restrict numbers that use them; the app says so before linking.
+ *
+ * Ids: thread "wa:<chat jid>", message "wa:<chat jid>:<message id>", contact "wa:<user jid>".
+ */
+
+/** The parts of a Baileys socket this manager uses; tests pass a fake. */
+export interface WaSocket {
+  ev: { on<E extends keyof BaileysEventMap>(event: E, listener: (arg: BaileysEventMap[E]) => void): void }
+  user?: { id: string; name?: string }
+  authState: { creds: AuthenticationCreds }
+  requestPairingCode(phoneNumber: string): Promise<string>
+  sendMessage(jid: string, content: { text: string }): Promise<WAMessage | undefined>
+  readMessages(keys: WAMessageKey[]): Promise<void>
+  groupMetadata(jid: string): Promise<{ subject: string }>
+  logout(message?: string): Promise<void>
+  end(error: Error | undefined): Promise<void> | void
+  updateMediaMessage?(message: WAMessage): Promise<WAMessage>
+}
+
+type ILogger = NonNullable<Parameters<typeof makeCacheableSignalKeyStore>[1]>
+
+export type CreateWaSocket = (auth: AuthenticationState, logger: ILogger) => WaSocket | Promise<WaSocket>
+
+const quiet: ILogger = {
+  level: 'silent',
+  child: () => quiet,
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: (obj, msg) => console.error('[whatsapp]', msg ?? '', obj instanceof Error ? obj.message : ''),
+}
+
+/** WhatsApp turns away clients that are too far behind, so the current web version is looked up daily. */
+let knownVersion: { version: WAVersion; at: number } | null = null
+
+async function currentVersion(): Promise<WAVersion | undefined> {
+  if (knownVersion && Date.now() - knownVersion.at < 24 * 60 * 60_000) return knownVersion.version
+  // Falls back to the version Baileys ships with when WhatsApp can't be asked.
+  const latest = await fetchLatestWaWebVersion({ signal: AbortSignal.timeout(5000) }).catch(() => null)
+  if (latest?.isLatest) knownVersion = { version: latest.version, at: Date.now() }
+  return latest?.version
+}
+
+export const createBaileysSocket: CreateWaSocket = async (auth, logger) =>
+  makeWASocket({
+    auth: { creds: auth.creds, keys: makeCacheableSignalKeyStore(auth.keys, logger) },
+    logger,
+    ...(await currentVersion().then((version) => (version ? { version } : {}))),
+    // Leave the phone getting notifications; this is a background reader, not the open app.
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+  }) as unknown as WaSocket
+
+/* ── Session keys in MongoDB ──────────────────────────────────────────────────── */
+
+async function mongoAuthState(col: Collections, sealer: Sealer, userId: ObjectId) {
+  const encode = (value: unknown) => sealer.seal(JSON.stringify(value, BufferJSON.replacer))
+  const decode = (doc: WaAuthDoc) => JSON.parse(sealer.open(doc.value), BufferJSON.reviver)
+
+  const credsDoc = await col.waAuth.findOne({ userId, key: 'creds' })
+  const creds: AuthenticationCreds = credsDoc ? decode(credsDoc) : initAuthCreds()
+
+  const state: AuthenticationState = {
+    creds,
+    keys: {
+      async get<T extends keyof SignalDataTypeMap>(type: T, ids: string[]) {
+        const docs = await col.waAuth.find({ userId, key: { $in: ids.map((id) => `${type}-${id}`) } }).toArray()
+        const found = new Map(docs.map((d) => [d.key, d]))
+        const result: { [id: string]: SignalDataTypeMap[T] } = {}
+        for (const id of ids) {
+          const doc = found.get(`${type}-${id}`)
+          if (!doc) continue
+          let value = decode(doc)
+          if (type === 'app-state-sync-key' && value) value = proto.Message.AppStateSyncKeyData.fromObject(value)
+          result[id] = value
+        }
+        return result
+      },
+      async set(data: SignalDataSet) {
+        const ops: AnyBulkWriteOperation<WaAuthDoc>[] = []
+        for (const [category, entries] of Object.entries(data)) {
+          for (const [id, value] of Object.entries(entries ?? {})) {
+            const key = `${category}-${id}`
+            ops.push(
+              value
+                ? { updateOne: { filter: { userId, key }, update: { $set: { value: encode(value) } }, upsert: true } }
+                : { deleteOne: { filter: { userId, key } } },
+            )
+          }
+        }
+        if (ops.length) await col.waAuth.bulkWrite(ops, { ordered: false })
+      },
+    },
+  }
+
+  return {
+    state,
+    saveCreds: () => col.waAuth.updateOne({ userId, key: 'creds' }, { $set: { value: encode(creds) } }, { upsert: true }),
+    clear: () => col.waAuth.deleteMany({ userId }),
+  }
+}
+
+/* ── Mapping ─────────────────────────────────────────────────────────────────── */
+
+/** Chats worth showing: people and groups, not status updates, broadcast lists or channels. */
+const isChatJid = (jid: string | null | undefined): jid is string =>
+  !!jid && !isJidBroadcast(jid) && !isJidNewsletter(jid) && !jid.endsWith('@broadcast')
+
+/** WhatsApp is moving to private ids (LIDs); prefer the phone-number id when both are known. */
+function canonicalJid(jid: string, alt?: string | null): string {
+  if (isLidUser(jid) && alt && isPnUser(alt)) return jidNormalizedUser(alt)
+  return isJidGroup(jid) ? jid : jidNormalizedUser(jid)
+}
+
+const phoneOf = (jid: string) => (isPnUser(jid) ? `+${jid.split('@')[0]}` : 'WhatsApp')
+
+const STATUS: Record<number, MessageStatus> = { 0: 'failed', 1: 'sending', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'read' }
+
+function describe(message: proto.IMessage | null | undefined): { body: string; attachments?: Attachment[]; image?: boolean } | null {
+  const content = normalizeMessageContent(message)
+  if (!content) return null
+  const kb = (n: Parameters<typeof toNumber>[0]) => (n ? `${Math.max(1, Math.round(toNumber(n) / 1024))} KB` : undefined)
+  switch (getContentType(content)) {
+    case 'conversation':
+      return content.conversation ? { body: content.conversation } : null
+    case 'extendedTextMessage':
+      return content.extendedTextMessage?.text ? { body: content.extendedTextMessage.text } : null
+    case 'imageMessage':
+      return { body: content.imageMessage?.caption ?? '', attachments: [{ kind: 'image', name: 'Photo' }], image: true }
+    case 'videoMessage':
+      return { body: content.videoMessage?.caption ?? '', attachments: [{ kind: 'file', name: 'Video', size: kb(content.videoMessage?.fileLength) }] }
+    case 'documentMessage':
+      return {
+        body: content.documentMessage?.caption ?? '',
+        attachments: [{ kind: 'file', name: content.documentMessage?.fileName ?? 'Document', size: kb(content.documentMessage?.fileLength) }],
+      }
+    case 'documentWithCaptionMessage':
+      return describe(content.documentWithCaptionMessage?.message)
+    case 'audioMessage':
+      return { body: content.audioMessage?.ptt ? '🎤 Voice message' : '🎵 Audio' }
+    case 'stickerMessage':
+      return { body: 'Sticker' }
+    case 'locationMessage':
+    case 'liveLocationMessage':
+      return { body: '📍 Location' }
+    case 'contactMessage':
+      return { body: `👤 ${content.contactMessage?.displayName ?? 'Contact'}` }
+    case 'contactsArrayMessage':
+      return { body: '👥 Contacts' }
+    case 'pollCreationMessage':
+    case 'pollCreationMessageV2':
+    case 'pollCreationMessageV3': {
+      const poll = content.pollCreationMessage ?? content.pollCreationMessageV2 ?? content.pollCreationMessageV3
+      return { body: `📊 ${poll?.name ?? 'Poll'}` }
+    }
+    default:
+      return null
+  }
+}
+
+/* ── Manager ─────────────────────────────────────────────────────────────────── */
+
+interface Session {
+  userId: ObjectId
+  socket: WaSocket | null
+  auth: Awaited<ReturnType<typeof mongoAuthState>>
+  /** Set while linking: how, and who is waiting for the code or QR. */
+  linking: null | { method: 'code' | 'qr'; phone?: string; requested: boolean; settle(result: LinkResult | Error): void }
+  opened: boolean
+  retries: number
+  stopped: boolean
+  names: Map<string, string>
+  groupTitles: Map<string, string>
+}
+
+type LinkResult = WhatsAppLinkResult
+
+export interface WhatsAppDeps {
+  col: Collections
+  sealer: Sealer
+  store: InboxStore
+  accounts: Accounts
+  hub: Hub
+  media: Media | null
+  createSocket?: CreateWaSocket
+  /** How long to wait for WhatsApp to offer a code or QR. */
+  linkTimeoutMs?: number
+}
+
+export function createWhatsApp(deps: WhatsAppDeps) {
+  const { col, sealer, store, accounts, hub, media } = deps
+  const createSocket = deps.createSocket ?? createBaileysSocket
+  const sessions = new Map<string, Session>()
+  const keyOf = (userId: ObjectId) => userId.toHexString()
+  const publish = (s: Session, event: Parameters<Hub['publish']>[1]) => hub.publish(keyOf(s.userId), event)
+
+  let reloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** History arrives in many batches; tell the browser once things settle. */
+  const reloadSoon = (s: Session) => {
+    const key = keyOf(s.userId)
+    clearTimeout(reloadTimers.get(key))
+    reloadTimers.set(key, setTimeout(() => publish(s, { type: 'reloaded' }), 800))
+  }
+
+  async function connect(s: Session) {
+    if (s.stopped) return
+    const socket = await createSocket(s.auth.state, quiet)
+    if (s.stopped) {
+      await Promise.resolve(socket.end(undefined)).catch(() => undefined)
+      return
+    }
+    s.socket = socket
+    socket.ev.on('creds.update', () => void s.auth.saveCreds())
+    socket.ev.on('connection.update', (update) => void onConnection(s, socket, update).catch(report))
+    socket.ev.on('messaging-history.set', (h) => void onHistory(s, h.chats, h.contacts, h.messages).catch(report))
+    socket.ev.on('messages.upsert', ({ messages, type }) => {
+      for (const m of messages) void onMessage(s, m, type === 'notify').catch(report)
+    })
+    socket.ev.on('messages.update', (updates) => {
+      for (const u of updates) void onMessageUpdate(s, u.key, u.update).catch(report)
+    })
+    socket.ev.on('contacts.upsert', (contacts) => void onContacts(s, contacts).catch(report))
+    socket.ev.on('contacts.update', (contacts) => void onContacts(s, contacts as WaContact[]).catch(report))
+    socket.ev.on('chats.upsert', (chats) => void onChats(s, chats).catch(report))
+    socket.ev.on('chats.update', (chats) => void onChats(s, chats as WaChat[]).catch(report))
+    socket.ev.on('groups.update', (groups) => {
+      for (const g of groups) if (g.id && g.subject) void setGroupTitle(s, g.id, g.subject).catch(report)
+    })
+  }
+
+  async function onConnection(s: Session, socket: WaSocket, update: BaileysEventMap['connection.update']) {
+    if (s.socket !== socket || s.stopped) return
+
+    if (update.qr && s.linking) {
+      const linking = s.linking
+      if (linking.method === 'code' && !linking.requested) {
+        linking.requested = true
+        try {
+          const code = await socket.requestPairingCode(linking.phone!)
+          linking.settle({ code: code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code })
+        } catch (error) {
+          linking.settle(new HttpError(502, `WhatsApp didn't give a code: ${(error as Error).message}`))
+        }
+      } else if (linking.method === 'qr') {
+        const qr = await QRCode.toDataURL(update.qr, { margin: 1, width: 288 })
+        linking.settle({ qr })
+        publish(s, { type: 'account.qr', network: 'whatsapp', qr })
+      }
+    }
+
+    if (update.connection === 'open') {
+      const wasLinking = !!s.linking
+      s.linking = null
+      s.opened = true
+      s.retries = 0
+      const me = socket.user?.id ? jidNormalizedUser(socket.user.id) : undefined
+      await accounts.set(s.userId, 'whatsapp', {
+        status: 'connected',
+        label: me ? phoneOf(me) : undefined,
+        ...(wasLinking ? { detail: 'Syncing your recent chats…' } : {}),
+      })
+      if (wasLinking) setTimeout(() => void finishSync(s), 90_000)
+      return
+    }
+
+    if (update.connection === 'close') {
+      const status = (update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode
+      s.socket = null
+
+      if (status === DisconnectReason.restartRequired) return connect(s) // Normal right after linking.
+
+      if (s.linking) {
+        s.linking.settle(new HttpError(504, 'WhatsApp closed the connection while linking. Try again.'))
+        s.linking = null
+        await stop(s)
+        await accounts.set(s.userId, 'whatsapp', { status: 'disconnected', detail: 'Linking didn\'t finish. Get a new code to try again.' })
+        return
+      }
+      if (status === DisconnectReason.loggedOut) {
+        await stop(s)
+        await s.auth.clear()
+        await accounts.set(s.userId, 'whatsapp', {
+          status: 'disconnected',
+          detail: 'This device was logged out from WhatsApp on your phone. Link it again to keep syncing.',
+        })
+        return
+      }
+      if (status === DisconnectReason.connectionReplaced) {
+        // Another copy of this server took over the link, as happens during a deploy: let it have it.
+        await stop(s)
+        return
+      }
+      // A dropped network connection: try again, backing off.
+      s.retries++
+      if (s.retries === 3) await accounts.set(s.userId, 'whatsapp', { status: 'error', detail: 'Can\'t reach WhatsApp. Retrying…' })
+      setTimeout(() => void connect(s).catch(report), Math.min(60_000, 1000 * 2 ** s.retries))
+    }
+  }
+
+  async function finishSync(s: Session) {
+    if (!s.stopped && s.opened) {
+      const account = await accounts.get(s.userId, 'whatsapp')
+      if (account?.status === 'connected' && account.detail) await accounts.set(s.userId, 'whatsapp', { status: 'connected' })
+    }
+  }
+
+  /* ── Incoming data ───────────────────────────────────────────────────────── */
+
+  const nameFor = (s: Session, jid: string) => s.names.get(jid) ?? phoneOf(jid)
+
+  async function ensureThread(s: Session, chatJid: string, lastAt?: Date) {
+    const group = isJidGroup(chatJid)
+    let title: string | undefined
+    if (group) {
+      title = s.groupTitles.get(chatJid)
+      if (!title && s.socket) {
+        title = await s.socket
+          .groupMetadata(chatJid)
+          .then((m) => m.subject)
+          .catch(() => undefined)
+        if (title) s.groupTitles.set(chatJid, title)
+      }
+    } else {
+      title = nameFor(s, chatJid)
+    }
+    const existing = await store.thread(s.userId, `wa:${chatJid}`)
+    return store.upsertThread(s.userId, {
+      id: `wa:${chatJid}`,
+      network: 'whatsapp',
+      kind: group ? 'group' : 'direct',
+      // Don't replace a good title with a bare number.
+      ...(title && (!existing || existing.title === 'Chat' || !title.startsWith('+')) ? { title } : {}),
+      ...(group ? {} : { participantIds: [`wa:${chatJid}`] }),
+      lastAt,
+    })
+  }
+
+  async function onMessage(s: Session, msg: WAMessage, live: boolean) {
+    const remote = msg.key.remoteJid
+    if (!isChatJid(remote)) return
+    const chatJid = canonicalJid(remote, msg.key.remoteJidAlt)
+    const content = normalizeMessageContent(msg.message)
+
+    // Edits and deletions arrive as protocol messages pointing at the original.
+    const protocol = content?.protocolMessage
+    if (protocol?.key?.id) {
+      const target = `wa:${chatJid}:${protocol.key.id}`
+      if (protocol.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT) {
+        const edited = describe(protocol.editedMessage)
+        if (edited) await updateAndPublish(s, target, { body: edited.body })
+      } else if (protocol.type === proto.Message.ProtocolMessage.Type.REVOKE) {
+        await updateAndPublish(s, target, { body: '🚫 This message was deleted', attachments: [] })
+      }
+      return
+    }
+
+    const parts = describe(msg.message)
+    if (!parts) return
+    const fromMe = !!msg.key.fromMe
+    const group = isJidGroup(chatJid)
+    const senderJid = fromMe ? null : canonicalJid(group ? (msg.key.participant ?? remote) : remote, group ? msg.key.participantAlt : msg.key.remoteJidAlt)
+    if (senderJid && msg.pushName && !s.names.has(senderJid)) {
+      s.names.set(senderJid, msg.pushName)
+      await upsertContact(s, senderJid)
+    }
+
+    const sentAt = new Date((toNumber(msg.messageTimestamp) || Date.now() / 1000) * 1000)
+    const thread = await ensureThread(s, chatJid, sentAt)
+    if (senderJid && group) await store.addParticipant(s.userId, thread.id, `wa:${senderJid}`)
+
+    const message: StoredMessage = {
+      id: `wa:${chatJid}:${msg.key.id}`,
+      threadId: thread.id,
+      senderId: senderJid ? `wa:${senderJid}` : 'me',
+      body: parts.body,
+      sentAt: sentAt.toISOString(),
+      ...(fromMe ? { status: STATUS[msg.status ?? 2] ?? 'sent' } : {}),
+      ...(parts.attachments ? { attachments: parts.attachments } : {}),
+      ref: { key: { remoteJid: remote, fromMe, id: msg.key.id, participant: msg.key.participant ?? undefined } },
+    }
+    if (!(await store.addMessage(s.userId, message))) return
+    if (live && !fromMe) await store.incrementUnread(s.userId, thread.id)
+    const updated = await store.thread(s.userId, thread.id)
+    if (updated) publish(s, { type: 'thread.updated', thread: updated })
+    const { ref, ...wire } = message
+    void ref
+    publish(s, { type: 'message.created', message: wire })
+
+    // Pictures that arrive live are copied to Cloudinary so the browser can show them.
+    if (parts.image && live && media && s.socket) void saveImage(s, msg, message.id).catch(report)
+  }
+
+  async function saveImage(s: Session, msg: WAMessage, messageId: string) {
+    const socket = s.socket
+    if (!socket || !media) return
+    const data = await downloadMediaMessage(msg, 'buffer', {}, {
+      logger: quiet,
+      reuploadRequest: (m) => (socket.updateMediaMessage ? socket.updateMediaMessage(m) : Promise.resolve(m)),
+    })
+    const url = await media.uploadBuffer(data, `chats/${keyOf(s.userId)}`)
+    await updateAndPublish(s, messageId, { attachments: [{ kind: 'image', name: 'Photo', url }] })
+  }
+
+  async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
+    const message = await store.updateMessage(s.userId, id, patch)
+    if (message) publish(s, { type: 'message.updated', message })
+  }
+
+  async function onMessageUpdate(s: Session, key: WAMessageKey, update: Partial<WAMessage>) {
+    if (!isChatJid(key.remoteJid)) return
+    const id = `wa:${canonicalJid(key.remoteJid, key.remoteJidAlt)}:${key.id}`
+    if (typeof update.status === 'number' && key.fromMe && STATUS[update.status]) {
+      await updateAndPublish(s, id, { status: STATUS[update.status] })
+    }
+    const edited = update.message ? describe(update.message.editedMessage?.message ?? update.message) : null
+    if (edited) await updateAndPublish(s, id, { body: edited.body })
+  }
+
+  async function upsertContact(s: Session, jid: string) {
+    const contact = { id: `wa:${jid}`, name: nameFor(s, jid), network: 'whatsapp' as const, handle: phoneOf(jid) }
+    if (await store.upsertContact(s.userId, contact)) publish(s, { type: 'contact.updated', contact })
+  }
+
+  async function onContacts(s: Session, contacts: WaContact[]) {
+    for (const c of contacts) {
+      if (!c.id) continue
+      const jid = canonicalJid(c.id, c.phoneNumber)
+      const name = c.name || c.notify || c.verifiedName
+      if (!name || isJidGroup(jid)) continue
+      s.names.set(jid, name)
+      await upsertContact(s, jid)
+      // A saved name is a better title for a direct chat than a number.
+      const thread = await store.thread(s.userId, `wa:${jid}`)
+      if (thread && thread.title !== name) {
+        const renamed = await store.upsertThread(s.userId, { id: thread.id, network: 'whatsapp', kind: 'direct', title: name })
+        publish(s, { type: 'thread.updated', thread: renamed })
+      }
+    }
+  }
+
+  async function onChats(s: Session, chats: WaChat[]) {
+    for (const chat of chats) {
+      if (!isChatJid(chat.id)) continue
+      const jid = canonicalJid(chat.id, chat.pnJid)
+      if (chat.name && isJidGroup(jid)) await setGroupTitle(s, jid, chat.name)
+      if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
+        await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
+        const thread = await store.thread(s.userId, `wa:${jid}`)
+        if (thread) publish(s, { type: 'thread.updated', thread })
+      }
+    }
+  }
+
+  async function setGroupTitle(s: Session, jid: string, title: string) {
+    s.groupTitles.set(jid, title)
+    if (await store.thread(s.userId, `wa:${jid}`)) {
+      const thread = await store.upsertThread(s.userId, { id: `wa:${jid}`, network: 'whatsapp', kind: 'group', title })
+      publish(s, { type: 'thread.updated', thread })
+    }
+  }
+
+  async function onHistory(s: Session, chats: WaChat[], contacts: WaContact[], messages: WAMessage[]) {
+    for (const c of contacts) {
+      const name = c.name || c.notify || c.verifiedName
+      if (c.id && name) s.names.set(canonicalJid(c.id, c.phoneNumber), name)
+    }
+    for (const chat of chats) {
+      if (chat.name && chat.id && isJidGroup(chat.id)) s.groupTitles.set(chat.id, chat.name)
+    }
+    // Only the latest few messages per chat: enough to see where each conversation stands.
+    const perChat = new Map<string, number>()
+    const recent = [...messages].sort((a, b) => toNumber(b.messageTimestamp) - toNumber(a.messageTimestamp))
+    for (const m of recent) {
+      const jid = m.key.remoteJid
+      if (!isChatJid(jid)) continue
+      const n = perChat.get(jid) ?? 0
+      if (n >= 40) continue
+      perChat.set(jid, n + 1)
+      await onMessage(s, m, false)
+    }
+    for (const chat of chats) {
+      if (!isChatJid(chat.id)) continue
+      const jid = canonicalJid(chat.id, chat.pnJid)
+      if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
+        await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
+      }
+    }
+    for (const [jid] of s.names) if (!isJidGroup(jid)) await upsertContact(s, jid)
+    reloadSoon(s)
+    await finishSync(s)
+  }
+
+  /* ── Lifecycle ───────────────────────────────────────────────────────────── */
+
+  async function stop(s: Session) {
+    s.stopped = true
+    const socket = s.socket
+    s.socket = null
+    await Promise.resolve(socket?.end(undefined)).catch(() => undefined)
+    if (sessions.get(keyOf(s.userId)) === s) sessions.delete(keyOf(s.userId))
+  }
+
+  async function startSession(userId: ObjectId, linking: Session['linking']): Promise<Session> {
+    const s: Session = {
+      userId,
+      socket: null,
+      auth: await mongoAuthState(col, sealer, userId),
+      linking,
+      opened: false,
+      retries: 0,
+      stopped: false,
+      names: new Map(),
+      groupTitles: new Map(),
+    }
+    sessions.set(keyOf(userId), s)
+    await connect(s)
+    return s
+  }
+
+  function report(error: unknown) {
+    console.error('[whatsapp]', error instanceof Error ? error.message : error)
+  }
+
+  return {
+    /**
+     * Starts linking. With a phone number, resolves with the code to type into WhatsApp
+     * (Linked devices → Link with phone number); without, with a QR code to scan.
+     */
+    async link(userId: ObjectId, request: { method: 'code'; phone: string } | { method: 'qr' }): Promise<LinkResult> {
+      const existing = sessions.get(keyOf(userId))
+      if (existing?.opened && !existing.stopped) throw new HttpError(409, 'WhatsApp is already linked. Unlink it first.')
+      if (existing) await stop(existing)
+
+      const phone = request.method === 'code' ? request.phone.replace(/\D/g, '') : undefined
+      if (request.method === 'code' && (!phone || phone.length < 8 || phone.length > 15)) {
+        throw new HttpError(400, 'Enter your WhatsApp number with its country code, like +91 98765 43210.')
+      }
+      // Linking always starts from a clean slate.
+      await col.waAuth.deleteMany({ userId })
+      await accounts.set(userId, 'whatsapp', {
+        status: 'linking',
+        ...(phone ? { label: `+${phone}` } : {}),
+        detail: request.method === 'code' ? 'Waiting for you to enter the code in WhatsApp…' : 'Waiting for you to scan the QR code…',
+      })
+
+      return new Promise<LinkResult>((resolve, reject) => {
+        let settled = false
+        const timer = setTimeout(() => settle(new HttpError(504, 'WhatsApp didn\'t respond. Try again in a moment.')), deps.linkTimeoutMs ?? 30_000)
+        function settle(result: LinkResult | Error) {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          if (result instanceof Error) {
+            const s = sessions.get(keyOf(userId))
+            if (s && !s.opened) void stop(s)
+            void accounts.set(userId, 'whatsapp', { status: 'disconnected', detail: result.message })
+            reject(result)
+          } else resolve(result)
+        }
+        void startSession(userId, { method: request.method, phone, requested: false, settle }).catch((e) => settle(e as Error))
+      })
+    },
+
+    async unlink(userId: ObjectId) {
+      const s = sessions.get(keyOf(userId))
+      if (s?.socket && s.opened) await s.socket.logout().catch(() => undefined) // Removes the device from the phone too.
+      if (s) await stop(s)
+      await col.waAuth.deleteMany({ userId })
+      await store.forgetNetwork(userId, 'wa:')
+      await accounts.remove(userId, 'whatsapp')
+      hub.publish(keyOf(userId), { type: 'reloaded' })
+    },
+
+    async send(userId: ObjectId, threadId: string, body: string): Promise<Message> {
+      const s = sessions.get(keyOf(userId))
+      if (!s?.socket || !s.opened) throw new HttpError(409, 'WhatsApp is not connected right now.')
+      const jid = threadId.slice('wa:'.length)
+      const sent = await s.socket.sendMessage(jid, { text: body })
+      if (!sent?.key.id) throw new HttpError(502, 'WhatsApp didn\'t accept the message.')
+      const message: StoredMessage = {
+        id: `wa:${jid}:${sent.key.id}`,
+        threadId,
+        senderId: 'me',
+        body,
+        sentAt: new Date().toISOString(),
+        status: 'sent',
+        ref: { key: { remoteJid: jid, fromMe: true, id: sent.key.id } },
+      }
+      await store.addMessage(userId, message)
+      const { ref, ...wire } = message
+      void ref
+      return wire
+    },
+
+    async markRead(userId: ObjectId, threadId: string) {
+      await store.setUnread(userId, threadId, 0)
+      const s = sessions.get(keyOf(userId))
+      if (!s?.socket || !s.opened) return
+      const keys = (await store.recentIncoming(userId, threadId))
+        .map((m) => (m.ref as { key?: WAMessageKey } | undefined)?.key)
+        .filter((k): k is WAMessageKey => !!k?.id)
+      if (keys.length) await s.socket.readMessages(keys).catch(report)
+    },
+
+    /** Reconnects every linked account, e.g. after a restart. */
+    async resumeAll() {
+      for (const account of await accounts.toResume('whatsapp')) {
+        if (sessions.has(keyOf(account.userId))) continue
+        let auth: Awaited<ReturnType<typeof mongoAuthState>>
+        try {
+          auth = await mongoAuthState(col, sealer, account.userId)
+        } catch {
+          // Sealed with another key: the link can't be used any more.
+          await col.waAuth.deleteMany({ userId: account.userId })
+          await accounts.set(account.userId, 'whatsapp', {
+            status: 'disconnected',
+            detail: "The server's encryption key changed, so the link can't be used. Link WhatsApp again.",
+          })
+          continue
+        }
+        if (!auth.state.creds.registered) {
+          await accounts.set(account.userId, 'whatsapp', { status: 'disconnected', detail: 'The link was never finished. Link again.' })
+          continue
+        }
+        await startSession(account.userId, null).catch(report)
+      }
+    },
+
+    async stopAll() {
+      for (const s of [...sessions.values()]) await stop(s)
+      for (const t of reloadTimers.values()) clearTimeout(t)
+      reloadTimers = new Map()
+    },
+
+    isConnected: (userId: ObjectId) => !!sessions.get(keyOf(userId))?.opened,
+  }
+}
+
+export type WhatsApp = ReturnType<typeof createWhatsApp>

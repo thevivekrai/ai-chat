@@ -3,11 +3,13 @@ import { Monitor, Moon, Sun, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
+import { useSession } from '@/store/session'
 import { useSettings, type ThemePreference } from '@/store/settings'
 import { useUi, type SettingsTab } from '@/store/ui'
 import { AccountsTab } from './AccountsTab'
 import { AiTab } from './AiTab'
 import { SectionTitle } from './parts'
+import { ProfileTab } from './ProfileTab'
 
 export function SettingsDialog() {
   const open = useUi((s) => s.dialog === 'settings')
@@ -20,13 +22,17 @@ export function SettingsDialog() {
 }
 
 const TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'profile', label: 'Profile' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'ai', label: 'AI' },
   { id: 'appearance', label: 'Appearance' },
 ]
 
 function SettingsBody({ close }: { close(): void }) {
-  const tab = useUi((s) => s.settingsTab)
+  const signedIn = useSession((s) => s.status === 'signed-in')
+  const tabs = signedIn ? TABS : TABS.filter((t) => t.id !== 'profile')
+  const chosen = useUi((s) => s.settingsTab)
+  const tab = !signedIn && chosen === 'profile' ? 'accounts' : chosen
   const setTab = useUi((s) => s.setSettingsTab)
 
   return (
@@ -39,7 +45,7 @@ function SettingsBody({ close }: { close(): void }) {
           </Button>
         </div>
         <div role="tablist" aria-label="Settings sections" className="flex gap-1 rounded-2xl bg-surface-2 p-1">
-          {TABS.map(({ id, label }) => (
+          {tabs.map(({ id, label }) => (
             <button
               key={id}
               type="button"
@@ -66,7 +72,15 @@ function SettingsBody({ close }: { close(): void }) {
       </header>
 
       <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-        {tab === 'accounts' ? <AccountsTab close={close} /> : tab === 'ai' ? <AiTab /> : <AppearanceTab />}
+        {tab === 'profile' ? (
+          <ProfileTab />
+        ) : tab === 'accounts' ? (
+          <AccountsTab close={close} />
+        ) : tab === 'ai' ? (
+          <AiTab />
+        ) : (
+          <AppearanceTab />
+        )}
       </div>
     </div>
   )

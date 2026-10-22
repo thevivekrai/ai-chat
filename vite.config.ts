@@ -5,8 +5,10 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ isSsrBuild }) => ({
   plugins: [react(), tailwindcss()],
+  // The server bundle (`vite build --ssr`) needs no copy of public/.
+  publicDir: isSsrBuild ? false : 'public',
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
@@ -26,8 +28,12 @@ export default defineConfig({
       },
     },
   },
+  server: {
+    // `npm run dev:server` runs the API on this port.
+    proxy: { '/api': 'http://127.0.0.1:5001' },
+  },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'server/**/*.test.ts'],
   },
-})
+}))

@@ -3,11 +3,13 @@
  * these, so behaviour (auto-advance, undo toasts, consent clean-up) is identical everywhere.
  */
 import type { ExtractedTask } from '@/ai'
-import { api, type ConnectorId, type MatrixLogin } from '@/data/api'
+import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/data/api'
+import { serverApi } from '@/data/server/serverApi'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
 import { useInbox } from './inbox'
+import { useSession } from './session'
 import { usesClaude, useSettings, type ClaudeSettings } from './settings'
 import { toast, useToasts } from './toasts'
 import { useUi } from './ui'
@@ -179,6 +181,98 @@ export async function disconnectAccount(id: ConnectorId) {
 
 export async function applyConnectorFix(id: ConnectorId, fixId: string) {
   await api.connections.applyFix(id, fixId)
+}
+
+/* ── Accounts linked on the server ────────────────────────────────────────── */
+
+export const LINKED_NAMES: Record<LinkedNetwork, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram' }
+
+/** Chats linked on the server (as opposed to the demo or this browser's connectors). */
+export const isServerThread = (threadId: string) => threadId.startsWith('wa:') || threadId.startsWith('tga:')
+
+/** Called when a link finishes; the chats arrive as they sync. */
+export function linkedNetworkConnected(network: LinkedNetwork) {
+  offerToHideDemo(LINKED_NAMES[network])
+}
+
+export async function unlinkNetwork(network: LinkedNetwork) {
+  await api.connections.unlink(network)
+  const prefix = network === 'whatsapp' ? 'wa:' : 'tga:'
+  forgetThreadsHere((id) => id.startsWith(prefix))
+  toast({
+    title: `${LINKED_NAMES[network]} unlinked`,
+    description: 'Tidings was logged out of it, and its chats were deleted from the server.',
+    group: 'accounts',
+  })
+}
+
+/** Removes what this device kept about some chats: AI results and consent, unsent text, the selection. */
+function forgetThreadsHere(matches: (threadId: string) => boolean) {
+  const ai = useAi.getState()
+  const ui = useUi.getState()
+  const settings = useSettings.getState()
+  const aiIds = new Set([...Object.keys(ai.priority), ...Object.keys(ai.summary), ...Object.keys(ai.tasks), ...Object.keys(ai.drafts)])
+  for (const id of aiIds) if (matches(id)) ai.forgetThread(id)
+  for (const id of Object.keys(ui.composer)) if (matches(id)) ui.setComposer(id, '')
+  if (ui.selectedThreadId && matches(ui.selectedThreadId)) ui.selectThread(null)
+  const allowed = settings.aiThreadIds.filter(matches)
+  if (allowed.length) settings.setThreadsAllowed(allowed, false)
+}
+
+/* ── Signing in ──────────────────────────────────────────────────────────── */
+
+export async function signIn(email: string, password: string) {
+  const { user } = await serverApi.login({ email, password })
+  await useSession.getState().signedIn(user)
+}
+
+export async function createAccount(name: string, email: string, password: string) {
+  const { user } = await serverApi.register({ name, email, password })
+  await useSession.getState().signedIn(user)
+}
+
+export async function signInWithGoogle(credential: string) {
+  const { user, passwordRemoved } = await serverApi.google(credential)
+  await useSession.getState().signedIn(user)
+  if (passwordRemoved) {
+    toast({
+      title: 'Signed in with Google',
+      description: 'The password that was set on this account was turned off, to keep it yours. You can set a new one.',
+      group: 'session',
+      action: { label: 'Set password', run: () => useUi.getState().openSettings('profile') },
+    })
+  }
+}
+
+export async function signOut() {
+  await serverApi.logout().catch(() => undefined)
+  forgetThreadsHere(isServerThread)
+  await useSession.getState().signedOut()
+}
+
+/** Sends the user back to the sign-in screen when the server ends the session. */
+export function watchSession() {
+  return api.connections.onSignedOut(() => {
+    if (useSession.getState().status !== 'signed-in') return
+    forgetThreadsHere(isServerThread)
+    void useSession.getState().signedOut('You were signed out. Sign in again to see your chats.')
+  })
+}
+
+export async function renameUser(name: string) {
+  const { user } = await serverApi.rename(name)
+  useSession.getState().setUser(user)
+}
+
+export async function changePassword(password: string, current?: string) {
+  const { user } = await serverApi.setPassword({ password, current })
+  useSession.getState().setUser(user)
+  toast({ title: 'Password saved', description: 'Other devices were signed out.', group: 'session' })
+}
+
+export async function changeAvatar(image: string) {
+  const { user } = await serverApi.uploadAvatar(image)
+  useSession.getState().setUser(user)
 }
 
 export async function setDemoShown(shown: boolean) {

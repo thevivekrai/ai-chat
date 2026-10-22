@@ -16,19 +16,31 @@ import {
   simulateIncoming,
 } from '@/store/actions'
 import { hasRealAccount, useConnections } from '@/store/connections'
+import { useSession } from '@/store/session'
+import { LinkedAccounts } from './LinkedAccounts'
 import { Card, CardHeader, ErrorText, Field, Input, SectionTitle, StatusPill } from './parts'
 
 export function AccountsTab({ close }: { close(): void }) {
   const connections = useConnections()
+  // Without a Tidings server (a static deploy) only the in-browser connections are available.
+  const hasServer = useSession((s) => s.status !== 'no-server')
   return (
     <div className="space-y-6">
+      {hasServer && (
+        <section className="space-y-3">
+          <SectionTitle>WhatsApp and Telegram</SectionTitle>
+          <LinkedAccounts />
+        </section>
+      )}
+
       <section className="space-y-3">
-        <SectionTitle>Your accounts</SectionTitle>
+        <SectionTitle>{hasServer ? 'More connections' : 'Your accounts'}</SectionTitle>
         <TelegramCard status={connections.telegram} />
         <MatrixCard status={connections.matrix} />
         <p className="text-xs leading-relaxed text-muted">
-          Messages travel directly between this browser and your accounts, and are kept in this browser's storage.
-          Tokens are stored here too: anyone with access to this browser profile could read them.
+          {hasServer ? 'These connect from this browser directly: their' : 'Messages travel directly between this browser and your accounts:'}{' '}
+          messages and tokens are kept in this browser's storage, and anyone with access to this browser profile could read
+          them.
         </p>
       </section>
 
