@@ -4,7 +4,8 @@ import { PasswordInput } from '@/components/auth/AuthScreen'
 import { Button } from '@/components/ui/Button'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { api, type PublicAccount } from '@/data/api'
-import type { WhatsAppLinkResult } from '@/data/server/types'
+import { deviceUsage } from '@/data/server/deviceStore'
+import { MESSAGES_KEPT_PER_CHAT, type WhatsAppLinkResult } from '@/data/server/types'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
 import { linkedNetworkConnected, unlinkNetwork } from '@/store/actions'
@@ -41,11 +42,34 @@ export function LinkedAccounts() {
     <>
       <WhatsAppCard account={server?.whatsapp ?? null} />
       <TelegramCard account={server?.telegram ?? null} enabled={!!features?.telegram} />
-      <p className="text-xs leading-relaxed text-muted">
-        Linked chats sync through the Sytext server, which keeps them encrypted at rest, so they're there on every device
-        you sign in on. Unlinking logs the server out and deletes them.
-      </p>
+      <WhereChatsAreKept />
     </>
+  )
+}
+
+/** What's kept where: the links on the server, the chats on each device. */
+function WhereChatsAreKept() {
+  const [usage, setUsage] = useState<number | null>(null)
+  useEffect(() => {
+    let live = true
+    void deviceUsage().then((bytes) => live && setUsage(bytes))
+    return () => {
+      live = false
+    }
+  }, [])
+  return (
+    <div className="space-y-1.5 text-xs leading-relaxed text-muted">
+      <p>
+        <b className="font-medium text-fg">On this device:</b> your chats, in this browser's storage
+        {usage !== null && ` (${usage < 1024 * 1024 ? `${Math.max(1, Math.round(usage / 1024))} KB` : `${(usage / 1024 / 1024).toFixed(1)} MB`} used)`}.
+        Scrolling back further fetches older messages from WhatsApp or Telegram.
+      </p>
+      <p>
+        <b className="font-medium text-fg">On the server:</b> the links to WhatsApp and Telegram, encrypted, and only the latest{' '}
+        {MESSAGES_KEPT_PER_CHAT} messages of each chat, to pass on to your devices. The links keep running when you sign out
+        or close the app. Unlinking logs the server out and deletes it all.
+      </p>
+    </div>
   )
 }
 

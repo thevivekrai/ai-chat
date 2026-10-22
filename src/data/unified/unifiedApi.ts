@@ -375,7 +375,10 @@ export function createUnifiedApi(): InboxApi {
       }
       if (!user && !server) return
       if (user) {
-        const connector = new ServerConnector({ onSignedOut: () => signedOutListeners.forEach((listener) => listener()) })
+        const connector = new ServerConnector({
+          owner: user.id,
+          onSignedOut: () => signedOutListeners.forEach((listener) => listener()),
+        })
         const offEvents = connector.subscribe((event) => onConnectorEvent(event))
         const offStatus = connector.onStatus(() => notifyConnections())
         const offAccounts = connector.onAccounts(() => notifyConnections())
@@ -384,7 +387,8 @@ export function createUnifiedApi(): InboxApi {
       } else {
         server?.detach()
         server = null
-        // Signed out: nothing of that account's chats stays on this device.
+        // Signed out: nothing of that account's chats stays on this device (the connector deletes
+        // its copy of them). The links themselves carry on, on the server.
         forgetLocal('server', { tasks: true })
       }
       notifyConnections()

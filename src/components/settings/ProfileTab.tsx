@@ -52,7 +52,8 @@ export function ProfileTab() {
           Sign out
         </Button>
         <p className="text-[11px] leading-relaxed text-faint">
-          Signing out removes your linked chats from this browser. They stay linked on the server until you unlink them.
+          Signing out removes your chats from this browser. WhatsApp and Telegram stay linked and messages keep coming in,
+          so they're all here when you sign in again. To stop that, unlink them in Accounts.
         </p>
       </section>
     </div>

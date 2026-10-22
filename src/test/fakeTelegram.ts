@@ -95,11 +95,11 @@ export function installFakeTelegram({ token = '123:TEST' } = {}) {
 }
 
 /** Resolves once `check` passes, polling briefly; for waiting on background sync. */
-export async function eventually(check: () => void, timeoutMs = 2000) {
+export async function eventually(check: () => void | Promise<void>, timeoutMs = 2000) {
   const started = Date.now()
   for (;;) {
     try {
-      check()
+      await check()
       return
     } catch (error) {
       if (Date.now() - started > timeoutMs) throw error

@@ -112,7 +112,7 @@ export interface ConnectionsApi {
    * Signing in to (or out of) the Sytext server: shows (or removes) the chats of the accounts
    * linked there. Signing out also clears what this device kept about them.
    */
-  setServerSession(user: { name: string } | null): Promise<void>
+  setServerSession(user: { id: string; name: string } | null): Promise<void>
   /** Called when the server says the session ended (expired, or signed out elsewhere). */
   onSignedOut(listener: () => void): () => void
 

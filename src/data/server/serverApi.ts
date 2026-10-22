@@ -1,5 +1,6 @@
 import type {
   AuthResult,
+  MessageHint,
   PublicUser,
   ServerFeatures,
   ServerInbox,
@@ -86,14 +87,33 @@ export const serverApi = {
   /* ── Linked chats ────────────────────────────────────────────────────────── */
 
   inbox: () => request<ServerInbox>('GET', '/inbox'),
-  send: (threadId: string, body: string, replyToId?: string) =>
-    request<{ message: Message }>('POST', `/threads/${segment(threadId)}/messages`, { body, ...(replyToId ? { replyToId } : {}) }),
+  /**
+   * The hints say what this device knows of a message, for the server to act on it if it no longer
+   * keeps it (it keeps only the latest of each chat).
+   */
+  send: (threadId: string, body: string, replyToId?: string, replyTo?: MessageHint) =>
+    request<{ message: Message }>('POST', `/threads/${segment(threadId)}/messages`, {
+      body,
+      ...(replyToId ? { replyToId } : {}),
+      ...(replyTo ? { replyTo } : {}),
+    }),
   markRead: (threadId: string) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/read`),
-  react: (threadId: string, messageId: string, emoji: string | null) =>
-    request<{ message: Message }>('POST', `/threads/${segment(threadId)}/reactions`, { messageId, emoji }),
+  /** The message as the server now has it, or null when it no longer keeps it. */
+  react: (threadId: string, messageId: string, emoji: string | null, message?: MessageHint) =>
+    request<{ message: Message | null }>('POST', `/threads/${segment(threadId)}/reactions`, {
+      messageId,
+      emoji,
+      ...(message ? { message } : {}),
+    }),
   typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
-  older: (threadId: string, beforeId: string) =>
-    request<ServerOlderMessages>('GET', `/threads/${segment(threadId)}/messages?before=${segment(beforeId)}`),
+  older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
+    const query = new URLSearchParams({ before: before.id })
+    if (before.senderId && before.sentAt) {
+      query.set('senderId', before.senderId)
+      query.set('sentAt', before.sentAt)
+    }
+    return request<ServerOlderMessages>('GET', `/threads/${segment(threadId)}/messages?${query}`)
+  },
 
   linkWhatsApp: (request_: { method: 'code'; phone: string } | { method: 'qr' }) =>
     request<WhatsAppLinkResult>('POST', '/link/whatsapp', request_),

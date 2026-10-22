@@ -10,7 +10,11 @@ Nothing is ever sent automatically.
   shows into *Linked devices* on your phone (or scanning a QR code), the way WhatsApp Web links.
   Link **Telegram** with your phone number and the login code Telegram sends you, or by scanning a
   QR code, plus your two-step password if you use one. Your chats sync to the inbox on every
-  device you sign in on, and you reply from Sytext.
+  device you sign in on, and you reply from Sytext. The links keep running on the server when you
+  sign out or close the app.
+- **Chats live on your devices, not in the database.** Each browser keeps its own copy; the
+  server keeps only the links and the latest 40 messages of each chat, so a small free database
+  is enough.
 - **Conversations as on the networks themselves.** Quoted replies, reactions, "typing…" both
   ways, profile and group pictures, read ticks, and earlier messages as you scroll back.
   The demo chats have replies, reactions and typing too.
@@ -68,6 +72,7 @@ required; `.env.example` explains every variable:
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Profile photos, and pictures in linked chats. |
+| `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
 
 `PORT` is optional: the server listens where Render tells it to.
 
@@ -79,10 +84,15 @@ Things to know about hosting:
 
 - **Run one instance.** Each WhatsApp and Telegram link lives in the server process, and WhatsApp
   allows one connection per linked device.
-- **Free instances sleep** after 15 minutes without visits, and linked accounts only sync while the
-  server runs. When it wakes, it reconnects and catches up: Telegram fetches what's new in your
-  recent chats, and WhatsApp delivers what it held for the linked device. For syncing around the
-  clock, use an always-on instance.
+- **Free instances sleep** after 15 minutes without visits, and a sleeping server can't hold the
+  WhatsApp and Telegram connections. So while any account is linked, the server visits its own
+  address (`RENDER_EXTERNAL_URL`, which Render sets) every 10 minutes to stay awake. One service
+  running all month fits in Render's 750 free instance hours, but not two. Set `KEEP_AWAKE=off` to
+  let it sleep: when it wakes, it reconnects and catches up (Telegram fetches what's new in your
+  recent chats, and WhatsApp delivers what it held for the linked device).
+- **Links look after themselves.** Every 5 minutes the server reconnects any linked account that
+  isn't connected (a dropped connection, a failed reconnect, a restart), and every 10 minutes it
+  checks Telegram for messages it missed while the connection was down.
 
 **Try this:** click **Turn on AI** · press `J`/`K` to move through the queue · `R` for drafts,
 `1`–`3` to pick one, edit, `Enter` to send · `E` to mark done · `⌘K`/`Ctrl+K` and ask *"what did
@@ -134,7 +144,7 @@ like WhatsApp Web; your phone doesn't have to stay online.
   delivery and read ticks for yours, edits and deletions. Pictures that arrive are copied to
   Cloudinary so the app can show them; other media shows as a labelled attachment.
 - Quoted replies and reactions come in and go out. You see when someone is typing, and they see
-  when you are. Profile and group pictures are copied to the server (encrypted, like the rest).
+  when you are. Profile and group pictures show too.
 - Scrolling back past what's stored asks your phone for older messages, as WhatsApp Web does.
   They arrive a moment later, if the phone is online.
 - Reading a chat in Sytext marks it read on WhatsApp; replies go out from your number.
@@ -161,13 +171,28 @@ a new device, and shows up in Telegram under **Settings → Devices**, where you
   [my.telegram.org](https://my.telegram.org) → *API development tools*. It uses
   [GramJS](https://gram.js.org), a client for Telegram's own API (MTProto).
 
-### What the server keeps
+### Where your chats are kept
 
-Per user: the linked sessions, and the synced chats, contacts and messages. Session keys, chat and
-contact names, message text and attachments are **encrypted at rest** (AES-256-GCM, with
-`DATA_ENCRYPTION_KEY`), so a copy of the database alone reveals no chats. Ids, times and counts stay
-readable so the database can sort them. Done/snoozed state, tasks and AI results stay in the
-browser, as for every other source; signing out clears those for linked chats from the browser.
+- **On the server:** the linked sessions (they have to run somewhere when no browser is open, and
+  WhatsApp can't run inside a web page), your chats and contacts, and only the **latest 40
+  messages of each chat**, to pass on to your devices. Older messages are deleted from the server
+  every minute; data from before this limit is trimmed on start. Profile pictures aren't stored:
+  only that one exists, and the image is kept in memory and fetched again from WhatsApp or
+  Telegram when needed. So the database stays small however much you chat: about chats × 40
+  messages, plus the session keys.
+- **On each device:** everything that browser has seen, in its own storage (IndexedDB). It shows
+  straight away when you open the app, even offline, and scrolling back reads it before asking
+  the network. Further back, older messages come from Telegram, or from your phone for WhatsApp.
+  If more came in while a device was away than the server keeps, the device fetches the gap.
+  **Settings → Accounts** shows how much space it uses.
+- **Signing out** deletes the copy on that device (and closing the app with an expired session
+  does on the next start). The links keep running on the server: messages keep coming in, and
+  they're there when you sign in again. To stop them, **unlink**.
+
+On the server, session keys, chat and contact names, message text and attachments are **encrypted
+at rest** (AES-256-GCM, with `DATA_ENCRYPTION_KEY`), so a copy of the database alone reveals no
+chats. Ids, times and counts stay readable so the database can sort them. Done/snoozed state, tasks
+and AI results stay in the browser, as for every other source.
 
 ## More connections, from the browser
 
@@ -313,9 +338,11 @@ server/
   crypto.ts           ← AES-256-GCM for data at rest
 ```
 
-In the browser, `src/data/server/` is the client: `serverApi.ts` for HTTP, and `ServerConnector`,
-which loads `/api/inbox` and then follows `/api/events`, reloading whenever the stream reconnects
-so nothing is missed. The wire types (`src/data/server/types.ts`) are shared by both sides.
+In the browser, `src/data/server/` is the client: `serverApi.ts` for HTTP; `deviceStore.ts`, this
+device's copy of the chats in IndexedDB; and `ServerConnector`, which shows that copy, loads
+`/api/inbox` and merges it in, then follows `/api/events`, reloading whenever the stream
+reconnects so nothing is missed. The wire types (`src/data/server/types.ts`) are shared by both
+sides.
 
 The Matrix SDK (~900 kB) and the Claude SDK are separate chunks, downloaded only once Matrix is
 connected or a key is saved.
@@ -329,13 +356,18 @@ connected or a key is saved.
   Telegram transports: sign-up and sign-in, Google account linking, CSRF and forged cookies,
   linking both networks step by step (Telegram by code and by QR), history, live messages,
   edits, read receipts, sending, quoted replies, reactions, typing, profile pictures, earlier
-  messages, restarts, ended sessions, unlinking, and that stored text is encrypted.
+  messages, restarts, ended sessions, unlinking, that stored text is encrypted, trimming to the
+  latest 40 messages, acting on messages only a device still has, Telegram catching up on missed
+  messages, and links carrying on through signing out and back in.
 
   ```bash
   TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test
   ```
-- **Server connector.** Loading, live events, routing sends, reactions, typing, earlier messages
-  and read markers, holding back the echo of a message being sent, and clean-up on sign-out.
+- **Server connector and device copy.** Loading, live events, routing sends, reactions, typing,
+  earlier messages and read markers, holding back the echo of a message being sent; the copy on
+  the device (against an in-memory IndexedDB): shown before the server answers, kept when the
+  server lets go, paged back through first, gaps filled, unlinked networks dropped, and deleted
+  on sign-out.
 - **In a browser.** `server/testing/e2e.ts` runs the app against the same fakes, with a control
   port standing in for the phone, for clicking through linking end to end.
 - **Claude requests.** A stubbed `fetch` checks the request shape (model, effort, structured
@@ -352,6 +384,8 @@ simulated WhatsApp bridge room) and a local Telegram Bot API server.
 - **WhatsApp and Telegram media.** Pictures are shown; other media are labelled, and sending is
   text only (with replies and reactions).
 - **One server instance**, and linked accounts sync only while it runs (see Deploy).
+- **Edits and reactions to old messages.** One that changes a message the server no longer keeps
+  (older than the latest 40 of its chat) isn't passed on to devices.
 
 - **Encryption.** Matrix end-to-end encrypted rooms (matrix-js-sdk's Rust crypto plus device
   verification).

@@ -7,20 +7,42 @@ import {
   type OlderMessages,
   type SendOptions,
 } from '../connectors/types'
+import { withMyReaction } from '../reactions'
 import type { ChatCapabilities, Contact, Message, Thread } from '../types'
 import { ME_ID } from '../types'
+import { openDeviceStore, wipeDeviceStore, type DeviceStore } from './deviceStore'
 import { isSignedOut, serverApi } from './serverApi'
-import type { LinkedNetwork, PublicAccount, ServerEvent, ServerInbox } from './types'
+import { MESSAGES_KEPT_PER_CHAT, type LinkedNetwork, type MessageHint, type PublicAccount, type ServerEvent, type ServerInbox } from './types'
 
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
 
 /** WhatsApp and Telegram, linked on the server, both do all of it. */
 const LINKED_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: true }
 
+/** How many messages of each chat are read from the device on start; older ones as the user scrolls back. */
+const IN_MEMORY_PER_CHAT = 50
+/** One "Load earlier" from the device. */
+const OLDER_PAGE = 30
+/** How far a gap left while this device was away is filled in by itself, per chat. */
+const GAP_PAGES = 3
+const GAP_CHATS = 20
+
+const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:' }
+
+const hintOf = (m: Message, withBody = false): MessageHint => ({
+  id: m.id,
+  senderId: m.senderId,
+  sentAt: m.sentAt,
+  ...(withBody ? { body: m.body || m.attachments?.[0]?.name || '' } : {}),
+})
+
 /**
- * Chats from the WhatsApp and Telegram accounts linked on the Sytext server. The server keeps
- * them (encrypted at rest) and pushes changes as server-sent events; this keeps a copy for the
- * session, re-reading the whole inbox whenever the stream (re)connects so nothing is missed.
+ * Chats from the WhatsApp and Telegram accounts linked on the Sytext server.
+ *
+ * The server keeps only the latest messages of each chat and pushes changes as server-sent
+ * events. This device keeps its own copy of everything it has seen (see deviceStore.ts): it's
+ * shown straight away on start, even offline, merged with the server's copy whenever the stream
+ * (re)connects, and scrolled back through before the network is asked for older messages.
  *
  * Ids start with "wa:" or "tga:".
  */
@@ -46,9 +68,25 @@ export class ServerConnector implements Connector {
   private readonly inFlight = new Map<string, number>()
   private readonly held = new Map<string, MessageChange[]>()
   private readonly onSignedOut: () => void
+  private readonly owner: string
+  private readonly openStore: (owner: string) => Promise<DeviceStore>
+  /** This device's copy, once opened and read. */
+  private restoring: Promise<DeviceStore> | null = null
+  private forgotten = false
 
-  constructor({ onSignedOut }: { onSignedOut(): void }) {
+  constructor({
+    owner,
+    onSignedOut,
+    openStore = openDeviceStore,
+  }: {
+    /** The signed-in user's id: a copy left on this device by someone else is never shown. */
+    owner: string
+    onSignedOut(): void
+    openStore?: (owner: string) => Promise<DeviceStore>
+  }) {
+    this.owner = owner
     this.onSignedOut = onSignedOut
+    this.openStore = openStore
   }
 
   snapshot(): ConnectorSnapshot {
@@ -80,6 +118,7 @@ export class ServerConnector implements Connector {
   start() {
     if (this.running) return
     this.running = true
+    void this.device()
     this.open()
   }
 
@@ -106,8 +145,9 @@ export class ServerConnector implements Connector {
   async sendMessage(threadId: string, body: string, options?: SendOptions): Promise<Message> {
     this.inFlight.set(threadId, (this.inFlight.get(threadId) ?? 0) + 1)
     try {
-      const { message } = await serverApi.send(threadId, body, options?.replyToId)
-      this.messages.set(message.id, message)
+      const quoted = options?.replyToId ? this.messages.get(options.replyToId) : undefined
+      const { message } = await serverApi.send(threadId, body, options?.replyToId, quoted && hintOf(quoted, true))
+      this.keepMessages([message])
       return message
     } catch (error) {
       if (isSignedOut(error)) this.signedOut()
@@ -124,39 +164,95 @@ export class ServerConnector implements Connector {
   }
 
   async react(threadId: string, messageId: string, emoji: string | null): Promise<Message> {
-    const { message } = await this.signedIn(serverApi.react(threadId, messageId, emoji))
-    this.messages.set(message.id, message)
-    return message
+    const mine = this.messages.get(messageId)
+    const { message } = await this.signedIn(serverApi.react(threadId, messageId, emoji, mine && hintOf(mine)))
+    // The server no longer keeps it: only this device's copy changes.
+    const updated = message ?? (mine && { ...mine, reactions: withMyReaction(mine.reactions, emoji) })
+    if (!updated) throw new Error('That message is gone.')
+    this.keepMessages([updated])
+    return updated
   }
 
   async setTyping(threadId: string, typing: boolean) {
     await serverApi.typing(threadId, typing)
   }
 
+  /** From this device's copy first; beyond that, from the server and through it the network. */
   async loadOlder(threadId: string, beforeId: string): Promise<OlderMessages> {
-    const older = await this.signedIn(serverApi.older(threadId, beforeId))
-    for (const message of older.messages) this.messages.set(message.id, message)
+    const before = this.messages.get(beforeId)
+    if (before) {
+      const kept = await (await this.device()).older(threadId, before.sentAt, OLDER_PAGE)
+      if (kept.length) {
+        for (const m of kept) this.messages.set(m.id, m)
+        return { messages: kept.reverse(), hasMore: true }
+      }
+    }
+    const older = await this.signedIn(serverApi.older(threadId, before ? hintOf(before) : { id: beforeId }))
+    this.keepMessages(older.messages)
     return older
   }
 
   async markRead(threadId: string): Promise<Thread | null> {
     const thread = this.threads.get(threadId)
-    if (thread) this.threads.set(threadId, { ...thread, unreadCount: 0 })
+    if (thread) this.keepThreads([{ ...thread, unreadCount: 0 }])
     await serverApi.markRead(threadId)
     return this.threads.get(threadId) ?? null
   }
 
   /** Re-reads which accounts are linked, after linking or unlinking from this tab. */
   async refreshAccounts() {
-    this.load(await serverApi.inbox())
+    await this.load(await serverApi.inbox())
   }
 
+  /** Signing out: everything about these chats leaves this device. */
   async forget() {
     this.stop()
+    this.forgotten = true
     this.threads.clear()
     this.messages.clear()
     this.contacts.clear()
     this.linked.clear()
+    if (this.restoring) await (await this.restoring.catch(() => null))?.clear()
+    else await wipeDeviceStore()
+  }
+
+  /* ── This device's copy ───────────────────────────────────────────────────── */
+
+  /** Opens the copy and shows what's in it, once; until the server answers, it's all there is. */
+  private device(): Promise<DeviceStore> {
+    this.restoring ??= (async () => {
+      const store = await this.openStore(this.owner)
+      const copy = await store.load(IN_MEMORY_PER_CHAT).catch((error: unknown) => {
+        console.warn("[device] Couldn't read this device's copy:", error)
+        return { threads: [], contacts: [], messages: [] }
+      })
+      if (this.forgotten) {
+        await store.clear()
+        return store
+      }
+      // Anything the server already sent is newer.
+      for (const t of copy.threads) if (!this.threads.has(t.id)) this.threads.set(t.id, t)
+      for (const c of copy.contacts) if (!this.contacts.has(c.id)) this.contacts.set(c.id, c)
+      for (const m of copy.messages) if (!this.messages.has(m.id)) this.messages.set(m.id, m)
+      if (copy.threads.length) this.events.emit({ type: 'reloaded' })
+      return store
+    })()
+    return this.restoring
+  }
+
+  private keepMessages(messages: Message[]) {
+    for (const m of messages) this.messages.set(m.id, m)
+    if (messages.length) void this.device().then((store) => store.put({ messages }))
+  }
+
+  private keepThreads(threads: Thread[]) {
+    for (const t of threads) this.threads.set(t.id, t)
+    void this.device().then((store) => store.put({ threads }))
+  }
+
+  private keepContacts(contacts: Contact[]) {
+    for (const c of contacts) this.contacts.set(c.id, c)
+    void this.device().then((store) => store.put({ contacts }))
   }
 
   /* ── The event stream ─────────────────────────────────────────────────────── */
@@ -168,10 +264,7 @@ export class ServerConnector implements Connector {
     // Each (re)connection starts from a fresh copy of the inbox, so nothing missed in between is lost.
     source.onopen = () => {
       this.retries = 0
-      void serverApi
-        .inbox()
-        .then((inbox) => this.load(inbox))
-        .catch((error) => this.failed(error))
+      void this.reload()
     }
     source.onmessage = (e: MessageEvent<string>) => {
       let event: ServerEvent
@@ -191,13 +284,20 @@ export class ServerConnector implements Connector {
       // A failed response (signed out, the server restarting): the browser has given up.
       source.close()
       if (this.source === source) this.source = null
-      void serverApi
-        .inbox()
-        .then((inbox) => {
-          this.load(inbox)
-          this.reopenLater()
-        })
-        .catch((error) => this.failed(error))
+      void this.reload().then((ok) => {
+        if (ok) this.reopenLater()
+      })
+    }
+  }
+
+  /** Fetches the server's copy and merges it in; false if that failed. */
+  private async reload(): Promise<boolean> {
+    try {
+      await this.load(await serverApi.inbox())
+      return true
+    } catch (error) {
+      this.failed(error)
+      return false
     }
   }
 
@@ -233,14 +333,73 @@ export class ServerConnector implements Connector {
     }
   }
 
-  private load(inbox: ServerInbox) {
-    this.threads = new Map(inbox.threads.map((t) => [t.id, t]))
-    this.messages = new Map(inbox.messages.map((m) => [m.id, m]))
-    this.contacts = new Map(inbox.contacts.map((c) => [c.id, c]))
+  /**
+   * Merges the server's copy into this device's. The server's is newer for whatever it has; what
+   * only this device has (older messages) stays, except for networks no longer linked.
+   */
+  private async load(inbox: ServerInbox) {
+    const store = await this.device()
+    if (this.forgotten) return
+
+    // Chats of a network that was unlinked (here or on another device) go.
+    const linkedPrefixes = inbox.accounts.map((a) => PREFIX[a.network])
+    const gone = (id: string) => !linkedPrefixes.some((prefix) => id.startsWith(prefix))
+    const goneThreads = [...this.threads.keys()].filter(gone)
+    const goneContacts = [...this.contacts.keys()].filter(gone)
+    for (const id of goneThreads) this.threads.delete(id)
+    for (const id of goneContacts) this.contacts.delete(id)
+    for (const [id, m] of this.messages) if (gone(m.threadId)) this.messages.delete(id)
+    if (goneThreads.length || goneContacts.length) store.remove({ threadIds: goneThreads, contactIds: goneContacts })
+
+    const gaps = this.findGaps(inbox)
+    for (const t of inbox.threads) this.threads.set(t.id, t)
+    for (const c of inbox.contacts) this.contacts.set(c.id, c)
+    for (const m of inbox.messages) this.messages.set(m.id, m)
+    store.put({ threads: inbox.threads, contacts: inbox.contacts, messages: inbox.messages })
+
     this.linked = new Map(inbox.accounts.map((a) => [a.network, a]))
     this.accountEvents.emit(this.accounts())
     this.setStatus({ state: 'online' })
     this.events.emit({ type: 'reloaded' })
+    if (gaps.length) void this.fillGaps(gaps)
+  }
+
+  /**
+   * Chats where more messages came in while this device was away than the server keeps: between
+   * the newest this device has and the oldest the server has, some are missing.
+   */
+  private findGaps(inbox: ServerInbox) {
+    const fromServer = new Map<string, Message[]>()
+    for (const m of inbox.messages) fromServer.set(m.threadId, [...(fromServer.get(m.threadId) ?? []), m])
+    const newestHere = new Map<string, string>()
+    for (const m of this.messages.values()) {
+      if ((newestHere.get(m.threadId) ?? '') < m.sentAt) newestHere.set(m.threadId, m.sentAt)
+    }
+    const gaps: { threadId: string; from: Message; until: string }[] = []
+    for (const [threadId, list] of fromServer) {
+      const until = newestHere.get(threadId)
+      if (!until || list.length < MESSAGES_KEPT_PER_CHAT) continue
+      const oldest = list.reduce((a, b) => (a.sentAt <= b.sentAt ? a : b))
+      if (until < oldest.sentAt) gaps.push({ threadId, from: oldest, until })
+    }
+    return gaps.sort((a, b) => (a.from.sentAt < b.from.sentAt ? 1 : -1)).slice(0, GAP_CHATS)
+  }
+
+  /** Fetches what's missing, a few pages per chat; anything further comes as the user scrolls back. */
+  private async fillGaps(gaps: { threadId: string; from: Message; until: string }[]) {
+    let added = false
+    for (const gap of gaps) {
+      let from = gap.from
+      for (let page = 0; page < GAP_PAGES; page++) {
+        const older = await serverApi.older(gap.threadId, hintOf(from)).catch(() => null)
+        if (!older?.messages.length || this.forgotten) break
+        this.keepMessages(older.messages)
+        added = true
+        from = older.messages[0]!
+        if (from.sentAt <= gap.until || !older.hasMore) break
+      }
+    }
+    if (added && !this.forgotten) this.events.emit({ type: 'reloaded' })
   }
 
   private onEvent(event: ServerEvent) {
@@ -252,16 +411,16 @@ export class ServerConnector implements Connector {
           this.held.set(threadId, [...(this.held.get(threadId) ?? []), event])
           return
         }
-        this.messages.set(event.message.id, event.message)
+        this.keepMessages([event.message])
         this.events.emit(event)
         return
       }
       case 'thread.updated':
-        this.threads.set(event.thread.id, event.thread)
+        this.keepThreads([event.thread])
         this.events.emit(event)
         return
       case 'contact.updated':
-        this.contacts.set(event.contact.id, event.contact)
+        this.keepContacts([event.contact])
         this.events.emit(event)
         return
       case 'account.updated':
@@ -276,10 +435,7 @@ export class ServerConnector implements Connector {
         this.events.emit(event)
         return
       case 'reloaded':
-        void serverApi
-          .inbox()
-          .then((inbox) => this.load(inbox))
-          .catch((error) => this.failed(error))
+        void this.reload()
     }
   }
 
@@ -288,7 +444,7 @@ export class ServerConnector implements Connector {
     const held = this.held.get(threadId) ?? []
     this.held.delete(threadId)
     for (const event of held) {
-      this.messages.set(event.message.id, event.message)
+      this.keepMessages([event.message])
       this.events.emit(event)
     }
   }

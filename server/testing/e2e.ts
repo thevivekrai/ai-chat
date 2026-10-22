@@ -8,8 +8,10 @@
  *   POST /whatsapp/message {"text"}   a new WhatsApp message
  *   POST /whatsapp/typing             Ravi starts typing
  *   POST /whatsapp/older              the phone sends older messages (after "Load earlier")
+ *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
+ *   POST /trim                        the server trims chats to what it keeps, now
  * Telegram's login code is 12345 and the two-step password hunter2.
  */
 import { createServer } from 'node:http'
@@ -77,6 +79,19 @@ createServer(async (req, res) => {
         type: 'notify',
         messages: [{ key: { remoteJid: RAVI, fromMe: false, id: `L${Date.now()}` }, message: { conversation: input.text }, messageTimestamp: now() }],
       } as never)
+    } else if (req.url === '/whatsapp/burst') {
+      const base = now() - Number(input.count)
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: Array.from({ length: Number(input.count) }, (_, i) => ({
+          key: { remoteJid: RAVI, fromMe: false, id: `B${Date.now()}-${i}` },
+          message: { conversation: `Update ${i + 1}` },
+          messageTimestamp: base + i,
+        })),
+      } as never)
+    } else if (req.url === '/trim') {
+      res.writeHead(200).end(String(await server.current().store.trim()))
+      return
     } else if (req.url === '/whatsapp/typing') {
       server.sockets.at(-1)!.emit('presence.update', { id: RAVI, presences: { [RAVI]: { lastKnownPresence: 'composing' } } })
     } else if (req.url === '/whatsapp/older') {
