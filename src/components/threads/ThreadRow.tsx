@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef } from 'react'
+import { motion } from 'motion/react'
 import type { Contact } from '@/data/types'
 import { Avatar } from '@/components/ui/Avatar'
 import { PriorityTag, PriorityTagSkeleton, ScheduledBadge, SnoozedBadge, UnansweredBadge } from '@/components/ui/Tags'
@@ -36,7 +37,7 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
       (priority ? (
         <PriorityTag key="p" priority={priority.priority} reason={priority.reason} />
       ) : stalePriority ? (
-        <span key="p" className="animate-pulse opacity-60">
+        <span key="p" className={cn(view.priorityLoading && 'animate-pulse opacity-60')}>
           <PriorityTag priority={stalePriority.priority} />
         </span>
       ) : (
@@ -62,10 +63,19 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
       onClick={() => useUi.getState().selectThread(view.id)}
       aria-current={selected ? 'true' : undefined}
       className={cn(
-        'group flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected ? 'bg-accent-soft' : 'hover:bg-surface-2',
+        'group relative isolate flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        !selected && 'hover:bg-surface-2',
       )}
     >
+      {/* One highlight for the whole list: it glides to the newly selected row. */}
+      {selected && (
+        <motion.span
+          layoutId="thread-row-highlight"
+          aria-hidden
+          className="absolute inset-0 -z-10 rounded-2xl bg-pill-accent shadow-pill"
+          transition={{ type: 'spring', stiffness: 560, damping: 42 }}
+        />
+      )}
       <Avatar name={thread.title} seed={thread.id} group={isGroup} network={thread.network} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">

@@ -23,7 +23,7 @@ import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Modal } from '@/components/ui/Modal'
-import { NetworkDot } from '@/components/ui/NetworkDot'
+import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { api } from '@/data/api'
 import type { Message, SearchHit, Thread } from '@/data/types'
@@ -32,9 +32,11 @@ import { cn } from '@/lib/cn'
 import { NETWORKS } from '@/lib/networks'
 import { formatAgo } from '@/lib/time'
 import { openThread, simulateIncoming, turnOnAi } from '@/store/actions'
+import { describeAiError } from '@/store/ai'
 import { buildAnswerSources } from '@/store/aiInput'
 import { useClock } from '@/store/clock'
-import { hasDemoControls, useInbox } from '@/store/inbox'
+import { useConnections } from '@/store/connections'
+import { useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { useUi, type View } from '@/store/ui'
 
@@ -57,7 +59,7 @@ type AnswerState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'ready'; result: SearchAnswer; skipped: number }
-  | { status: 'error' }
+  | { status: 'error'; message: string }
 
 interface Result {
   hit: SearchHit
@@ -124,8 +126,8 @@ function CommandBody({ close }: { close(): void }) {
       try {
         const result = await answerQuestion(q, sources)
         if (!cancelled) setAnswer({ query: q, state: { status: 'ready', result, skipped } })
-      } catch {
-        if (!cancelled) setAnswer({ query: q, state: { status: 'error' } })
+      } catch (error) {
+        if (!cancelled) setAnswer({ query: q, state: { status: 'error', message: describeAiError(error) } })
       }
     }, 220)
     return () => {
@@ -134,6 +136,7 @@ function CommandBody({ close }: { close(): void }) {
     }
   }, [q, aiEnabled, aiThreadIds])
 
+  const demoShown = useConnections((s) => s.demo)
   const commands = useMemo<Command[]>(() => {
     const go = (view: View, label: string, icon: LucideIcon): Command => ({
       id: `go-${view}`,
@@ -161,14 +164,14 @@ function CommandBody({ close }: { close(): void }) {
         hint: '?',
         run: () => useUi.getState().openDialog('shortcuts'),
       },
-      ...(hasDemoControls
+      ...(demoShown
         ? [{ id: 'simulate', label: 'Simulate an incoming message', icon: Zap, run: () => void simulateIncoming() }]
         : []),
     ]
     if (!q) return all
     const needle = q.toLowerCase()
     return all.filter((c) => c.label.toLowerCase().includes(needle)).slice(0, 3)
-  }, [q, theme])
+  }, [q, theme, demoShown])
 
   // Cited messages first, then the rest of the matches.
   const citedIds = answerState.status === 'ready' ? answerState.result.citedMessageIds : NO_IDS
@@ -290,7 +293,7 @@ function CommandBody({ close }: { close(): void }) {
                   tall
                 >
                   <span className="flex items-center gap-1.5 text-xs text-muted">
-                    <NetworkDot network={thread.network} />
+                    <NetworkIcon network={thread.network} />
                     <span className="truncate font-medium text-fg">{thread.title}</span>
                     <span className="shrink-0">· {NETWORKS[thread.network].name}</span>
                     <span className="shrink-0">· {formatAgo(message.sentAt, now)}</span>
@@ -406,7 +409,7 @@ function AnswerCard({ state, aiEnabled, empty }: { state: AnswerState; aiEnabled
           )}
         </>
       ) : state.status === 'error' ? (
-        <p className="text-[13px] text-muted">Couldn't answer that right now.</p>
+        <p className="text-[13px] text-muted">Couldn't answer that right now. {state.message}</p>
       ) : (
         <SkeletonLines lines={2} />
       )}

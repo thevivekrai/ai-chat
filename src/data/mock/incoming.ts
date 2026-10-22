@@ -13,5 +13,5 @@ export const INCOMING_POOL: { threadId: string; senderId: string; body: string }
     senderId: 'c-ishaan',
     body: 'Small heads-up: the printer wants files by noon, so the earlier the better 🙏',
   },
-  { threadId: 'maa', senderId: 'c-maa', body: 'Beta reply toh karo 😅' },
+  { threadId: 'divya', senderId: 'c-divya', body: 'Arre reply toh kar, seats full ho rahi hain 😅' },
 ]

@@ -11,17 +11,10 @@
     'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
 
-  /* Network identification dots. Deliberately generic hues, not any network's brand colours. */
-  --color-net-whatsapp: #10b981;
-  --color-net-telegram: #0ea5e9;
-  --color-net-instagram: #ec4899;
-  --color-net-slack: #f97316;
-  --color-net-sms: #94a3b8;
-
   --animate-fade-in: fade-in 160ms ease-out both;
   --animate-pane-in: pane-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-pop-in: pop-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  --animate-dialog-in: dialog-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-dialog-in: dialog-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-flash: flash 1.8s ease-out both;
   --animate-shimmer: shimmer 1.6s linear infinite;
 
@@ -46,7 +39,7 @@
   @keyframes pop-in {
     from {
       opacity: 0;
-      transform: translateY(4px) scale(0.97);
+      transform: translateY(4px) scale(0.96);
     }
     to {
       opacity: 1;
@@ -56,7 +49,7 @@
   @keyframes dialog-in {
     from {
       opacity: 0;
-      transform: translateY(10px) scale(0.98);
+      transform: translateY(12px) scale(0.97);
     }
     to {
       opacity: 1;
@@ -83,10 +76,17 @@
 }
 
 /* Semantic tokens. Components use these (bg-surface, text-muted, border-line, bg-accent…) so
-   light and dark mode come for free without sprinkling dark: variants everywhere. */
+   light and dark mode come for free without sprinkling dark: variants everywhere.
+
+   The look is "liquid glass": every column is a translucent, blurred slab floating over a soft
+   colour field (see .wallpaper). Fills below are therefore mostly translucent:
+   - glass / glass-thick: the slabs themselves (columns; menus, dialogs, toasts, sheets)
+   - surface: a raised element sitting on a slab (cards, inputs, chips)
+   - surface-2 / surface-3, line: neutral tints that work on any slab */
 @theme inline {
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
+  --color-surface-solid: var(--surface-solid);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-line: var(--line);
@@ -100,56 +100,128 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-ink: var(--accent-ink);
   --color-bubble-in: var(--bubble-in);
-  --color-bubble-out: var(--bubble-out);
+  --color-pill: var(--pill);
+  --color-pill-accent: var(--pill-accent);
   --color-ring: var(--ring);
   --shadow-card: var(--sh-card);
   --shadow-pop: var(--sh-pop);
+  --shadow-glass: var(--sh-glass);
+  --shadow-pill: var(--sh-pill);
+  --shadow-bubble: var(--sh-bubble);
+  --shadow-bubble-out: var(--sh-bubble-out);
+  --shadow-accent: var(--sh-accent);
 }
 
 :root {
   color-scheme: light;
-  --canvas: #f3f3f5;
-  --surface: #ffffff;
-  --surface-2: #f6f6f8;
-  --surface-3: #ececf0;
-  --line: #e6e6eb;
-  --line-strong: #d4d4db;
-  --fg: #17171c;
-  --muted: #5e5e6a;
-  --faint: #93939f;
+  --canvas: #e8ebf0;
+  /* Clear glass: barely tinted, so what's behind it shows through. */
+  --glass: rgb(255 255 255 / 0.22);
+  --glass-thick: rgb(255 255 255 / 0.7);
+  /* Kept modest on purpose: software-composited browsers skip larger backdrop blurs. */
+  --glass-blur: 12px;
+  --glass-saturate: 115%;
+  --sheen: linear-gradient(135deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.06) 34%, rgb(255 255 255 / 0) 60%);
+  --surface: rgb(255 255 255 / 0.5);
+  --surface-solid: #f4f6f9;
+  --surface-2: rgb(15 23 42 / 0.045);
+  --surface-3: rgb(15 23 42 / 0.09);
+  --line: rgb(15 23 42 / 0.09);
+  --line-strong: rgb(15 23 42 / 0.18);
+  --fg: #0e1116;
+  --muted: #454c59;
+  --faint: #727987;
   --accent: #5b5bd6;
-  --accent-hover: #4c4cc6;
+  --accent-hover: #4d4dc9;
   --accent-fg: #ffffff;
-  --accent-soft: #eeeefc;
-  --accent-ink: #4343b6;
-  --bubble-in: #f0f0f3;
-  --bubble-out: #5b5bd6;
-  --ring: rgb(91 91 214 / 0.38);
-  --sh-card: 0 1px 2px rgb(20 20 30 / 0.04), 0 6px 20px -8px rgb(20 20 30 / 0.08);
-  --sh-pop: 0 18px 48px -12px rgb(20 20 30 / 0.22), 0 2px 8px rgb(20 20 30 / 0.06);
+  --accent-soft: rgb(91 91 214 / 0.1);
+  --accent-ink: #3d3dae;
+  --bubble-in: rgb(255 255 255 / 0.62);
+  --pill: rgb(255 255 255 / 0.62);
+  --pill-accent: rgb(255 255 255 / 0.72);
+  --ring: rgb(91 91 214 / 0.4);
+  /* The bright rim along a slab's edge: strongest where light would catch it (top left, bottom right). */
+  --edge: linear-gradient(
+    150deg,
+    rgb(255 255 255 / 1),
+    rgb(255 255 255 / 0.28) 26%,
+    rgb(255 255 255 / 0.05) 52%,
+    rgb(255 255 255 / 0.3) 78%,
+    rgb(255 255 255 / 0.85)
+  );
+  --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.8), 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 22px -12px rgb(15 23 42 / 0.16);
+  --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 0 22px 0 rgb(255 255 255 / 0.35), 0 26px 60px -20px rgb(15 23 42 / 0.32), 0 2px 8px rgb(15 23 42 / 0.07);
+  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 -1px 0 0 rgb(255 255 255 / 0.4), inset 0 0 26px 0 rgb(255 255 255 / 0.3), 0 1px 1px rgb(15 23 42 / 0.04), 0 14px 34px -16px rgb(15 23 42 / 0.26);
+  --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 1), 0 0 0 1px rgb(255 255 255 / 0.55), 0 4px 12px -6px rgb(15 23 42 / 0.22);
+  --sh-bubble: inset 0 0 0 1px rgb(255 255 255 / 0.7), 0 1px 2px rgb(15 23 42 / 0.07);
+  --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.3), 0 3px 9px -4px rgb(70 70 200 / 0.45);
+  --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.32), 0 5px 14px -7px rgb(70 70 200 / 0.6);
+
+  /* Wallpaper: silver, with soft light and shade for the glass to catch. No hue. */
+  --wall-base: linear-gradient(160deg, #cdd3dc 0%, #e9ecf1 46%, #c4cbd6 100%);
+  --blob-1: rgb(255 255 255 / 1);
+  --blob-2: rgb(71 85 105 / 0.5);
+  --blob-3: rgb(255 255 255 / 0.95);
+  --blob-4: rgb(71 85 105 / 0.42);
+  --blob-5: rgb(255 255 255 / 0.8);
+  /* Crisp shapes: sharp outside the glass, softened behind it, which is what makes it read as glass. */
+  --shape-disc: rgb(255 255 255 / 0.75);
+  --shape-ring: rgb(51 65 85 / 0.32);
+  --shape-dim: rgb(51 65 85 / 0.14);
+  --grain: 0.04;
 }
 
 .dark {
   color-scheme: dark;
-  --canvas: #09090b;
-  --surface: #121215;
-  --surface-2: #19191d;
-  --surface-3: #232329;
-  --line: #222228;
-  --line-strong: #34343d;
-  --fg: #ececf1;
-  --muted: #a2a2ad;
-  --faint: #6c6c78;
-  --accent: #6363e2;
-  --accent-hover: #7171ea;
+  --canvas: #0b0d10;
+  --glass: rgb(255 255 255 / 0.055);
+  --glass-thick: rgb(28 30 36 / 0.8);
+  --glass-saturate: 115%;
+  --sheen: linear-gradient(135deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.02) 34%, rgb(255 255 255 / 0) 60%);
+  --surface: rgb(255 255 255 / 0.06);
+  --surface-solid: #1b1e24;
+  --surface-2: rgb(255 255 255 / 0.055);
+  --surface-3: rgb(255 255 255 / 0.1);
+  --line: rgb(255 255 255 / 0.09);
+  --line-strong: rgb(255 255 255 / 0.18);
+  --fg: #eef0f4;
+  --muted: #a9aeb9;
+  --faint: #777d8a;
+  --accent: #6767e6;
+  --accent-hover: #7777ee;
   --accent-fg: #ffffff;
-  --accent-soft: #1d1d3a;
-  --accent-ink: #a8a9ff;
-  --bubble-in: #1d1d22;
-  --bubble-out: #5555d0;
-  --ring: rgb(140 140 255 / 0.45);
-  --sh-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -10px rgb(0 0 0 / 0.5);
-  --sh-pop: 0 24px 64px -12px rgb(0 0 0 / 0.7), 0 2px 8px rgb(0 0 0 / 0.4);
+  --accent-soft: rgb(124 124 255 / 0.15);
+  --accent-ink: #b2b4ff;
+  --bubble-in: rgb(255 255 255 / 0.09);
+  --pill: rgb(255 255 255 / 0.11);
+  --pill-accent: rgb(255 255 255 / 0.14);
+  --ring: rgb(150 150 255 / 0.5);
+  --edge: linear-gradient(
+    150deg,
+    rgb(255 255 255 / 0.34),
+    rgb(255 255 255 / 0.07) 26%,
+    rgb(255 255 255 / 0.02) 52%,
+    rgb(255 255 255 / 0.09) 78%,
+    rgb(255 255 255 / 0.26)
+  );
+  --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.07), 0 1px 2px rgb(0 0 0 / 0.35), 0 10px 28px -14px rgb(0 0 0 / 0.6);
+  --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.1), inset 0 0 22px 0 rgb(255 255 255 / 0.04), 0 30px 70px -18px rgb(0 0 0 / 0.75), 0 2px 10px rgb(0 0 0 / 0.4);
+  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.12), inset 0 -1px 0 0 rgb(255 255 255 / 0.04), inset 0 0 26px 0 rgb(255 255 255 / 0.03), 0 1px 1px rgb(0 0 0 / 0.3), 0 18px 44px -18px rgb(0 0 0 / 0.7);
+  --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 0.16), 0 0 0 1px rgb(255 255 255 / 0.05), 0 6px 16px -8px rgb(0 0 0 / 0.7);
+  --sh-bubble: inset 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.25);
+  --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.22), 0 4px 10px -5px rgb(80 80 255 / 0.45);
+  --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.25), 0 6px 18px -9px rgb(90 90 255 / 0.6);
+
+  --wall-base: linear-gradient(160deg, #07080a 0%, #11141a 48%, #06070a 100%);
+  --blob-1: rgb(255 255 255 / 0.2);
+  --blob-2: rgb(120 138 168 / 0.34);
+  --blob-3: rgb(255 255 255 / 0.14);
+  --blob-4: rgb(130 148 178 / 0.28);
+  --blob-5: rgb(255 255 255 / 0.1);
+  --shape-disc: rgb(255 255 255 / 0.08);
+  --shape-ring: rgb(255 255 255 / 0.2);
+  --shape-dim: rgb(140 160 195 / 0.16);
+  --grain: 0.06;
 }
 
 @layer base {
@@ -174,8 +246,12 @@
     color: inherit;
   }
   dialog::backdrop {
-    background: rgb(10 10 14 / 0.42);
-    backdrop-filter: blur(3px);
+    background: rgb(15 23 42 / 0.1);
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+  }
+  .dark dialog::backdrop {
+    background: rgb(0 0 0 / 0.4);
   }
   button:not(:disabled),
   [role='button']:not([aria-disabled='true']) {
@@ -183,12 +259,205 @@
   }
 }
 
-/* Loading placeholder used while the (mock) AI is "thinking". */
+/* A translucent slab: blurs and brightens whatever is behind it. */
+@utility glass {
+  background-color: var(--glass);
+  background-image: var(--sheen);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+/* Denser glass for things that float above the slabs: menus, dialogs, toasts, sheets. */
+@utility glass-thick {
+  background-color: var(--glass-thick);
+  background-image: var(--sheen);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+/* The light-catching rim. The element must be positioned (relative, absolute or fixed). */
+@utility glass-edge {
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--edge);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+/* The accent, as a glossy drop: used for primary buttons and your own message bubbles. */
+@utility accent-gloss {
+  color: var(--accent-fg);
+  background-color: var(--accent);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 78%, white),
+    var(--accent) 55%,
+    color-mix(in oklab, var(--accent) 88%, black)
+  );
+}
+
+/* Loading placeholder used while the AI is thinking. */
 @utility skeleton {
   background-image: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
   background-size: 200% 100%;
   animation: var(--animate-shimmer);
   border-radius: 6px;
+}
+
+/* The colour field behind the glass: a few large, soft blobs that drift very slowly. */
+@layer components {
+  .wallpaper {
+    position: fixed;
+    inset: 0;
+    z-index: -10;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--wall-base);
+  }
+  .wallpaper > span {
+    position: absolute;
+    border-radius: 9999px;
+    will-change: transform;
+  }
+  .wallpaper > span:nth-child(1) {
+    left: -16vmax;
+    top: -22vmax;
+    width: 62vmax;
+    height: 62vmax;
+    background: radial-gradient(closest-side, var(--blob-1), transparent);
+    animation: drift-1 46s ease-in-out infinite alternate;
+  }
+  .wallpaper > span:nth-child(2) {
+    right: -18vmax;
+    top: -12vmax;
+    width: 56vmax;
+    height: 56vmax;
+    background: radial-gradient(closest-side, var(--blob-2), transparent);
+    animation: drift-2 58s ease-in-out infinite alternate;
+  }
+  .wallpaper > span:nth-child(3) {
+    left: -10vmax;
+    bottom: -26vmax;
+    width: 60vmax;
+    height: 60vmax;
+    background: radial-gradient(closest-side, var(--blob-3), transparent);
+    animation: drift-3 52s ease-in-out infinite alternate;
+  }
+  .wallpaper > span:nth-child(4) {
+    right: -12vmax;
+    bottom: -24vmax;
+    width: 54vmax;
+    height: 54vmax;
+    background: radial-gradient(closest-side, var(--blob-4), transparent);
+    animation: drift-4 64s ease-in-out infinite alternate;
+  }
+  .wallpaper > span:nth-child(5) {
+    left: 30vw;
+    top: 22vh;
+    width: 44vmax;
+    height: 44vmax;
+    background: radial-gradient(closest-side, var(--blob-5), transparent);
+    animation: drift-5 70s ease-in-out infinite alternate;
+  }
+  .wallpaper::before {
+    content: '';
+    position: absolute;
+    inset: -12vmax;
+    background:
+      radial-gradient(circle at 24% 34%, var(--shape-disc) 0 13vmax, transparent calc(13vmax + 1px)),
+      radial-gradient(circle at 74% 72%, transparent 0 17vmax, var(--shape-ring) 17vmax calc(17vmax + 2px), transparent calc(17vmax + 3px)),
+      radial-gradient(circle at 64% 22%, var(--shape-dim) 0 8vmax, transparent calc(8vmax + 1px)),
+      radial-gradient(circle at 12% 84%, transparent 0 9vmax, var(--shape-ring) 9vmax calc(9vmax + 2px), transparent calc(9vmax + 3px));
+    animation: drift-shapes 90s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+  /* Fine grain keeps the gradients from banding and gives the glass something to catch. */
+  .wallpaper::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: var(--grain);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  @keyframes drift-shapes {
+    to {
+      transform: translate3d(5vw, -4vh, 0) rotate(2deg);
+    }
+  }
+  @keyframes drift-1 {
+    to {
+      transform: translate3d(9vw, 7vh, 0) scale(1.12);
+    }
+  }
+  @keyframes drift-2 {
+    to {
+      transform: translate3d(-11vw, 9vh, 0) scale(0.92);
+    }
+  }
+  @keyframes drift-3 {
+    to {
+      transform: translate3d(8vw, -9vh, 0) scale(1.16);
+    }
+  }
+  @keyframes drift-4 {
+    to {
+      transform: translate3d(-7vw, -8vh, 0) scale(1.06);
+    }
+  }
+  @keyframes drift-5 {
+    to {
+      transform: translate3d(-14vw, 10vh, 0) scale(1.2);
+    }
+  }
+}
+
+/* Phones and small tablets keep a still wallpaper: re-blurring every frame costs battery. */
+@media (max-width: 47.99rem) {
+  .wallpaper > span,
+  .wallpaper::before {
+    animation: none !important;
+  }
+}
+
+/* No backdrop blur (or the user asked for less transparency): make the glass nearly opaque so
+   text never sits on a busy background. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass: rgb(250 250 255 / 0.94);
+    --glass-thick: rgb(250 250 255 / 0.97);
+  }
+  .dark {
+    --glass: rgb(22 23 35 / 0.95);
+    --glass-thick: rgb(28 29 43 / 0.97);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass: #f7f8fd;
+    --glass-thick: #fbfbff;
+    --surface: #ffffff;
+    --bubble-in: #ffffff;
+  }
+  .dark {
+    --glass: #161722;
+    --glass-thick: #1c1d2a;
+    --surface: #222333;
+    --bubble-in: #26273a;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -199,5 +468,9 @@
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
+  }
+  .wallpaper > span,
+  .wallpaper::before {
+    animation: none !important;
   }
 }

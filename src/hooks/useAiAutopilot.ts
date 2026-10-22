@@ -12,10 +12,14 @@ export function useAiAutopilot() {
   const { status, threads, messages } = useInbox(
     useShallow((s) => ({ status: s.status, threads: s.threads, messages: s.messages })),
   )
-  const { aiEnabled, aiThreadIds } = useSettings(useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds })))
+  const { aiEnabled, aiThreadIds, claude } = useSettings(
+    useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds, claude: s.claude })),
+  )
+  // Cleared when the user retries after a setup problem (bad key, unavailable model).
+  const problem = useAi((s) => s.problem)
 
   useEffect(() => {
-    if (status !== 'ready' || !aiEnabled) return
+    if (status !== 'ready' || !aiEnabled || problem) return
     for (const id of aiThreadIds) if (threads[id]) useAi.getState().ensurePriority(id)
-  }, [status, aiEnabled, aiThreadIds, threads, messages])
+  }, [status, aiEnabled, aiThreadIds, threads, messages, claude, problem])
 }

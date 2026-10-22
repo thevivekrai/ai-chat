@@ -2,8 +2,10 @@ import { NETWORKS } from '@/lib/networks'
 import { formatDurationLong, toMs } from '@/lib/time'
 import { assertAiCanRead } from './access'
 import { simulateLatency } from './latency'
+import { generate, llmConfigured } from './llm'
 import { cannedAnswer } from './mock/canned'
 import { truncate } from './mock/heuristics'
+import { buildAnswerPrompt } from './prompts'
 import type { AiSearchSource, SearchAnswer } from './types'
 
 /**
@@ -13,9 +15,12 @@ import type { AiSearchSource, SearchAnswer } from './types'
 export async function answerQuestion(question: string, sources: AiSearchSource[]): Promise<SearchAnswer> {
   for (const threadId of new Set(sources.map((s) => s.threadId))) assertAiCanRead(threadId)
 
-  // TODO(LLM): replace the mock below with a real model call:
-  //   const raw = await complete(buildAnswerPrompt(question, sources, new Date()))
-  //   return parseJson<SearchAnswer>(raw)
+  if (llmConfigured()) {
+    const { answer, citedMessageIds } = await generate(buildAnswerPrompt(question, sources, new Date()))
+    const known = new Set(sources.map((s) => s.messageId))
+    return { answer: answer.trim(), citedMessageIds: citedMessageIds.filter((id) => known.has(id)) }
+  }
+
   await simulateLatency('answer')
   const now = Date.now()
   return cannedAnswer(question, sources, now) ?? genericAnswer(sources, now)

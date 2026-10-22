@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { AlertCircle, CalendarClock, Check, CheckCheck, Clock3, FileText } from 'lucide-react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { AlertCircle, CalendarClock, Check, CheckCheck, Clock3, FileText, ImageIcon } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
@@ -137,7 +137,7 @@ export function MessageList({ threadId }: { threadId: string }) {
           // Each day is its own section so its sticky label is pushed away by the next one.
           <section key={day.key} aria-label={day.label} className="flex flex-col gap-2">
             <div className="pointer-events-none sticky top-0 z-10 flex justify-center pt-3 pb-1">
-              <span className="rounded-full border border-line bg-surface/90 px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-xs backdrop-blur">
+              <span className="glass-thick rounded-full px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-card">
                 {day.label}
               </span>
             </div>
@@ -162,6 +162,7 @@ export function MessageList({ threadId }: { threadId: string }) {
                 <CalendarClock className="size-3.5" aria-hidden /> Scheduled · {formatWhen(s.sendAt, now, { withTime: true })}
               </p>
               <p className="mt-1 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap text-fg">{s.body}</p>
+              {s.error && <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">{s.error}</p>}
               <div className="mt-2 flex justify-end gap-1.5">
                 <Button size="sm" variant="ghost" onClick={() => useInbox.getState().cancelScheduled(s.id)}>
                   Cancel
@@ -201,46 +202,81 @@ function MessageGroup({ messages, fromMe, sender, showSender, highlights, flash 
         {messages.map((m, i) => {
           const flashing = flash?.messageId === m.id
           return (
-            <div
-              key={flashing ? `${m.id}-${flash.tick}` : m.id}
-              data-message-id={m.id}
-              title={new Date(m.sentAt).toLocaleString()}
-              className={cn(
-                'w-fit max-w-full rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap',
-                fromMe ? 'bg-bubble-out text-white' : 'bg-bubble-in text-fg',
-                i === messages.length - 1 && (fromMe ? 'rounded-br-md' : 'rounded-bl-md'),
-                m.status === 'sending' && 'opacity-70',
-                m.status === 'failed' && 'ring-2 ring-rose-500/60',
-                flashing && 'animate-flash',
-              )}
-            >
-              {m.attachments?.map((a) => (
-                <div
-                  key={a.name}
-                  className={cn(
-                    'mb-1.5 flex items-center gap-2.5 rounded-xl px-2.5 py-2',
-                    fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'grid size-9 shrink-0 place-items-center rounded-lg',
-                      fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink',
-                    )}
+            <Fragment key={m.id}>
+              <div
+                key={flashing ? `${m.id}-${flash.tick}` : m.id}
+                data-message-id={m.id}
+                title={new Date(m.sentAt).toLocaleString()}
+                className={cn(
+                  'w-fit max-w-full rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap',
+                  fromMe ? 'accent-gloss shadow-bubble-out' : 'bg-bubble-in text-fg shadow-bubble',
+                  i === messages.length - 1 && (fromMe ? 'rounded-br-md' : 'rounded-bl-md'),
+                  m.status === 'sending' && 'opacity-70',
+                  m.status === 'failed' && 'ring-2 ring-rose-500/60',
+                  flashing && 'animate-flash',
+                )}
+              >
+                {m.attachments?.map((a, index) =>
+                  a.kind === 'image' && a.url ? (
+                    <a
+                      key={`${a.name}-${index}`}
+                      href={a.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="-mx-1.5 -mt-0.5 mb-1.5 block"
+                    >
+                      <img
+                        src={a.url}
+                        alt={a.name}
+                        loading="lazy"
+                        className="max-h-72 w-auto max-w-full rounded-xl object-cover"
+                      />
+                    </a>
+                  ) : (
+                    <div
+                      key={`${a.name}-${index}`}
+                      className={cn(
+                        'mb-1.5 flex items-center gap-2.5 rounded-xl px-2.5 py-2',
+                        fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'grid size-9 shrink-0 place-items-center rounded-lg',
+                          fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink',
+                        )}
+                      >
+                        {a.kind === 'image' ? (
+                          <ImageIcon className="size-4" aria-hidden />
+                        ) : (
+                          <FileText className="size-4" aria-hidden />
+                        )}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-medium">{a.name}</span>
+                        <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>
+                          {a.kind === 'image' ? 'Image' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'}
+                          {a.size ? ` · ${a.size}` : ''}
+                        </span>
+                      </span>
+                    </div>
+                  ),
+                )}
+                <RichText text={m.body} highlights={highlights.get(m.id)} onAccent={fromMe} />
+              </div>
+              {m.status === 'failed' && (
+                <p role="alert" className="max-w-full px-1 text-right text-[11px] leading-snug text-rose-600 dark:text-rose-400">
+                  Not sent{m.error ? `: ${m.error}` : ''}{' '}
+                  <button
+                    type="button"
+                    className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
+                    onClick={() => void useInbox.getState().retryMessage(m.threadId, m.id)}
                   >
-                    <FileText className="size-4" aria-hidden />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-medium">{a.name}</span>
-                    <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>
-                      {a.name.split('.').pop()?.toUpperCase()}
-                      {a.size ? ` · ${a.size}` : ''}
-                    </span>
-                  </span>
-                </div>
-              ))}
-              <RichText text={m.body} highlights={highlights.get(m.id)} onAccent={fromMe} />
-            </div>
+                    Try again
+                  </button>
+                </p>
+              )}
+            </Fragment>
           )
         })}
         <span className="flex items-center gap-1 px-1 text-[11px] text-faint tabular-nums">

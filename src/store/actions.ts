@@ -3,12 +3,15 @@
  * these, so behaviour (auto-advance, undo toasts, consent clean-up) is identical everywhere.
  */
 import type { ExtractedTask } from '@/ai'
+import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/data/api'
+import { serverApi } from '@/data/server/serverApi'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
 import { useInbox } from './inbox'
-import { useSettings } from './settings'
-import { toast } from './toasts'
+import { useSession } from './session'
+import { usesClaude, useSettings, type ClaudeSettings } from './settings'
+import { toast, useToasts } from './toasts'
 import { useUi } from './ui'
 
 const threadTitle = (threadId: string) => useInbox.getState().threads[threadId]?.title ?? 'Chat'
@@ -118,11 +121,14 @@ export function turnOnAi(options: { threadIds?: string[]; quiet?: boolean } = {}
   settings.setAiEnabled(true)
   if (options.quiet) return
   const count = useSettings.getState().aiThreadIds.length
+  const where = usesClaude(useSettings.getState())
+    ? 'They are sent to Claude when an AI feature runs.'
+    : 'The built-in demo AI runs on this device.'
   toast({
     title: 'AI is on',
-    description: `It can read ${count} of ${allIds.length} chats. Nothing leaves this device in the prototype.`,
+    description: `It can read ${count} of ${allIds.length} chats. ${where}`,
     group: 'ai',
-    action: { label: 'Choose chats', run: () => useUi.getState().openDialog('settings') },
+    action: { label: 'Choose chats', run: () => useUi.getState().openSettings('ai') },
   })
 }
 
@@ -142,6 +148,171 @@ export function setThreadAiAccess(threadId: string, allowed: boolean) {
     settings.setThreadsAllowed([threadId], false)
     useAi.getState().forgetThread(threadId)
   }
+}
+
+/* ── Accounts ────────────────────────────────────────────────────────────── */
+
+const ACCOUNT_NAMES: Record<ConnectorId, string> = { telegram: 'Telegram bot', matrix: 'Matrix' }
+
+function offerToHideDemo(name: string) {
+  const demoShown = api.connections.get().demo
+  toast({
+    title: `${name} connected`,
+    description: demoShown ? 'Its chats appear as they sync. The demo chats are still shown too.' : 'Its chats appear as they sync.',
+    group: 'accounts',
+    action: demoShown ? { label: 'Hide demo', run: () => void setDemoShown(false) } : undefined,
+  })
+}
+
+export async function connectTelegram(token: string, apiBase?: string) {
+  await api.connections.connectTelegram({ token, apiBase })
+  offerToHideDemo(ACCOUNT_NAMES.telegram)
+}
+
+export async function connectMatrix(login: MatrixLogin) {
+  await api.connections.connectMatrix(login)
+  offerToHideDemo(ACCOUNT_NAMES.matrix)
+}
+
+export async function disconnectAccount(id: ConnectorId) {
+  await api.connections.disconnect(id)
+  toast({ title: `${ACCOUNT_NAMES[id]} disconnected`, description: 'Its chats were removed from this device.', group: 'accounts' })
+}
+
+export async function applyConnectorFix(id: ConnectorId, fixId: string) {
+  await api.connections.applyFix(id, fixId)
+}
+
+/* ── Accounts linked on the server ────────────────────────────────────────── */
+
+export const LINKED_NAMES: Record<LinkedNetwork, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram' }
+
+/** Chats linked on the server (as opposed to the demo or this browser's connectors). */
+export const isServerThread = (threadId: string) => threadId.startsWith('wa:') || threadId.startsWith('tga:')
+
+/** Called when a link finishes; the chats arrive as they sync. */
+export function linkedNetworkConnected(network: LinkedNetwork) {
+  offerToHideDemo(LINKED_NAMES[network])
+}
+
+export async function unlinkNetwork(network: LinkedNetwork) {
+  await api.connections.unlink(network)
+  const prefix = network === 'whatsapp' ? 'wa:' : 'tga:'
+  forgetThreadsHere((id) => id.startsWith(prefix))
+  toast({
+    title: `${LINKED_NAMES[network]} unlinked`,
+    description: 'Tidings was logged out of it, and its chats were deleted from the server.',
+    group: 'accounts',
+  })
+}
+
+/** Removes what this device kept about some chats: AI results and consent, unsent text, the selection. */
+function forgetThreadsHere(matches: (threadId: string) => boolean) {
+  const ai = useAi.getState()
+  const ui = useUi.getState()
+  const settings = useSettings.getState()
+  const aiIds = new Set([...Object.keys(ai.priority), ...Object.keys(ai.summary), ...Object.keys(ai.tasks), ...Object.keys(ai.drafts)])
+  for (const id of aiIds) if (matches(id)) ai.forgetThread(id)
+  for (const id of Object.keys(ui.composer)) if (matches(id)) ui.setComposer(id, '')
+  if (ui.selectedThreadId && matches(ui.selectedThreadId)) ui.selectThread(null)
+  const allowed = settings.aiThreadIds.filter(matches)
+  if (allowed.length) settings.setThreadsAllowed(allowed, false)
+}
+
+/* ── Signing in ──────────────────────────────────────────────────────────── */
+
+export async function signIn(email: string, password: string) {
+  const { user } = await serverApi.login({ email, password })
+  await useSession.getState().signedIn(user)
+}
+
+export async function createAccount(name: string, email: string, password: string) {
+  const { user } = await serverApi.register({ name, email, password })
+  await useSession.getState().signedIn(user)
+}
+
+export async function signInWithGoogle(credential: string) {
+  const { user, passwordRemoved } = await serverApi.google(credential)
+  await useSession.getState().signedIn(user)
+  if (passwordRemoved) {
+    toast({
+      title: 'Signed in with Google',
+      description: 'The password that was set on this account was turned off, to keep it yours. You can set a new one.',
+      group: 'session',
+      action: { label: 'Set password', run: () => useUi.getState().openSettings('profile') },
+    })
+  }
+}
+
+export async function signOut() {
+  await serverApi.logout().catch(() => undefined)
+  forgetThreadsHere(isServerThread)
+  await useSession.getState().signedOut()
+}
+
+/** Sends the user back to the sign-in screen when the server ends the session. */
+export function watchSession() {
+  return api.connections.onSignedOut(() => {
+    if (useSession.getState().status !== 'signed-in') return
+    forgetThreadsHere(isServerThread)
+    void useSession.getState().signedOut('You were signed out. Sign in again to see your chats.')
+  })
+}
+
+export async function renameUser(name: string) {
+  const { user } = await serverApi.rename(name)
+  useSession.getState().setUser(user)
+}
+
+export async function changePassword(password: string, current?: string) {
+  const { user } = await serverApi.setPassword({ password, current })
+  useSession.getState().setUser(user)
+  toast({ title: 'Password saved', description: 'Other devices were signed out.', group: 'session' })
+}
+
+export async function changeAvatar(image: string) {
+  const { user } = await serverApi.uploadAvatar(image)
+  useSession.getState().setUser(user)
+}
+
+export async function setDemoShown(shown: boolean) {
+  // A "connected" toast offering to hide the demo would now be out of date.
+  useToasts.getState().dismissGroup('accounts')
+  await api.connections.setDemoEnabled(shown)
+}
+
+/* ── Claude ──────────────────────────────────────────────────────────────── */
+
+/** Saves the key or model choice. Results from another engine or model are recomputed. */
+export function updateClaude(patch: Partial<ClaudeSettings>) {
+  const before = useSettings.getState().claude
+  useSettings.getState().setClaude(patch)
+  const after = useSettings.getState().claude
+  const changed =
+    before.apiKey.trim() !== after.apiKey.trim() || before.model !== after.model || before.triageModel !== after.triageModel
+  if (changed) useAi.getState().forgetAll()
+}
+
+/** After a setup problem (say, a rejected key), resumes the automatic AI calls. */
+export function retryAi() {
+  useAi.getState().clearProblem()
+  const threadId = useUi.getState().selectedThreadId
+  if (!threadId) return
+  useAi.getState().ensureSummary(threadId)
+  useAi.getState().ensureTasks(threadId)
+}
+
+/** Tells the user once when Claude can't run at all, instead of failing quietly per chat. */
+export function watchAiProblems() {
+  return useAi.subscribe((state, prev) => {
+    if (!state.problem || state.problem.message === prev.problem?.message) return
+    toast({
+      title: "Claude couldn't run",
+      description: state.problem.message,
+      group: 'ai-problem',
+      action: { label: 'Settings', run: () => useUi.getState().openSettings('ai') },
+    })
+  })
 }
 
 /* ── Tasks ───────────────────────────────────────────────────────────────── */

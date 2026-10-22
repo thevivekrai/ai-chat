@@ -15,7 +15,7 @@ export function MobileNavDrawer() {
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <motion.div
-            className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+            className="absolute inset-0 bg-[rgb(15_23_42/0.12)] backdrop-blur-[3px] dark:bg-black/45"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -24,7 +24,7 @@ export function MobileNavDrawer() {
           <motion.div
             role="dialog"
             aria-label="Navigation"
-            className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col bg-canvas px-3 pb-4 shadow-pop"
+            className="glass-thick absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col rounded-r-3xl px-3 pb-4 shadow-pop"
             initial={{ x: '-100%' }}
             animate={{ x: 0 }}
             exit={{ x: '-100%' }}

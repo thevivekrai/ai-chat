@@ -92,7 +92,7 @@ export function Composer({ threadId }: { threadId: string }) {
   const hasText = !!text.trim()
 
   return (
-    <div className="shrink-0 border-t border-line bg-surface px-3 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
+    <div className="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
       {confirmingBlanks && (
         <p role="alert" className="mb-2 flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
@@ -101,7 +101,7 @@ export function Composer({ threadId }: { threadId: string }) {
       )}
       <div
         className={cn(
-          'flex items-end gap-1.5 rounded-2xl border bg-surface py-1.5 pr-1.5 pl-3.5 shadow-xs transition-[border-color,box-shadow]',
+          'flex items-end gap-1.5 rounded-3xl border bg-surface py-1.5 pr-1.5 pl-4 shadow-card transition-[border-color,box-shadow]',
           'border-line focus-within:border-accent/40 focus-within:ring-4 focus-within:ring-accent/10',
         )}
       >

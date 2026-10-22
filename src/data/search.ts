@@ -1,4 +1,4 @@
-import type { Contact, Message, SearchHit, Thread } from '../types'
+import type { Contact, Message, SearchHit, Thread } from './types'
 import { DAY, toMs } from '@/lib/time'
 
 /**

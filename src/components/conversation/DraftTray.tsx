@@ -135,7 +135,7 @@ function DraftCard({
           <WithBlanks text={entry.result!} />
         </span>
       ) : entry?.status === 'error' ? (
-        <span className="text-[13px] text-muted">Couldn't draft this one. Try Regenerate.</span>
+        <span className="text-[13px] text-muted">{entry.error ?? "Couldn't draft this one."} Try Regenerate.</span>
       ) : (
         <SkeletonLines lines={3} className="pt-1" />
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { CloudOff, Hourglass, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
+import { CloudOff, Hourglass, Link2, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
@@ -10,8 +10,10 @@ import { NETWORKS } from '@/lib/networks'
 import { isAtLeast } from '@/lib/media'
 import { turnOnAi } from '@/store/actions'
 import { useClock } from '@/store/clock'
+import { hasRealAccount, useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
 import { selectViewThreads, useThreadViews } from '@/store/selectors'
+import { useSession } from '@/store/session'
 import { useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
 import { AllCaughtUp, EmptyState, NoMatches } from './EmptyStates'
@@ -43,6 +45,8 @@ export function ThreadListPane({ view }: { view: ListView }) {
   const aiEnabled = useSettings((s) => s.aiEnabled)
   const now = useClock((s) => s.now)
   const views = useThreadViews()
+  const { demoShown, connected } = useConnections(useShallow((s) => ({ demoShown: s.demo, connected: hasRealAccount(s) })))
+  const hintDismissed = useUi((s) => s.connectHintDismissed)
 
   const list = useMemo(
     () => selectViewThreads(views, view, { networks, query, messages }),
@@ -78,7 +82,7 @@ export function ThreadListPane({ view }: { view: ListView }) {
           </h1>
           <p className="min-w-0 truncate text-xs text-faint">{copy.subtitle(aiEnabled)}</p>
         </div>
-        <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-surface-2/60 px-2.5 text-sm transition-colors focus-within:border-accent/40 focus-within:bg-surface focus-within:ring-4 focus-within:ring-accent/10">
+        <label className="flex h-9 items-center gap-2 rounded-xl border border-line bg-surface-2/60 px-2.5 text-sm transition-colors focus-within:border-accent/40 focus-within:bg-surface focus-within:ring-4 focus-within:ring-accent/10">
           <Search className="size-4 shrink-0 text-faint" aria-hidden />
           <input
             ref={searchRef}
@@ -112,14 +116,16 @@ export function ThreadListPane({ view }: { view: ListView }) {
         )}
       </header>
 
-      {!aiEnabled && view === 'needs-reply' && status === 'ready' && <AiOffBanner />}
+      {demoShown && !connected && !hintDismissed && status === 'ready' && <ConnectHint />}
+      {!aiEnabled && view === 'needs-reply' && status === 'ready' && views.length > 0 && <AiOffBanner />}
       {classifying && view === 'needs-reply' && (
         <div className="flex items-center gap-2 border-b border-line bg-accent-soft/50 px-4 py-2 text-xs text-accent-ink">
           <Loader2 className="size-3.5 animate-spin" aria-hidden /> Sorting by priority…
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {/* layoutScroll lets the sliding row highlight account for this list's scroll position. */}
+      <motion.div layoutScroll className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {status === 'error' ? (
           <EmptyState
             icon={<CloudOff className="size-6" />}
@@ -134,6 +140,20 @@ export function ThreadListPane({ view }: { view: ListView }) {
           </EmptyState>
         ) : status !== 'ready' ? (
           <ListSkeleton />
+        ) : views.length === 0 ? (
+          <EmptyState
+            icon={<Link2 className="size-6" />}
+            title={connected ? 'No chats yet' : 'Connect an account'}
+            actions={
+              <Button variant="primary" size="sm" onClick={() => useUi.getState().openSettings('accounts')}>
+                {connected ? 'Check accounts' : 'Connect an account'}
+              </Button>
+            }
+          >
+            {connected
+              ? 'Chats appear here as they arrive. A Telegram bot shows chats once someone messages it.'
+              : 'Bring in a Telegram bot or a Matrix account (with its WhatsApp, Instagram, Slack and SMS bridges), or turn the demo chats back on.'}
+          </EmptyState>
         ) : list.length === 0 ? (
           query ? (
             <NoMatches query={query} onClear={() => setQuery('')} />
@@ -172,8 +192,46 @@ export function ThreadListPane({ view }: { view: ListView }) {
             </AnimatePresence>
           </ul>
         )}
-      </div>
+      </motion.div>
     </Panel>
+  )
+}
+
+function ConnectHint() {
+  const session = useSession((s) => s.status)
+  return (
+    <div className="flex items-start gap-3 border-b border-line px-4 py-3">
+      <Link2 className="mt-0.5 size-4 shrink-0 text-accent-ink" aria-hidden />
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
+        These are demo chats.{' '}
+        {session === 'guest' ? (
+          <button
+            type="button"
+            className="font-medium text-accent-ink hover:underline"
+            onClick={() => useSession.getState().showSignIn()}
+          >
+            Sign in to link WhatsApp or Telegram
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="font-medium text-accent-ink hover:underline"
+            onClick={() => useUi.getState().openSettings('accounts')}
+          >
+            {session === 'signed-in' ? 'Link WhatsApp or Telegram' : 'Connect Telegram or Matrix'}
+          </button>
+        )}{' '}
+        to bring in your own.
+      </p>
+      <button
+        type="button"
+        aria-label="Dismiss"
+        className="-m-1 rounded-lg p-1 text-faint hover:text-fg"
+        onClick={() => useUi.getState().dismissConnectHint()}
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
   )
 }
 
@@ -181,7 +239,7 @@ function AiOffBanner() {
   return (
     <div className="border-b border-line bg-accent-soft/60 px-4 py-3">
       <div className="flex gap-3">
-        <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface text-accent-ink shadow-xs">
+        <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-surface text-accent-ink shadow-card">
           <Sparkles className="size-4" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
@@ -193,7 +251,7 @@ function AiOffBanner() {
             <Button variant="primary" size="sm" onClick={() => turnOnAi()}>
               Turn on AI
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => useUi.getState().openDialog('settings')}>
+            <Button variant="ghost" size="sm" onClick={() => useUi.getState().openSettings('ai')}>
               Choose chats
             </Button>
           </div>

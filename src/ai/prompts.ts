@@ -1,6 +1,6 @@
 /**
- * Prompt builders for when a real model is connected (see llm.ts and the TODO(LLM) markers in
- * each AI function). They are complete and ready to use; the mock implementations don't need them.
+ * Prompts for each AI function when Claude is connected (see llm.ts). The response shapes are
+ * enforced by structured outputs (claude.ts), so prompts describe judgement, not JSON syntax.
  */
 import { NETWORKS } from '@/lib/networks'
 import type { LlmRequest } from './llm'
@@ -31,69 +31,67 @@ const TONE_GUIDE: Record<Tone, string> = {
   professional: 'polite, clear and complete, without slang',
 }
 
-export function buildDraftPrompt(thread: AiThread, tone: Tone): LlmRequest {
+/** All three tones in one request, so the chat is only sent once. */
+export function buildDraftsPrompt(thread: AiThread, variant: number): LlmRequest<'drafts'> {
+  const tones = (Object.keys(TONE_GUIDE) as Tone[]).map((tone) => `- ${tone}: ${TONE_GUIDE[tone]}`).join('\n')
+  const retry =
+    variant > 0 ? `\n\nThe user asked for new wording (attempt ${variant + 1}): avoid the most obvious phrasing.` : ''
   return {
+    task: 'drafts',
     system: [
       `You draft chat replies for ${thread.me.name}. Reply to the latest messages addressed to them.`,
       'Match the language the other person writes in (English, Hindi or Hinglish).',
       'Never invent facts such as prices, dates, tracking numbers or promises that are not in the conversation;',
-      'write a short [placeholder] in square brackets instead. Return only the reply text.',
+      'write a short [placeholder] in square brackets instead. Each reply is only the text to send.',
     ].join(' '),
-    user: `${describeThread(thread)}\n\n${formatTranscript(thread)}\n\nWrite a ${tone} reply: ${TONE_GUIDE[tone]}.`,
-    temperature: 0.7,
-    maxTokens: 220,
+    user: `${describeThread(thread)}\n\n${formatTranscript(thread)}\n\nWrite three alternative replies:\n${tones}${retry}`,
+    effort: 'medium',
   }
 }
 
-export function buildPriorityPrompt(thread: AiThread, now: Date): LlmRequest {
+export function buildPriorityPrompt(thread: AiThread, now: Date): LlmRequest<'priority'> {
   return {
+    task: 'priority',
     system: [
       'You triage a personal inbox. Decide whether the latest messages expect a reply from the user, and how urgent it is.',
-      'Respond with JSON only: {"priority":"urgent"|"normal"|"low","expectsReply":boolean,"reason":string}.',
-      '"reason" is one plain sentence under 90 characters.',
+      '"reason" is one plain sentence under 90 characters, written to the user.',
       'Urgent: money, customers, deadlines within 48 hours, or someone important waiting more than 2 days.',
       'Low: announcements, automated messages, acknowledgements and casual chatter.',
       'In group chats, only expect a reply when someone addresses the user.',
     ].join(' '),
     user: `Current time: ${now.toISOString()}\n${describeThread(thread)}\n\n${formatTranscript(thread, 30)}`,
-    json: true,
-    temperature: 0,
-    maxTokens: 120,
+    effort: 'low',
   }
 }
 
-export function buildSummaryPrompt(thread: AiThread): LlmRequest {
+export function buildSummaryPrompt(thread: AiThread): LlmRequest<'summary'> {
   return {
+    task: 'summary',
     system: [
-      'Summarise the chat for the user, who has not read it.',
-      'Respond with JSON only: {"oneLine":string,"bullets":string[]}.',
+      'Summarise the chat for the user, who has not read it. Write in English, addressing the user as "you".',
       '"oneLine" is a single sentence under 160 characters. "bullets" has 3 to 5 items covering decisions,',
       'open questions and anything asked of the user. Keep amounts, dates and names exact.',
     ].join(' '),
     user: `${describeThread(thread)}\n\n${formatTranscript(thread)}`,
-    json: true,
-    temperature: 0.2,
-    maxTokens: 400,
+    effort: 'low',
   }
 }
 
-export function buildTasksPrompt(thread: AiThread, now: Date, timeZone: string): LlmRequest {
+export function buildTasksPrompt(thread: AiThread, now: Date, timeZone: string): LlmRequest<'tasks'> {
   return {
+    task: 'tasks',
     system: [
-      'Extract things the user needs to do or attend from the chat.',
-      'Respond with JSON only: {"tasks":[{"title":string,"dueAt":string|null,"dueText":string|null,"sourceMessageId":string}]}.',
-      'Titles are short imperatives without the date. Resolve relative dates ("by Friday", "kal 11 baje")',
+      'Extract things the user needs to do or attend from the chat; ignore what other people promised to do.',
+      'Titles are short imperatives in English, without the date. Resolve relative dates ("by Friday", "kal 11 baje")',
       `against the timestamp of the message they appear in, in the ${timeZone} time zone, and return ISO 8601`,
-      'with offset. "dueText" is the exact date words from the message. Return {"tasks":[]} when there are none.',
+      'with offset. "dueText" is the exact date words from the message. Return an empty list when there are none.',
     ].join(' '),
     user: `Current time: ${now.toISOString()}\n${describeThread(thread)}\n\n${formatTranscript(thread)}`,
-    json: true,
-    temperature: 0,
-    maxTokens: 500,
+    effort: 'low',
   }
 }
 
-export function buildAnswerPrompt(question: string, sources: AiSearchSource[], now: Date): LlmRequest {
+export function buildAnswerPrompt(question: string, sources: AiSearchSource[], now: Date): LlmRequest<'answer'> {
   const evidence = sources
     .map(
       (s) =>
@@ -101,15 +99,13 @@ export function buildAnswerPrompt(question: string, sources: AiSearchSource[], n
     )
     .join('\n')
   return {
+    task: 'answer',
     system: [
       'Answer the user\'s question using only the messages provided. If they do not contain the answer, say so.',
-      'Respond with JSON only: {"answer":string,"citedMessageIds":string[]}.',
       'Keep the answer to two or three sentences, put key figures and dates in **bold**,',
       'and cite the ids of the messages you relied on.',
     ].join(' '),
     user: `Current time: ${now.toISOString()}\nQuestion: ${question}\n\nMessages:\n${evidence}`,
-    json: true,
-    temperature: 0.1,
-    maxTokens: 300,
+    effort: 'medium',
   }
 }

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import {
   AiAccessError,
+  LlmError,
   TONES,
   canAiRead,
   classifyPriority,
@@ -25,6 +26,14 @@ export interface AiEntry<T> {
   key: string
   status: 'loading' | 'ready' | 'error'
   result?: T
+  /** Why it failed, in words for the user. */
+  error?: string
+}
+
+/** A problem with the Claude setup itself (bad key, unavailable model) rather than one chat. */
+export interface AiProblem {
+  kind: 'auth' | 'permission' | 'model'
+  message: string
 }
 
 export interface DraftSet {
@@ -47,6 +56,7 @@ interface AiState {
   summary: Entries<'summary'>
   tasks: Entries<'tasks'>
   drafts: Record<string, DraftSet>
+  problem: AiProblem | null
   ensurePriority(threadId: string): void
   ensureSummary(threadId: string): void
   ensureTasks(threadId: string): void
@@ -54,6 +64,12 @@ interface AiState {
   requestDrafts(threadId: string, options?: { regenerate?: boolean }): void
   forgetThread(threadId: string): void
   forgetAll(): void
+  clearProblem(): void
+}
+
+/** User-facing reason for a failed AI call. */
+export function describeAiError(error: unknown): string {
+  return error instanceof LlmError ? error.message : 'Something went wrong. Try again.'
 }
 
 /** Cache key and AI input for a thread, or null when AI may not read it. */
@@ -69,7 +85,17 @@ function aiInputFor(threadId: string): { key: string; thread: AiThread } | null 
 export const useAi = create<AiState>()(
   persist(
     (set, get) => {
+      // A configuration problem is remembered until a call succeeds again.
+      const noteSuccess = () => get().problem && set({ problem: null })
+      const noteFailure = (error: unknown) => {
+        if (error instanceof LlmError && (error.kind === 'auth' || error.kind === 'permission' || error.kind === 'model')) {
+          if (get().problem?.message !== error.message) set({ problem: { kind: error.kind, message: error.message } })
+        }
+      }
+
       function ensure<K extends Slice>(slice: K, threadId: string, run: (thread: AiThread) => Promise<ResultTypes[K]>) {
+        // These run automatically; while the setup is broken (say, a rejected key) they would only fail again.
+        if (get().problem) return
         const input = aiInputFor(threadId)
         if (!input) return
         const entries = () => get()[slice] as Entries<K>
@@ -88,9 +114,19 @@ export const useAi = create<AiState>()(
         // Keep the previous result visible while recomputing, so tags don't flicker.
         write({ key: input.key, status: 'loading', result: current?.result })
         run(input.thread)
-          .then((result) => stillCurrent() && write({ key: input.key, status: 'ready', result }))
+          .then((result) => {
+            noteSuccess()
+            if (stillCurrent()) write({ key: input.key, status: 'ready', result })
+          })
           .catch((error: unknown) => {
-            if (stillCurrent()) write(error instanceof AiAccessError ? null : { key: input.key, status: 'error' })
+            noteFailure(error)
+            if (!stillCurrent()) return
+            // Keep the last good result on screen; the error only says why it isn't fresh.
+            write(
+              error instanceof AiAccessError
+                ? null
+                : { key: input.key, status: 'error', result: current?.result, error: describeAiError(error) },
+            )
           })
       }
 
@@ -99,6 +135,7 @@ export const useAi = create<AiState>()(
         summary: {},
         tasks: {},
         drafts: {},
+        problem: null,
 
         ensurePriority: (threadId) => ensure('priority', threadId, classifyPriority),
         ensureSummary: (threadId) => ensure('summary', threadId, summarizeThread),
@@ -128,8 +165,14 @@ export const useAi = create<AiState>()(
 
           for (const tone of TONES) {
             draftReply(thread, tone, variant)
-              .then(({ text }) => settle(tone, { key, status: 'ready', result: text }))
-              .catch(() => settle(tone, { key, status: 'error' }))
+              .then(({ text }) => {
+                noteSuccess()
+                settle(tone, { key, status: 'ready', result: text })
+              })
+              .catch((error: unknown) => {
+                noteFailure(error)
+                settle(tone, { key, status: 'error', error: describeAiError(error) })
+              })
           }
         },
 
@@ -147,7 +190,8 @@ export const useAi = create<AiState>()(
           }))
         },
 
-        forgetAll: () => set({ priority: {}, summary: {}, tasks: {}, drafts: {} }),
+        forgetAll: () => set({ priority: {}, summary: {}, tasks: {}, drafts: {}, problem: null }),
+        clearProblem: () => set({ problem: null }),
       }
     },
     {

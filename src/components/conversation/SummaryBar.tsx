@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Lock, Sparkles } from 'lucide-react'
+import { AiFailed } from '@/components/ui/AiFailed'
 import { Button } from '@/components/ui/Button'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { LONG_THREAD_MESSAGES } from '@/config'
@@ -55,6 +56,8 @@ export function SummaryBar({ threadId }: { threadId: string }) {
         <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
           {!showOneLine ? (
             <p className="text-muted">Catch up on this group in a few lines.</p>
+          ) : !summary && entry?.status === 'error' ? (
+            <AiFailed message={entry.error} onRetry={() => useAi.getState().ensureSummary(threadId)} />
           ) : !summary ? (
             <SkeletonLines lines={1} className="pt-1.5" />
           ) : (
@@ -72,7 +75,7 @@ export function SummaryBar({ threadId }: { threadId: string }) {
                 transition={{ duration: 0.22 }}
                 className="overflow-hidden"
               >
-                {summary ? (
+                {!summary && entry?.status === 'error' ? null : summary ? (
                   <ul className="mt-2 space-y-1.5 pb-0.5">
                     {summary.bullets.map((b) => (
                       <li key={b} className="flex gap-2 text-fg">

@@ -4,6 +4,7 @@ import type { NetworkId } from '@/data/types'
 
 export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks'
 export type Dialog = 'command' | 'settings' | 'shortcuts'
+export type SettingsTab = 'profile' | 'accounts' | 'ai' | 'appearance'
 
 interface UiState {
   view: View
@@ -30,6 +31,9 @@ interface UiState {
   /** Last list position of the selection, so J/K continue after a thread leaves the list. */
   navIndex: number
   dialog: Dialog | null
+  settingsTab: SettingsTab
+  /** The "connect your accounts" banner was dismissed. */
+  connectHintDismissed: boolean
 
   setView(view: View): void
   toggleNetwork(network: NetworkId): void
@@ -49,6 +53,9 @@ interface UiState {
   setSidebarOpen(open: boolean): void
   flashMessage(messageId: string): void
   openDialog(dialog: Dialog): void
+  openSettings(tab?: SettingsTab): void
+  setSettingsTab(tab: SettingsTab): void
+  dismissConnectHint(): void
   closeDialog(): void
 }
 
@@ -74,6 +81,8 @@ export const useUi = create<UiState>()(
       navThreadIds: [],
       navIndex: -1,
       dialog: null,
+      settingsTab: 'accounts',
+      connectHintDismissed: false,
 
       setView: (view) => set({ view, sidebarOpen: false, listQuery: '' }),
       toggleNetwork: (network) =>
@@ -139,6 +148,9 @@ export const useUi = create<UiState>()(
         }, 2500)
       },
       openDialog: (dialog) => set({ dialog, sidebarOpen: false }),
+      openSettings: (tab) => set((s) => ({ dialog: 'settings', sidebarOpen: false, settingsTab: tab ?? s.settingsTab })),
+      setSettingsTab: (settingsTab) => set({ settingsTab }),
+      dismissConnectHint: () => set({ connectHintDismissed: true }),
       closeDialog: () => set({ dialog: null }),
     }),
     {
@@ -150,6 +162,7 @@ export const useUi = create<UiState>()(
         selectedThreadId: s.selectedThreadId,
         aiPanelOpen: s.aiPanelOpen,
         composer: s.composer,
+        connectHintDismissed: s.connectHintDismissed,
       }),
     },
   ),

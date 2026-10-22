@@ -2,14 +2,19 @@ import { useLayoutEffect } from 'react'
 import { useMediaQuery } from '@/lib/media'
 import { useSettings } from '@/store/settings'
 
-/** Keeps the `dark` class on <html> in sync with the theme setting and the OS preference. */
-export function useApplyTheme() {
+/** Whether the app is in dark mode, from the theme setting and the OS preference. */
+export function useDarkMode() {
   const theme = useSettings((s) => s.theme)
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)')
-  const dark = theme === 'dark' || (theme === 'system' && systemDark)
+  return theme === 'dark' || (theme === 'system' && systemDark)
+}
+
+/** Keeps the `dark` class on <html> in sync with the theme setting and the OS preference. */
+export function useApplyTheme() {
+  const dark = useDarkMode()
 
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#09090b' : '#f3f3f5')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0b0d10' : '#e8ebf0')
   }, [dark])
 }

@@ -1,7 +1,7 @@
 import type { NetworkId } from '@/data/types'
 import { cn } from '@/lib/cn'
 import { hashString, initials, isEmojiAvatar } from '@/lib/format'
-import { NETWORKS } from '@/lib/networks'
+import { NetworkIcon } from './NetworkIcon'
 
 const PALETTE = [
   'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
@@ -21,7 +21,7 @@ const SIZES = {
   lg: 'size-12 text-[15px]',
 }
 
-const DOT_SIZES = { xs: 'size-2', sm: 'size-2.5', md: 'size-3', lg: 'size-3.5' }
+const BADGE_SIZES = { xs: 'size-3.5', sm: 'size-4', md: 'size-5', lg: 'size-[22px]' }
 
 const EMOJI_SIZES = { xs: 'text-sm', sm: 'text-base', md: 'text-xl', lg: 'text-2xl' }
 
@@ -32,34 +32,42 @@ interface AvatarProps {
   size?: keyof typeof SIZES
   group?: boolean
   network?: NetworkId
+  /** A photo to show instead of initials. */
+  imageUrl?: string
   className?: string
 }
 
-export function Avatar({ name, seed = name, size = 'md', group = false, network, className }: AvatarProps) {
+export function Avatar({ name, seed = name, size = 'md', group = false, network, imageUrl, className }: AvatarProps) {
   const label = initials(name)
   const emoji = isEmojiAvatar(label)
   return (
     <span className={cn('relative inline-flex shrink-0', className)}>
-      <span
-        aria-hidden
-        className={cn(
-          'inline-flex items-center justify-center font-semibold tracking-tight select-none',
-          group ? 'rounded-[30%]' : 'rounded-full',
-          emoji ? 'bg-surface-2 ring-1 ring-line ring-inset' : PALETTE[hashString(seed) % PALETTE.length],
-          SIZES[size],
-          emoji && EMOJI_SIZES[size],
-        )}
-      >
-        {label}
-      </span>
-      {network && (
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          // Google's profile photos refuse requests that carry a referrer.
+          referrerPolicy="no-referrer"
+          className={cn('object-cover ring-1 ring-line', group ? 'rounded-[30%]' : 'rounded-full', SIZES[size])}
+        />
+      ) : (
         <span
-          title={NETWORKS[network].name}
+          aria-hidden
           className={cn(
-            'absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-surface',
-            NETWORKS[network].dot,
-            DOT_SIZES[size],
+            'inline-flex items-center justify-center font-semibold tracking-tight select-none',
+            group ? 'rounded-[30%]' : 'rounded-full',
+            emoji ? 'bg-surface-2 ring-1 ring-line ring-inset' : PALETTE[hashString(seed) % PALETTE.length],
+            SIZES[size],
+            emoji && EMOJI_SIZES[size],
           )}
+        >
+          {label}
+        </span>
+      )}
+      {network && (
+        <NetworkIcon
+          network={network}
+          className={cn('absolute -right-1 -bottom-1 ring-2 ring-surface-solid', BADGE_SIZES[size])}
         />
       )}
     </span>

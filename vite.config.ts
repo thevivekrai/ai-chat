@@ -5,12 +5,17 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ isSsrBuild }) => ({
   plugins: [react(), tailwindcss()],
+  // The server bundle (`vite build --ssr`) needs no copy of public/.
+  publicDir: isSsrBuild ? false : 'public',
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   build: {
+    // matrix-js-sdk (~900 kB) and the Claude SDK are split out and only downloaded once Matrix is
+    // connected or a Claude key is set; the app itself stays well under this.
+    chunkSizeWarningLimit: 1000,
     rolldownOptions: {
       output: {
         // Large libraries that rarely change get their own long-cacheable chunks.
@@ -23,8 +28,12 @@ export default defineConfig({
       },
     },
   },
+  server: {
+    // `npm run dev:server` runs the API on this port.
+    proxy: { '/api': 'http://127.0.0.1:5001' },
+  },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'server/**/*.test.ts'],
   },
-})
+}))

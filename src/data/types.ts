@@ -1,15 +1,14 @@
 /**
  * Domain model for the unified inbox.
  *
- * These types are what the UI consumes, independent of where the data comes from. The mock layer
- * produces them today; a Matrix-bridge backend would map onto them like this:
- *   Thread  ← a bridged "portal" room (one per chat on WhatsApp, Telegram, …)
- *   Contact ← a bridge "ghost"/puppet user in that room
+ * These types are what the UI consumes, independent of where the data comes from: the demo inbox
+ * (./mock), a Telegram bot (./connectors/telegram) or a Matrix account (./connectors/matrix), where
+ *   Thread  ← a room; bridged "portal" rooms carry the network they bridge (WhatsApp, Slack, …)
+ *   Contact ← a room member; for bridges, the "ghost" user standing in for the remote person
  *   Message ← an m.room.message event
- *   Thread.doneAt / snoozedUntil ← room account data written by this client
  */
 
-export type NetworkId = 'whatsapp' | 'telegram' | 'instagram' | 'slack' | 'sms'
+export type NetworkId = 'whatsapp' | 'telegram' | 'instagram' | 'slack' | 'sms' | 'matrix'
 
 /** Sender id used for messages written by the person using the app. */
 export const ME_ID = 'me'
@@ -56,6 +55,8 @@ export interface Attachment {
   kind: 'file' | 'image'
   name: string
   size?: string
+  /** Where the file can be viewed, once it has been copied off the network (images only). */
+  url?: string
 }
 
 export interface Message {
@@ -68,6 +69,8 @@ export interface Message {
   sentAt: string
   /** Delivery state, only for messages I sent. */
   status?: MessageStatus
+  /** Why a message I sent failed, in words for the user. */
+  error?: string
   attachments?: Attachment[]
 }
 
@@ -78,6 +81,8 @@ export interface ScheduledMessage {
   body: string
   sendAt: string
   createdAt: string
+  /** Set when sending failed or was skipped; the message waits for the user to retry or cancel. */
+  error?: string
 }
 
 export interface Task {
@@ -125,5 +130,7 @@ export type InboxEvent =
   | { type: 'message.created'; message: Message }
   | { type: 'message.updated'; message: Message }
   | { type: 'thread.updated'; thread: Thread }
+  | { type: 'contact.updated'; contact: Contact }
+  | { type: 'scheduled.updated'; scheduled: ScheduledMessage }
   | { type: 'scheduled.removed'; scheduledId: string }
   | { type: 'reset'; snapshot: InboxSnapshot }

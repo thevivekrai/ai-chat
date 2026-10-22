@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildAnswerSources } from '@/store/aiInput'
-import { searchMessages } from '@/data/mock/search'
+import { searchMessages } from '@/data/search'
 import { NOW, aiThread, seedState } from '@/test/fixtures'
 import {
   AiAccessError,
@@ -37,9 +37,9 @@ afterEach(() => {
 
 describe('privacy gate', () => {
   it('refuses threads the user has not allowed', async () => {
-    setAiAccessPolicy((id) => id !== 'maa')
-    await expect(summarizeThread(aiThread('maa'))).rejects.toBeInstanceOf(AiAccessError)
-    await expect(draftReply(aiThread('maa'), 'short')).rejects.toBeInstanceOf(AiAccessError)
+    setAiAccessPolicy((id) => id !== 'divya')
+    await expect(summarizeThread(aiThread('divya'))).rejects.toBeInstanceOf(AiAccessError)
+    await expect(draftReply(aiThread('divya'), 'short')).rejects.toBeInstanceOf(AiAccessError)
     await expect(summarizeThread(aiThread('rohan'))).resolves.toBeTruthy()
   })
 })

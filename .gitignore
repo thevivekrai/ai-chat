@@ -10,7 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-server
 *.local
+
+# Secrets: set these in the host's environment settings, never in the repo
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*

@@ -1,0 +1,37 @@
+services:
+  # One Node service serves both the API and the built web app.
+  - type: web
+    name: tidings
+    runtime: node
+    # Free instances sleep after 15 minutes without visits, and linked WhatsApp and Telegram
+    # accounts only sync while it runs. Pick an always-on plan to keep them syncing.
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    # Preview instances would share the database and fight over the WhatsApp links: keep them off.
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Required. Set these in the Render dashboard; never commit them.
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      # Encrypts stored chats and linked sessions. Generated once by Render; keep it.
+      - key: DATA_ENCRYPTION_KEY
+        generateValue: true
+      # Optional: each turns a feature on.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

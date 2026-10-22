@@ -13,7 +13,7 @@ import { DAY, HOUR, MINUTE, addDays, atTime, weekdayName } from '@/lib/time'
  */
 
 /** Bump when the seed changes so data stored by an older version is replaced. */
-export const SEED_VERSION = 3
+export const SEED_VERSION = 4
 
 const ME_NAME = 'Aarav'
 
@@ -28,7 +28,7 @@ const CONTACTS: Contact[] = [
     label: 'Supplier',
     org: 'Sharma Packaging',
   },
-  { id: 'c-maa', name: 'Maa', network: 'whatsapp', handle: '+91 98765 03110', label: 'Family' },
+  { id: 'c-divya', name: 'Divya', network: 'whatsapp', handle: '+91 98765 04415', label: 'Friend' },
   // Instagram
   { id: 'c-rohan', name: 'Rohan Mehta', network: 'instagram', handle: '@rohan.mehta', label: 'Customer' },
   {
@@ -140,16 +140,16 @@ function buildThreads(now: number): SeedThread[] {
       ],
     },
     {
-      id: 'maa',
+      id: 'divya',
       network: 'whatsapp',
       kind: 'direct',
-      title: 'Maa',
-      participantIds: ['c-maa'],
+      title: 'Divya',
+      participantIds: ['c-divya'],
       messages: [
-        msg('c-maa', ago(6, 3), 'Beta khana time pe kha lena. Bahut kaam kar rahe ho aajkal'),
-        msg(me, ago(6, 1), 'Haan Maa, kha liya 😊 Weekend pe call karta hoon'),
-        msg('c-maa', ago(1, 5), 'Beta, is Sunday lunch pe aa rahe ho na? Papa puch rahe the'),
-        msg('c-maa', ago(1, 4, 58), 'Rajma chawal bana rahi hoon 😄 Didi bhi aa rahi hai'),
+        msg('c-divya', ago(6, 3), 'Aarav! Kab mil rahe hain? Bahut din ho gaye yaar 😅'),
+        msg(me, ago(6, 1), 'Haan yaar, is week pakka plan karte hain ☕'),
+        msg('c-divya', ago(1, 5), 'Sunday ko movie chalein? Shaam 7 baje wala show, tickets main book kar rahi hoon 🎬'),
+        msg('c-divya', ago(1, 4, 58), 'Bata de jaldi, sirf 4 seats bachi hain 😬'),
       ],
     },
 

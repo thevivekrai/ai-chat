@@ -1,10 +1,10 @@
+import { storage } from '../storage'
 import type { InboxSnapshot } from '../types'
 import { buildSeed, SEED_VERSION } from './seed'
 
 /**
- * The mock "server": one JSON document in localStorage. This is what makes "Chats stored on this
- * device" literally true for the prototype, and why refreshing keeps sent messages, done/snoozed
- * state and tasks.
+ * The demo inbox's "server": one JSON document in localStorage, so refreshing keeps sent
+ * messages and done/snoozed state in the demo chats.
  */
 const STORAGE_KEY = 'tidings.mockdb'
 
@@ -13,26 +13,6 @@ export interface MockDb extends InboxSnapshot {
   seededAt: string
   /** Next entry of INCOMING_POOL to deliver when simulating an incoming message. */
   incomingCursor: number
-}
-
-// localStorage is unavailable in tests and can throw in private modes; fall back to memory.
-const memory = new Map<string, string>()
-const storage = {
-  get(key: string): string | null {
-    try {
-      return typeof localStorage === 'undefined' ? (memory.get(key) ?? null) : localStorage.getItem(key)
-    } catch {
-      return memory.get(key) ?? null
-    }
-  },
-  set(key: string, value: string) {
-    try {
-      if (typeof localStorage === 'undefined') memory.set(key, value)
-      else localStorage.setItem(key, value)
-    } catch {
-      memory.set(key, value)
-    }
-  },
 }
 
 export function seedDb(now: number = Date.now()): MockDb {

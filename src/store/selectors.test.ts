@@ -14,7 +14,7 @@ describe('Needs reply (without AI)', () => {
     expect(needsReplyIds()).toEqual([
       'brewbay', // asked for pricing 3 days ago
       'trek', // @mentioned 2 days ago
-      'maa',
+      'divya',
       'sharma',
       'zoya',
       'ishaan',
@@ -61,9 +61,9 @@ describe('Needs reply (without AI)', () => {
   it('hides snoozed threads until the snooze ends', () => {
     const input = viewInput()
     const until = new Date(NOW + 2 * HOUR).toISOString()
-    const threads = { ...input.threads, maa: { ...input.threads.maa, snoozedUntil: until } }
-    expect(needsReplyIds({ ...input, threads })).not.toContain('maa')
-    expect(needsReplyIds({ ...input, threads, now: NOW + 3 * HOUR })).toContain('maa')
+    const threads = { ...input.threads, divya: { ...input.threads.divya, snoozedUntil: until } }
+    expect(needsReplyIds({ ...input, threads })).not.toContain('divya')
+    expect(needsReplyIds({ ...input, threads, now: NOW + 3 * HOUR })).toContain('divya')
   })
 
   it('uses AI classification when the thread is readable', () => {
