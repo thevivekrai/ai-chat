@@ -28,6 +28,8 @@ export interface Contact {
   label?: string
   /** Business or organisation the contact speaks for. */
   org?: string
+  /** Profile picture. */
+  avatarUrl?: string
 }
 
 export type ThreadKind = 'direct' | 'group'
@@ -47,6 +49,8 @@ export interface Thread {
   doneAt: string | null
   /** Hidden from the queue until this time. */
   snoozedUntil: string | null
+  /** The group's picture (people's come from their contact). */
+  avatarUrl?: string
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
@@ -57,6 +61,21 @@ export interface Attachment {
   size?: string
   /** Where the file can be viewed, once it has been copied off the network (images only). */
   url?: string
+}
+
+/** The message a reply quotes, as it was then (the original may not be loaded, or may be gone). */
+export interface QuotedMessage {
+  id: string
+  senderId: string
+  body: string
+}
+
+/** Everyone's reactions with one emoji. Each person has at most one reaction per message. */
+export interface Reaction {
+  emoji: string
+  count: number
+  /** Whether one of them is mine. */
+  mine: boolean
 }
 
 export interface Message {
@@ -72,7 +91,21 @@ export interface Message {
   /** Why a message I sent failed, in words for the user. */
   error?: string
   attachments?: Attachment[]
+  replyTo?: QuotedMessage
+  reactions?: Reaction[]
 }
+
+/** What a chat's network lets Sytext do, so only working actions are offered. */
+export interface ChatCapabilities {
+  reply: boolean
+  react: boolean
+  /** Shows when the other side is typing, and tells them when I am. */
+  typing: boolean
+  /** Can fetch messages from before the ones loaded. */
+  history: boolean
+}
+
+export const NO_CAPABILITIES: ChatCapabilities = { reply: false, react: false, typing: false, history: false }
 
 /** A reply written now and sent later ("Send later"). */
 export interface ScheduledMessage {
@@ -131,6 +164,8 @@ export type InboxEvent =
   | { type: 'message.updated'; message: Message }
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
+  /** Someone started or stopped typing. It also stops by itself after a few seconds. */
+  | { type: 'typing'; threadId: string; senderId: string; active: boolean }
   | { type: 'scheduled.updated'; scheduled: ScheduledMessage }
   | { type: 'scheduled.removed'; scheduledId: string }
   | { type: 'reset'; snapshot: InboxSnapshot }

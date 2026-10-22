@@ -18,6 +18,10 @@ export interface PublicAccount {
   label?: string
   /** What's going on, in words for the user. */
   detail?: string
+  /** While linking: what the user is asked for next. */
+  step?: 'code' | 'qr' | 'password'
+  /** Telegram's hint for the two-step verification password. */
+  hint?: string
 }
 
 /** The signed-in user. */
@@ -59,13 +63,21 @@ export type ServerEvent =
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
   | { type: 'account.updated'; account: PublicAccount }
-  /** A fresh QR code while linking WhatsApp by QR (a data: URL). */
-  | { type: 'account.qr'; network: 'whatsapp'; qr: string }
+  /** A fresh QR code while linking by QR (a data: URL). */
+  | { type: 'account.qr'; network: LinkedNetwork; qr: string }
+  /** Someone started or stopped typing; it also stops by itself after a few seconds. */
+  | { type: 'typing'; threadId: string; senderId: string; active: boolean }
   /** Many things changed at once (a history sync): fetch the inbox again. */
   | { type: 'reloaded' }
 
 /** Linking WhatsApp: the code to type into WhatsApp, or a QR code to scan. */
 export type WhatsAppLinkResult = { code: string } | { qr: string }
+
+/** Older messages of a chat, oldest first. */
+export interface ServerOlderMessages {
+  messages: Message[]
+  hasMore: boolean
+}
 
 export type TelegramCodeResult = { via: 'app' | 'sms' }
 export type TelegramVerifyResult = { status: 'connected' } | { status: 'password'; hint?: string }

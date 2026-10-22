@@ -3,6 +3,7 @@ import type {
   PublicUser,
   ServerFeatures,
   ServerInbox,
+  ServerOlderMessages,
   TelegramCodeResult,
   TelegramVerifyResult,
   WhatsAppLinkResult,
@@ -85,13 +86,20 @@ export const serverApi = {
   /* ── Linked chats ────────────────────────────────────────────────────────── */
 
   inbox: () => request<ServerInbox>('GET', '/inbox'),
-  send: (threadId: string, body: string) => request<{ message: Message }>('POST', `/threads/${segment(threadId)}/messages`, { body }),
+  send: (threadId: string, body: string, replyToId?: string) =>
+    request<{ message: Message }>('POST', `/threads/${segment(threadId)}/messages`, { body, ...(replyToId ? { replyToId } : {}) }),
   markRead: (threadId: string) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/read`),
+  react: (threadId: string, messageId: string, emoji: string | null) =>
+    request<{ message: Message }>('POST', `/threads/${segment(threadId)}/reactions`, { messageId, emoji }),
+  typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
+  older: (threadId: string, beforeId: string) =>
+    request<ServerOlderMessages>('GET', `/threads/${segment(threadId)}/messages?before=${segment(beforeId)}`),
 
   linkWhatsApp: (request_: { method: 'code'; phone: string } | { method: 'qr' }) =>
     request<WhatsAppLinkResult>('POST', '/link/whatsapp', request_),
   unlinkWhatsApp: () => request<{ ok: true }>('DELETE', '/link/whatsapp'),
   telegramCode: (phone: string) => request<TelegramCodeResult>('POST', '/link/telegram/code', { phone }),
+  telegramQr: () => request<{ qr: string }>('POST', '/link/telegram/qr'),
   telegramVerify: (code: string) => request<TelegramVerifyResult>('POST', '/link/telegram/verify', { code }),
   telegramPassword: (password: string) => request<TelegramVerifyResult>('POST', '/link/telegram/password', { password }),
   unlinkTelegram: () => request<{ ok: true }>('DELETE', '/link/telegram'),

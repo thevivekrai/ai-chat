@@ -6,6 +6,7 @@ import { createSessionTokens } from './auth/tokens.ts'
 import { ConfigError, loadConfig } from './config.ts'
 import { createSealer } from './crypto.ts'
 import { connectDatabase } from './db.ts'
+import { createAvatars } from './inbox/avatars.ts'
 import { createInboxStore } from './inbox/store.ts'
 import { createMedia } from './media.ts'
 import { createAccounts } from './networks/accounts.ts'
@@ -23,10 +24,11 @@ async function main() {
   const sealer = createSealer(config.dataKey)
   const hub = createHub()
   const store = createInboxStore(col, sealer)
+  const avatars = createAvatars(col, sealer)
   const accounts = createAccounts(col, hub)
   const media = createMedia(config.cloudinary)
-  const whatsapp = createWhatsApp({ col, sealer, store, accounts, hub, media })
-  const telegram = createTelegram({ sealer, store, accounts, hub, media, api: config.telegram })
+  const whatsapp = createWhatsApp({ col, sealer, store, accounts, hub, media, avatars })
+  const telegram = createTelegram({ sealer, store, accounts, hub, media, avatars, api: config.telegram })
 
   const app = createApp({
     col,
@@ -35,6 +37,7 @@ async function main() {
     googleClientId: config.googleClientId,
     media,
     store,
+    avatars,
     accounts,
     hub,
     whatsapp,

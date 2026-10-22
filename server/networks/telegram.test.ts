@@ -1,7 +1,7 @@
 import { returnBigInt as bigInt } from 'telegram/Helpers.js'
 import { Api } from 'telegram'
 import { describe, expect, it } from 'vitest'
-import { mediaOf, peerOf } from './telegram.ts'
+import { mediaOf, peerOf, reactionsOf } from './telegram.ts'
 
 const download = async () => undefined
 
@@ -52,5 +52,22 @@ describe('reading GramJS objects', () => {
     expect(mediaOf(document([new Api.DocumentAttributeAudio({ voice: true, duration: 3 })], 'audio/ogg'), download)).toEqual({ body: '🎤 Voice message' })
     expect(mediaOf(message(new Api.MessageMediaGeo({ geo: new Api.GeoPointEmpty() })), download)).toEqual({ body: '📍 Location' })
     expect(mediaOf(message(), download)).toBeUndefined()
+  })
+})
+
+describe('reactions from Telegram', () => {
+  it('keeps emoji reactions, marks mine, and writes the heart like everyone else', () => {
+    const reactions = new Api.MessageReactions({
+      results: [
+        new Api.ReactionCount({ reaction: new Api.ReactionEmoji({ emoticon: '❤' }), count: 3, chosenOrder: 0 }),
+        new Api.ReactionCount({ reaction: new Api.ReactionEmoji({ emoticon: '👍' }), count: 1 }),
+        new Api.ReactionCount({ reaction: new Api.ReactionCustomEmoji({ documentId: bigInt(1) }), count: 5 }),
+      ],
+    })
+    expect(reactionsOf(reactions)).toEqual([
+      { emoji: '❤️', count: 3, mine: true },
+      { emoji: '👍', count: 1, mine: false },
+    ])
+    expect(reactionsOf(undefined)).toEqual([])
   })
 })

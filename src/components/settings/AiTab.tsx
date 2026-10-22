@@ -12,6 +12,7 @@ import { NETWORK_ORDER, NETWORKS } from '@/lib/networks'
 import { setThreadAiAccess, turnOffAi, turnOnAi, updateClaude } from '@/store/actions'
 import { useAi } from '@/store/ai'
 import { useInbox } from '@/store/inbox'
+import { threadPicture } from '@/store/selectors'
 import { useSettings } from '@/store/settings'
 import { Card, CardHeader, ErrorText, Field, Input, SectionTitle, Select } from './parts'
 
@@ -151,6 +152,7 @@ function ConsentCard() {
     useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds, setThreadsAllowed: s.setThreadsAllowed })),
   )
   const threads = useInbox((s) => s.threads)
+  const contacts = useInbox((s) => s.contacts)
   const list = useMemo(
     () =>
       NETWORK_ORDER.flatMap((n) =>
@@ -221,7 +223,7 @@ function ConsentCard() {
                     disabled={!aiEnabled}
                     onChange={(e) => setThreadAiAccess(t.id, e.target.checked)}
                   />
-                  <Avatar name={t.title} seed={t.id} size="xs" group={t.kind === 'group'} />
+                  <Avatar name={t.title} seed={t.id} size="xs" group={t.kind === 'group'} imageUrl={threadPicture(t, contacts)} />
                   <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
                   <span className="flex shrink-0 items-center gap-1.5 text-xs text-faint">
                     <NetworkIcon network={t.network} /> {NETWORKS[t.network].name}

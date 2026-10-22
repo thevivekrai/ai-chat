@@ -42,6 +42,10 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram }: LinkDe
     res.json(await telegram.requestCode(userIdOf(res), field(req.body, 'phone', { max: 32 })))
   })
 
+  router.post('/link/telegram/qr', signedIn, limited, async (_req, res) => {
+    res.json(await telegram.startQr(userIdOf(res)))
+  })
+
   router.post('/link/telegram/verify', signedIn, limited, async (req, res) => {
     res.json(await telegram.verifyCode(userIdOf(res), field(req.body, 'code', { max: 16 })))
   })

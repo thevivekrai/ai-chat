@@ -1,6 +1,6 @@
 import { MongoClient, type Collection, type Db, type ObjectId } from 'mongodb'
 import type { AccountStatus, LinkedNetwork } from '../src/data/server/types.ts'
-import type { Attachment, MessageStatus, NetworkId, ThreadKind } from '../src/data/types.ts'
+import type { Attachment, MessageStatus, NetworkId, QuotedMessage, Reaction, ThreadKind } from '../src/data/types.ts'
 
 export type { AccountStatus, LinkedNetwork }
 
@@ -29,6 +29,10 @@ export interface AccountDoc {
   detail?: string
   /** Sealed session (Telegram); WhatsApp keeps its keys in `waAuth`. */
   session?: string
+  /** While linking: what the user is asked for next. */
+  step?: 'code' | 'qr' | 'password'
+  /** Telegram's hint for the two-step verification password. */
+  hint?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -51,14 +55,29 @@ export interface ThreadDoc {
   unreadCount: number
   lastAt: Date
   updatedAt: Date
+  /** The group's picture, served by /api/avatars. */
+  avatarUrl?: string
 }
 
 export interface ContactDoc {
   userId: ObjectId
   id: string
   network: NetworkId
-  /** Sealed { name, handle }. */
+  /** Sealed { name, handle, avatarUrl }. */
   data: string
+}
+
+/** A profile or group picture, kept on the server so it never expires and needs no other host. */
+export interface AvatarDoc {
+  userId: ObjectId
+  /** The contact or chat it belongs to. */
+  id: string
+  /** Sealed base64 image; absent when the person has no picture (or hides it). */
+  data?: string
+  contentType?: string
+  /** Short content hash, so the URL changes when the picture does. */
+  version?: string
+  checkedAt: Date
 }
 
 export interface MessageDoc {
@@ -77,6 +96,11 @@ export interface MessageDoc {
 export interface MessagePayload {
   body: string
   attachments?: Attachment[]
+  replyTo?: QuotedMessage
+  /** Who reacted with what, by sender id ("me" for the user), where the network says (WhatsApp). */
+  reactionsBy?: Record<string, string>
+  /** Totals only, where that's all the network gives (Telegram). */
+  reactionTotals?: Reaction[]
 }
 
 export interface Collections {
@@ -86,6 +110,7 @@ export interface Collections {
   threads: Collection<ThreadDoc>
   contacts: Collection<ContactDoc>
   messages: Collection<MessageDoc>
+  avatars: Collection<AvatarDoc>
 }
 
 export interface Database {
@@ -112,6 +137,7 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
     threads: db.collection('threads'),
     contacts: db.collection('contacts'),
     messages: db.collection('messages'),
+    avatars: db.collection('avatars'),
   }
   await ensureIndexes(col)
   return { client, db, col, close: () => client.close() }
@@ -129,5 +155,6 @@ async function ensureIndexes(col: Collections) {
     col.contacts.createIndex({ userId: 1, id: 1 }, { unique: true }),
     col.messages.createIndex({ userId: 1, id: 1 }, { unique: true }),
     col.messages.createIndex({ userId: 1, threadId: 1, sentAt: -1 }),
+    col.avatars.createIndex({ userId: 1, id: 1 }, { unique: true }),
   ])
 }

@@ -8,9 +8,12 @@ Nothing is ever sent automatically.
 - **Accounts.** Sign in with **Google**, or with an **email and password**.
 - **Your own WhatsApp and Telegram.** Link **WhatsApp** by typing the 8-character code Sytext
   shows into *Linked devices* on your phone (or scanning a QR code), the way WhatsApp Web links.
-  Link **Telegram** with your phone number, the login code Telegram sends you and, if you use it,
-  your two-step password. Your chats sync to the inbox on every device you sign in on, and you
-  reply from Sytext.
+  Link **Telegram** with your phone number and the login code Telegram sends you, or by scanning a
+  QR code, plus your two-step password if you use one. Your chats sync to the inbox on every
+  device you sign in on, and you reply from Sytext.
+- **Conversations as on the networks themselves.** Quoted replies, reactions, "typing…" both
+  ways, profile and group pictures, read ticks, and earlier messages as you scroll back.
+  The demo chats have replies, reactions and typing too.
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
 - **Real AI.** Add your **Claude API key** and every AI feature calls Claude. Without one, a
@@ -130,6 +133,10 @@ like WhatsApp Web; your phone doesn't have to stay online.
 - It brings in your recent chats (up to 40 messages each) and every new message after that, with
   delivery and read ticks for yours, edits and deletions. Pictures that arrive are copied to
   Cloudinary so the app can show them; other media shows as a labelled attachment.
+- Quoted replies and reactions come in and go out. You see when someone is typing, and they see
+  when you are. Profile and group pictures are copied to the server (encrypted, like the rest).
+- Scrolling back past what's stored asks your phone for older messages, as WhatsApp Web does.
+  They arrive a moment later, if the phone is online.
 - Reading a chat in Sytext marks it read on WhatsApp; replies go out from your number.
 - **Unlink** logs the device out (it disappears from *Linked devices*) and deletes its chats from
   the server. If you remove the device from your phone instead, syncing stops and Settings offers
@@ -141,11 +148,14 @@ like WhatsApp Web; your phone doesn't have to stay online.
 ### Telegram
 
 Enter your number; Telegram sends a login code to your Telegram app (or by SMS). Enter it, and your
-two-step verification password if you have one. Sytext signs in as you, like Telegram on a new
-device, and shows up in Telegram under **Settings → Devices**, where you can end it.
+two-step verification password if you have one. Or choose **QR code** and scan it in Telegram on
+your phone (**Settings → Devices → Link Desktop Device**). Sytext signs in as you, like Telegram on
+a new device, and shows up in Telegram under **Settings → Devices**, where you can end it.
 
 - Your 30 most recent chats come in (20 messages each; broadcast channels are left out), then
   everything new, with read status both ways, edits, and pictures as above.
+- Quoted replies, reactions (Telegram's standard set), typing both ways, and profile and group
+  pictures. Scrolling back fetches earlier messages from Telegram.
 - **Unlink** ends the session in Telegram and deletes its chats from the server.
 - The server needs an `api_id` and `api_hash` for the deployment from
   [my.telegram.org](https://my.telegram.org) → *API development tools*. It uses
@@ -317,14 +327,15 @@ connected or a key is saved.
   config, and mapping Telegram's objects. With `TEST_MONGODB_URI` set (any MongoDB; each run uses
   and drops its own database), integration tests run the whole API against fake WhatsApp and
   Telegram transports: sign-up and sign-in, Google account linking, CSRF and forged cookies,
-  linking both networks step by step, history, live messages, edits, read receipts, sending,
-  restarts, ended sessions, unlinking, and that stored text is encrypted.
+  linking both networks step by step (Telegram by code and by QR), history, live messages,
+  edits, read receipts, sending, quoted replies, reactions, typing, profile pictures, earlier
+  messages, restarts, ended sessions, unlinking, and that stored text is encrypted.
 
   ```bash
   TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test
   ```
-- **Server connector.** Loading, live events, routing sends and read markers, holding back the
-  echo of a message being sent, and clean-up on sign-out.
+- **Server connector.** Loading, live events, routing sends, reactions, typing, earlier messages
+  and read markers, holding back the echo of a message being sent, and clean-up on sign-out.
 - **In a browser.** `server/testing/e2e.ts` runs the app against the same fakes, with a control
   port standing in for the phone, for clicking through linking end to end.
 - **Claude requests.** A stubbed `fetch` checks the request shape (model, effort, structured
@@ -339,13 +350,13 @@ simulated WhatsApp bridge room) and a local Telegram Bot API server.
 ## Limits and next steps
 
 - **WhatsApp and Telegram media.** Pictures are shown; other media are labelled, and sending is
-  text only.
+  text only (with replies and reactions).
 - **One server instance**, and linked accounts sync only while it runs (see Deploy).
 
 - **Encryption.** Matrix end-to-end encrypted rooms (matrix-js-sdk's Rust crypto plus device
   verification).
-- **History.** Only recent messages load: the last 30 per Matrix room, and what a Telegram bot has
-  seen. Scrolling back doesn't fetch older ones yet.
+- **History.** Linked WhatsApp and Telegram chats load earlier messages as you scroll back. Matrix
+  rooms show their last 30 messages, and a Telegram bot only what it has seen.
 - **Scheduled sends** go out while Sytext is open. One that was due while it was closed waits for
   you instead of arriving hours late. Matrix delayed events (MSC4140) would let the server send them.
 - **Sync across devices.** Done, snoozed and tasks live on one device. For Matrix they could sync

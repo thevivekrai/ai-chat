@@ -7,6 +7,7 @@ import { createGoogleVerifier } from '../auth/google.ts'
 import { createSessionTokens } from '../auth/tokens.ts'
 import { createSealer } from '../crypto.ts'
 import { connectDatabase, type Database } from '../db.ts'
+import { createAvatars } from '../inbox/avatars.ts'
 import { createInboxStore } from '../inbox/store.ts'
 import { createAccounts } from '../networks/accounts.ts'
 import { createTelegram, type CreateTgClient, type TgSelf, type TgUpdate } from '../networks/telegram.ts'
@@ -48,17 +49,25 @@ export async function fakeGoogle() {
   return { verifier, idToken }
 }
 
+/** A 1×1 PNG, standing in for profile pictures. */
+export const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
+
 /* ── WhatsApp: a socket the test drives ──────────────────────────────────────── */
 
 export class FakeWaSocket implements WaSocket {
   private listeners = new Map<string, ((arg: never) => void)[]>()
-  user?: { id: string; name?: string }
+  user?: { id: string; name?: string; lid?: string }
   authState: { creds: AuthenticationState['creds'] }
   pairingPhone?: string
-  sent: { jid: string; text: string }[] = []
+  sent: { jid: string; text: string; quotedId?: string }[] = []
+  reactions: { jid: string; emoji: string; targetId: string }[] = []
+  presence: { type: string; jid?: string }[] = []
+  historyRequests: { count: number; oldestId: string }[] = []
   read: WAMessageKey[] = []
   loggedOut = false
   ended = false
+  /** Chats with a profile picture. */
+  pictures = new Set(['919812345678@s.whatsapp.net'])
 
   constructor(auth: AuthenticationState) {
     this.authState = { creds: auth.creds }
@@ -81,9 +90,35 @@ export class FakeWaSocket implements WaSocket {
     return 'ABCD1234'
   }
 
-  async sendMessage(jid: string, content: { text: string }) {
-    this.sent.push({ jid, text: content.text })
+  async sendMessage(
+    jid: string,
+    content: { text: string } | { react: { text: string; key: WAMessageKey } },
+    options?: { quoted?: WAMessage },
+  ) {
+    if ('react' in content) {
+      this.reactions.push({ jid, emoji: content.react.text, targetId: content.react.key.id! })
+      return { key: { remoteJid: jid, fromMe: true, id: `REACT${this.reactions.length}` } } as WAMessage
+    }
+    this.sent.push({ jid, text: content.text, ...(options?.quoted ? { quotedId: options.quoted.key.id! } : {}) })
     return { key: { remoteJid: jid, fromMe: true, id: `SENT${this.sent.length}` } } as WAMessage
+  }
+
+  async sendPresenceUpdate(type: string, jid?: string) {
+    this.presence.push({ type, jid })
+  }
+
+  async presenceSubscribe(jid: string) {
+    this.presence.push({ type: 'subscribe', jid })
+  }
+
+  async profilePictureUrl(jid: string) {
+    if (!this.pictures.has(jid)) throw new Error('item-not-found')
+    return `data:image/png;base64,${PIXEL.toString('base64')}`
+  }
+
+  async fetchMessageHistory(count: number, oldestKey: WAMessageKey) {
+    this.historyRequests.push({ count, oldestId: oldestKey.id! })
+    return 'history-request'
   }
 
   async readMessages(keys: WAMessageKey[]) {
@@ -118,12 +153,23 @@ export function fakeTelegram() {
     needsPassword: true,
     password: 'hunter2',
     codesSent: [] as string[],
-    sent: [] as { chatId: string; text: string }[],
+    sent: [] as { chatId: string; text: string; replyToId?: number }[],
     read: [] as { chatId: string; maxId: number }[],
     loggedOut: 0,
     sessions: [] as string[],
     listeners: [] as ((update: TgUpdate) => void)[],
+    reactions: [] as { chatId: string; messageId: number; emoji: string | null }[],
+    typing: [] as { chatId: string; typing: boolean }[],
+    qrShown: 0,
+    /** Scans the QR code shown, as Telegram on a phone would. */
+    scanQr: () => {},
   }
+  const ashaMessages = [
+    { id: 12, chat: asha, out: false, text: 'Are we still on for Saturday?', date: now - 60, replyToId: 11 },
+    { id: 11, chat: asha, out: true, text: 'Yes! See you at 9', date: now - 120, reactions: [{ emoji: '👍', count: 1, mine: false }] },
+    { id: 10, chat: asha, out: false, text: 'Which trail are we doing?', date: now - 86400 },
+    { id: 9, chat: asha, out: true, text: 'Rajmachi, the long one', date: now - 86500 },
+  ]
 
   const create: CreateTgClient = (session) => {
     state.sessions.push(session)
@@ -148,6 +194,16 @@ export function fakeTelegram() {
         if (password !== state.password) throw rpc('PASSWORD_HASH_INVALID')
         return self
       },
+      async qrLogin(onQr, signal) {
+        state.qrShown++
+        onQr(`tg://login?token=QR${state.qrShown}`)
+        await new Promise<void>((resolve, reject) => {
+          state.scanQr = resolve
+          signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true })
+        })
+        if (state.needsPassword) throw rpc('SESSION_PASSWORD_NEEDED')
+        return self
+      },
       async me() {
         if (state.revoked) throw rpc('AUTH_KEY_UNREGISTERED')
         return self
@@ -159,12 +215,10 @@ export function fakeTelegram() {
           { chat: { id: '-100999', kind: 'group' as const, name: 'News channel', skip: true }, unreadCount: 9, readOutboxMaxId: 0, date: now },
         ]
       },
-      async history(chatId) {
+      async history(chatId, limit, beforeId) {
         if (chatId === asha.id) {
-          return [
-            { id: 12, chat: asha, out: false, text: 'Are we still on for Saturday?', date: now - 60 },
-            { id: 11, chat: asha, out: true, text: 'Yes! See you at 9', date: now - 120 },
-          ]
+          // The first sync gets the latest two; earlier ones come when asked for.
+          return beforeId ? ashaMessages.filter((m) => m.id < beforeId).slice(0, limit) : ashaMessages.slice(0, 2)
         }
         return [
           {
@@ -178,9 +232,22 @@ export function fakeTelegram() {
           },
         ]
       },
-      async send(chatId, text) {
-        state.sent.push({ chatId, text })
+      async message(chatId, id) {
+        return chatId === asha.id ? (ashaMessages.find((m) => m.id === id) ?? null) : null
+      },
+      async send(chatId, text, replyToId) {
+        state.sent.push({ chatId, text, ...(replyToId ? { replyToId } : {}) })
         return { id: 100 + state.sent.length, date: Math.floor(Date.now() / 1000) }
+      },
+      async react(chatId, messageId, emoji) {
+        if (emoji === '🦄') throw rpc('REACTION_INVALID')
+        state.reactions.push({ chatId, messageId, emoji })
+      },
+      async setTyping(chatId, typing) {
+        state.typing.push({ chatId, typing })
+      },
+      async picture(chatId) {
+        return chatId === asha.id ? PIXEL : undefined
       },
       async markRead(chatId, maxId) {
         state.read.push({ chatId, maxId })
@@ -231,6 +298,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
   async function boot(port = 0) {
     const hub = createHub()
     const store = createInboxStore(database.col, sealer)
+    const avatars = createAvatars(database.col, sealer)
     const accounts = createAccounts(database.col, hub)
     const whatsapp = createWhatsApp({
       col: database.col,
@@ -239,6 +307,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       accounts,
       hub,
       media: null,
+      avatars,
       createSocket: (auth) => {
         const socket = new FakeWaSocket(auth)
         sockets.push(socket)
@@ -248,7 +317,16 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       },
       linkTimeoutMs: 2000,
     })
-    const tg = createTelegram({ sealer, store, accounts, hub, media: null, api: { apiId: 1, apiHash: 'hash' }, createClient: telegram.create })
+    const tg = createTelegram({
+      sealer,
+      store,
+      accounts,
+      hub,
+      media: null,
+      avatars,
+      api: { apiId: 1, apiHash: 'hash' },
+      createClient: telegram.create,
+    })
     managers = { whatsapp, telegram: tg }
     const app = createApp({
       col: database.col,
@@ -257,6 +335,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       googleClientId: GOOGLE_CLIENT_ID,
       media: null,
       store,
+      avatars,
       accounts,
       hub,
       whatsapp,

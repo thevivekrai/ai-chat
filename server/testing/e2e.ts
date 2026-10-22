@@ -6,7 +6,10 @@
  * The app is on http://127.0.0.1:5180. A control port (5181) plays the phone's part:
  *   POST /whatsapp/linked             the code was entered: the link opens and history arrives
  *   POST /whatsapp/message {"text"}   a new WhatsApp message
+ *   POST /whatsapp/typing             Ravi starts typing
+ *   POST /whatsapp/older              the phone sends older messages (after "Load earlier")
  *   POST /telegram/message {"text"}   a new Telegram message
+ *   POST /telegram/scan               the Telegram QR code is scanned
  * Telegram's login code is 12345 and the two-step password hunter2.
  */
 import { createServer } from 'node:http'
@@ -34,7 +37,17 @@ async function whatsappLinked() {
     contacts: [{ id: RAVI, name: 'Ravi Kumar' }],
     messages: [
       { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, message: { conversation: 'Sent the parcel on Monday 📦' }, messageTimestamp: ts - 7200, status: 4 },
-      { key: { remoteJid: RAVI, fromMe: false, id: 'M1' }, message: { conversation: 'Did the parcel arrive? Tracking says delivered but nobody has it here' }, messageTimestamp: ts - 600 },
+      {
+        key: { remoteJid: RAVI, fromMe: false, id: 'M1' },
+        message: {
+          extendedTextMessage: {
+            text: 'Did it arrive? Tracking says delivered but nobody has it here',
+            contextInfo: { stanzaId: 'M0', participant: '919876543210@s.whatsapp.net', quotedMessage: { conversation: 'Sent the parcel on Monday 📦' } },
+          },
+        },
+        messageTimestamp: ts - 600,
+      },
+      { key: { remoteJid: RAVI, fromMe: false, id: 'R1' }, message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, text: '🙏' } }, messageTimestamp: ts - 590 },
       {
         key: { remoteJid: '120363000000@g.us', fromMe: false, id: 'G1', participant: '919800000001@s.whatsapp.net' },
         message: { extendedTextMessage: { text: 'Dinner at 8 tonight, everyone okay?' } },
@@ -64,6 +77,20 @@ createServer(async (req, res) => {
         type: 'notify',
         messages: [{ key: { remoteJid: RAVI, fromMe: false, id: `L${Date.now()}` }, message: { conversation: input.text }, messageTimestamp: now() }],
       } as never)
+    } else if (req.url === '/whatsapp/typing') {
+      server.sockets.at(-1)!.emit('presence.update', { id: RAVI, presences: { [RAVI]: { lastKnownPresence: 'composing' } } })
+    } else if (req.url === '/whatsapp/older') {
+      server.sockets.at(-1)!.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          { key: { remoteJid: RAVI, fromMe: false, id: 'OLD1' }, message: { conversation: 'Can you ship 2 more planters next week?' }, messageTimestamp: now() - 3 * 86400 },
+          { key: { remoteJid: RAVI, fromMe: true, id: 'OLD2' }, message: { conversation: 'Yes, booking the courier now' }, messageTimestamp: now() - 3 * 86400 + 600, status: 4 },
+        ],
+        syncType: 6,
+      } as never)
+    } else if (req.url === '/telegram/scan') {
+      server.telegram.state.scanQr()
     } else if (req.url === '/telegram/message') {
       server.telegram.emit({ type: 'message', message: { id: Date.now() % 1e6, chat: server.telegram.asha, out: false, text: input.text, date: now() } })
     } else {

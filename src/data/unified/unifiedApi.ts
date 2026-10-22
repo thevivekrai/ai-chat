@@ -8,7 +8,7 @@ import { searchMessages } from '../search'
 import { serverApi } from '../server/serverApi'
 import { ServerConnector } from '../server/serverConnector'
 import type { InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
-import { ME_ID } from '../types'
+import { ME_ID, NO_CAPABILITIES } from '../types'
 import {
   CONFIG_KEY,
   LOCAL_KEY,
@@ -403,13 +403,20 @@ export function createUnifiedApi(): InboxApi {
       return result
     },
 
-    onWhatsAppQr(listener) {
+    onLinkQr(listener) {
       return server ? server.connector.onQr(listener) : () => {}
     },
 
     async requestTelegramCode(phone) {
       const connector = requireServer()
       const result = await serverApi.telegramCode(phone)
+      void connector.refreshAccounts().catch(() => undefined)
+      return result
+    },
+
+    async requestTelegramQr() {
+      const connector = requireServer()
+      const result = await serverApi.telegramQr()
       void connector.refreshAccounts().catch(() => undefined)
       return result
     },
@@ -448,9 +455,38 @@ export function createUnifiedApi(): InboxApi {
   return {
     loadInbox: snapshot,
 
-    async sendMessage(threadId, body) {
-      if (sourceOf(threadId) === 'demo') return demoApi.sendMessage(threadId, body)
-      return connectorFor(threadId).sendMessage(threadId, body)
+    async sendMessage(threadId, body, options) {
+      if (sourceOf(threadId) === 'demo') return demoApi.sendMessage(threadId, body, options)
+      return connectorFor(threadId).sendMessage(threadId, body, options)
+    },
+
+    capabilities(threadId) {
+      if (sourceOf(threadId) === 'demo') return demoApi.capabilities(threadId)
+      const source = sourceOf(threadId)
+      const connector = source === 'server' ? server?.connector : connectors.get(source as ConnectorId)?.connector
+      return connector?.capabilities?.(threadId) ?? NO_CAPABILITIES
+    },
+
+    async react(threadId, messageId, emoji) {
+      if (sourceOf(threadId) === 'demo') return demoApi.react(threadId, messageId, emoji)
+      const connector = connectorFor(threadId)
+      if (!connector.react) throw new Error("This chat doesn't support reactions.")
+      return connector.react(threadId, messageId, emoji)
+    },
+
+    async setTyping(threadId, typing) {
+      if (sourceOf(threadId) === 'demo') return demoApi.setTyping(threadId, typing)
+      try {
+        await connectorFor(threadId).setTyping?.(threadId, typing)
+      } catch {
+        // Only a courtesy to the other side; never worth an error.
+      }
+    },
+
+    async loadOlder(threadId, beforeId) {
+      if (sourceOf(threadId) === 'demo') return demoApi.loadOlder(threadId, beforeId)
+      const connector = connectorFor(threadId)
+      return connector.loadOlder ? connector.loadOlder(threadId, beforeId) : { messages: [], hasMore: false }
     },
 
     async markRead(threadId) {

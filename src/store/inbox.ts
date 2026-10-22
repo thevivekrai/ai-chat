@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { api } from '@/data/api'
+import { api, type SendOptions } from '@/data/api'
+import { withMyReaction } from '@/data/reactions'
 import type {
   Contact,
   InboxEvent,
@@ -29,6 +30,10 @@ interface InboxState {
   messages: Record<string, Message[]>
   scheduled: ScheduledMessage[]
   tasks: Task[]
+  /** Who is typing, per chat (contact ids). */
+  typing: Record<string, string[]>
+  /** Paging back through a chat: whether there's more, and whether a page is on its way. */
+  history: Record<string, { loading: boolean; hasMore: boolean; error?: string }>
 
   /** Loads the inbox and subscribes to backend events. Returns an unsubscribe function. */
   connect(): () => void
@@ -37,7 +42,11 @@ interface InboxState {
   /** Loads (or reloads) the inbox snapshot. */
   load(): Promise<void>
   applyEvent(event: InboxEvent): void
-  sendMessage(threadId: string, body: string): Promise<void>
+  sendMessage(threadId: string, body: string, options?: SendOptions): Promise<void>
+  /** Sets my reaction (null removes it); shown at once, undone if the network refuses. */
+  react(threadId: string, messageId: string, emoji: string | null): Promise<void>
+  /** Loads the page of messages before the earliest one loaded. */
+  loadOlder(threadId: string): Promise<void>
   /** Sends a failed message again. */
   retryMessage(threadId: string, messageId: string): Promise<void>
   markRead(threadId: string): void
@@ -54,6 +63,10 @@ interface InboxState {
 }
 
 const byId = <T extends { id: string }>(items: T[]) => Object.fromEntries(items.map((i) => [i.id, i]))
+
+/** Typing notices end by themselves after this long without a renewal, as on the networks. */
+const TYPING_LASTS_MS = 6000
+const typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function groupMessages(messages: Message[]): Record<string, Message[]> {
   const grouped: Record<string, Message[]> = {}
@@ -84,6 +97,21 @@ function upsertMessage(list: Message[] = [], message: Message, replaceId = messa
 
 export const useInbox = create<InboxState>()((set, get) => {
   const patchThread = (thread: Thread) => set((s) => ({ threads: { ...s.threads, [thread.id]: thread } }))
+  const setTyping = (threadId: string, senderId: string, active: boolean) => {
+    const key = `${threadId}\n${senderId}`
+    clearTimeout(typingTimers.get(key))
+    typingTimers.delete(key)
+    if (active) typingTimers.set(key, setTimeout(() => setTyping(threadId, senderId, false), TYPING_LASTS_MS))
+    set((s) => {
+      const now = s.typing[threadId] ?? []
+      if (now.includes(senderId) === active) return {}
+      const next = active ? [...now, senderId] : now.filter((id) => id !== senderId)
+      const typing = { ...s.typing }
+      if (next.length) typing[threadId] = next
+      else delete typing[threadId]
+      return { typing }
+    })
+  }
   const putMessage = (message: Message, replaceId?: string) =>
     set((s) => ({
       messages: { ...s.messages, [message.threadId]: upsertMessage(s.messages[message.threadId], message, replaceId) },
@@ -98,6 +126,8 @@ export const useInbox = create<InboxState>()((set, get) => {
     messages: {},
     scheduled: [],
     tasks: [],
+    typing: {},
+    history: {},
 
     connect() {
       const unsubscribe = api.subscribe((event) => get().applyEvent(event))
@@ -107,7 +137,18 @@ export const useInbox = create<InboxState>()((set, get) => {
     },
 
     clear() {
-      set({ status: 'idle', error: null, me: { id: ME_ID, name: 'Me' }, contacts: {}, threads: {}, messages: {}, scheduled: [], tasks: [] })
+      set({
+        status: 'idle',
+        error: null,
+        me: { id: ME_ID, name: 'Me' },
+        contacts: {},
+        threads: {},
+        messages: {},
+        scheduled: [],
+        tasks: [],
+        typing: {},
+        history: {},
+      })
     },
 
     async load() {
@@ -122,8 +163,15 @@ export const useInbox = create<InboxState>()((set, get) => {
     applyEvent(event) {
       switch (event.type) {
         case 'message.created':
+          // Whoever was typing has sent it.
+          setTyping(event.message.threadId, event.message.senderId, false)
+          putMessage(event.message)
+          break
         case 'message.updated':
           putMessage(event.message)
+          break
+        case 'typing':
+          setTyping(event.threadId, event.senderId, event.active)
           break
         case 'thread.updated':
           patchThread(event.thread)
@@ -142,17 +190,37 @@ export const useInbox = create<InboxState>()((set, get) => {
           set((s) => ({ scheduled: s.scheduled.filter((x) => x.id !== event.scheduledId) }))
           break
         case 'reset':
-          set({ status: 'ready', ...fromSnapshot(event.snapshot) })
+          // A reload keeps older pages already fetched, so scrolling back isn't lost.
+          set((s) => {
+            const next = fromSnapshot(event.snapshot)
+            for (const [threadId, list] of Object.entries(s.messages)) {
+              const fresh = next.messages[threadId]
+              if (!fresh?.length || !s.history[threadId]) continue
+              const earliest = toMs(fresh[0].sentAt)
+              const kept = list.filter((m) => toMs(m.sentAt) < earliest)
+              next.messages[threadId] = [...kept, ...fresh]
+            }
+            return { status: 'ready', ...next }
+          })
           break
       }
     },
 
-    async sendMessage(threadId, body) {
+    async sendMessage(threadId, body, options) {
       // Optimistic: the message shows up (and the thread leaves "Needs reply") immediately.
       const tempId = `pending-${Date.now()}`
-      putMessage({ id: tempId, threadId, senderId: ME_ID, body, sentAt: new Date().toISOString(), status: 'sending' })
+      const quoted = options?.replyToId ? get().messages[threadId]?.find((m) => m.id === options.replyToId) : undefined
+      putMessage({
+        id: tempId,
+        threadId,
+        senderId: ME_ID,
+        body,
+        sentAt: new Date().toISOString(),
+        status: 'sending',
+        ...(quoted ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
+      })
       try {
-        putMessage(await api.sendMessage(threadId, body), tempId)
+        putMessage(await api.sendMessage(threadId, body, options), tempId)
       } catch (error) {
         const failed = get().messages[threadId]?.find((m) => m.id === tempId)
         if (failed) {
@@ -165,7 +233,42 @@ export const useInbox = create<InboxState>()((set, get) => {
       const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
       if (!failed) return
       set((s) => ({ messages: { ...s.messages, [threadId]: s.messages[threadId].filter((m) => m.id !== messageId) } }))
-      await get().sendMessage(threadId, failed.body)
+      await get().sendMessage(threadId, failed.body, failed.replyTo ? { replyToId: failed.replyTo.id } : undefined)
+    },
+
+    async react(threadId, messageId, emoji) {
+      const before = get().messages[threadId]?.find((m) => m.id === messageId)
+      if (!before) return
+      const reactions = withMyReaction(before.reactions, emoji)
+      putMessage({ ...before, reactions })
+      try {
+        putMessage(await api.react(threadId, messageId, emoji))
+      } catch (error) {
+        // Put it back the way it was; the caller says why.
+        const now = get().messages[threadId]?.find((m) => m.id === messageId)
+        if (now) putMessage({ ...now, reactions: before.reactions })
+        throw error
+      }
+    },
+
+    async loadOlder(threadId) {
+      const state = get().history[threadId]
+      const earliest = get().messages[threadId]?.[0]
+      if (state?.loading || state?.hasMore === false || !earliest) return
+      const setHistory = (patch: { loading: boolean; hasMore: boolean; error?: string }) =>
+        set((s) => ({ history: { ...s.history, [threadId]: patch } }))
+      setHistory({ loading: true, hasMore: true })
+      try {
+        const { messages, hasMore } = await api.loadOlder(threadId, earliest.id)
+        set((s) => {
+          let list = s.messages[threadId] ?? []
+          for (const m of messages) list = upsertMessage(list, m)
+          return { messages: { ...s.messages, [threadId]: list } }
+        })
+        setHistory({ loading: false, hasMore })
+      } catch (error) {
+        setHistory({ loading: false, hasMore: true, error: error instanceof Error ? error.message : 'Couldn\'t load more.' })
+      }
     },
 
     markRead(threadId) {

@@ -72,7 +72,7 @@ function WhatsAppCard({ account }: { account: PublicAccount | null }) {
   // The QR code changes every so often until it's scanned.
   useEffect(() => {
     if (!showingQr) return
-    return api.connections.onWhatsAppQr((qr) => setResult({ qr }))
+    return api.connections.onLinkQr((network, qr) => network === 'whatsapp' && setResult({ qr }))
   }, [showingQr])
 
   useLinkedOnce('whatsapp', status, () => setResult(null))
@@ -215,38 +215,52 @@ function QrCode({ qr }: { qr: string }) {
 
 /* ── Telegram ──────────────────────────────────────────────────────────────── */
 
-type TelegramStep = 'phone' | 'code' | 'password'
+type TelegramStep = 'start' | 'code' | 'qr' | 'password'
 
 function TelegramCard({ account, enabled }: { account: PublicAccount | null; enabled: boolean }) {
   const status = account?.status ?? null
-  // Picks up where a sign-in left off, say after a reload.
-  const resumeStep = (): TelegramStep =>
-    status === 'linking' ? (account?.detail?.includes('password') ? 'password' : 'code') : 'phone'
-  const [step, setStep] = useState<TelegramStep>(resumeStep)
+  const serverStep = status === 'linking' ? account?.step : undefined
+  // Picks up where a sign-in left off, say after a reload (a QR code can't be shown again).
+  const [step, setStep] = useState<TelegramStep>(serverStep === 'password' || serverStep === 'code' ? serverStep : 'start')
+  const [method, setMethod] = useState<'code' | 'qr'>('code')
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [via, setVia] = useState<'app' | 'sms'>('app')
+  const [qr, setQr] = useState<string | null>(null)
   const action = useAsync()
 
-  useLinkedOnce('telegram', status, () => {
-    setStep('phone')
+  // The QR code changes every half minute or so until it's scanned.
+  useEffect(() => {
+    if (step !== 'qr') return
+    return api.connections.onLinkQr((network, next) => network === 'telegram' && setQr(next))
+  }, [step])
+
+  const reset = () => {
+    setStep('start')
     setCode('')
     setPassword('')
-  })
-  // The code expired, or the sign-in was cancelled elsewhere: back to the start.
-  const [seenStatus, setSeenStatus] = useState(status)
-  if (status !== seenStatus) {
-    setSeenStatus(status)
-    if (status === 'disconnected' || status === null) setStep('phone')
+    setQr(null)
+  }
+  useLinkedOnce('telegram', status, reset)
+  // The code expired, or the sign-in was cancelled elsewhere: back to the start. A scanned QR code
+  // with two-step verification on moves on to the password.
+  const [seen, setSeen] = useState({ status, serverStep })
+  if (status !== seen.status || serverStep !== seen.serverStep) {
+    setSeen({ status, serverStep })
+    if (status === 'disconnected' || status === null) reset()
+    else if (serverStep === 'password' && step === 'qr') setStep('password')
   }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
     void action.run(async () => {
-      if (step === 'phone') {
+      if (step === 'start' && method === 'qr') {
+        setQr((await api.connections.requestTelegramQr()).qr)
+        setStep('qr')
+      } else if (step === 'start') {
         const result = await api.connections.requestTelegramCode(phone)
         setVia(result.via)
         setStep('code')
@@ -262,6 +276,7 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
   }
 
   const linked = status === 'connected' || status === 'error'
+  const passwordHint = hint ?? account?.hint
   return (
     <Card>
       <CardHeader
@@ -271,7 +286,7 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
       >
         {linked
           ? 'Signed in as you, like Telegram on a new device. It shows in Telegram under Settings → Devices.'
-          : 'Sign in with your phone number and the code Telegram sends you. Your own chats and groups come in, and you reply as yourself.'}
+          : 'Sign in with your phone number and the code Telegram sends you, or scan a QR code. Your own chats and groups come in, and you reply as yourself.'}
       </CardHeader>
 
       {linked ? (
@@ -283,7 +298,18 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
         </p>
       ) : (
         <form onSubmit={submit} className="mt-4 space-y-3">
-          {step === 'phone' && (
+          {step === 'start' && (
+            <Segmented
+              label="Sign in with"
+              value={method}
+              options={[
+                { id: 'code' as const, label: 'Phone number' },
+                { id: 'qr' as const, label: 'QR code' },
+              ]}
+              onChange={(next) => setMethod(next)}
+            />
+          )}
+          {step === 'start' && method === 'code' && (
             <Field label="Your Telegram number" hint="With the country code.">
               <Input
                 required
@@ -313,8 +339,26 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
               />
             </Field>
           )}
+          {step === 'qr' && qr && (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <img src={qr} alt="QR code to sign in to Telegram" className="size-48 shrink-0 rounded-2xl bg-white p-2 shadow-card" />
+                <Steps>
+                  <li>Open Telegram on your phone.</li>
+                  <li>
+                    Go to <b>Settings → Devices → Link Desktop Device</b>.
+                  </li>
+                  <li>Point your phone at this code.</li>
+                </Steps>
+              </div>
+              <WaitingLine>{account?.detail ?? 'Waiting for you to scan the QR code…'}</WaitingLine>
+            </div>
+          )}
           {step === 'password' && (
-            <Field label="Two-step verification password" hint={hint ? `Your hint: ${hint}` : 'The password you set in Telegram → Privacy and Security.'}>
+            <Field
+              label="Two-step verification password"
+              hint={passwordHint ? `Your hint: ${passwordHint}` : 'The password you set in Telegram → Privacy and Security.'}
+            >
               <PasswordInput
                 value={password}
                 onChange={setPassword}
@@ -324,25 +368,25 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
               />
             </Field>
           )}
-          {step === 'phone' && account?.status === 'disconnected' && <StoppedNote account={account} network="telegram" />}
+          {step === 'start' && account?.status === 'disconnected' && <StoppedNote account={account} network="telegram" />}
           {action.error && <ErrorText>{action.error}</ErrorText>}
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" variant="primary" size="sm" disabled={action.busy}>
-              {action.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-              {step === 'phone' ? 'Send code' : step === 'code' ? 'Verify' : 'Sign in'}
-            </Button>
-            {step !== 'phone' && (
+            {step !== 'qr' && (
+              <Button type="submit" variant="primary" size="sm" disabled={action.busy}>
+                {action.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+                {step === 'start' ? (method === 'qr' ? 'Show QR code' : 'Send code') : step === 'code' ? 'Verify' : 'Sign in'}
+              </Button>
+            )}
+            {step !== 'start' && (
               <Button
                 size="sm"
-                variant="ghost"
+                variant={step === 'qr' ? 'secondary' : 'ghost'}
                 onClick={() => {
-                  setStep('phone')
-                  setCode('')
-                  setPassword('')
+                  reset()
                   void api.connections.unlink('telegram').catch(() => undefined)
                 }}
               >
-                Start over
+                {step === 'qr' ? 'Cancel' : 'Start over'}
               </Button>
             )}
           </div>

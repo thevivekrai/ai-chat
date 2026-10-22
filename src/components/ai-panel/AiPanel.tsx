@@ -90,7 +90,7 @@ export function AiPanel({ threadId, onClose, className }: { threadId: string; on
           <ul className="space-y-2.5">
             {people.map((p) => (
               <li key={p.id} className="flex items-center gap-2.5">
-                <Avatar name={p.name} seed={p.id} size="sm" />
+                <Avatar name={p.name} seed={p.id} size="sm" imageUrl={p.avatarUrl} />
                 <div className="min-w-0">
                   <p className="truncate text-[13px] font-medium">{p.name}</p>
                   <p className="truncate text-xs text-muted">

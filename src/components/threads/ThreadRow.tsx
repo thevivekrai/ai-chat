@@ -5,9 +5,10 @@ import { Avatar } from '@/components/ui/Avatar'
 import { PriorityTag, PriorityTagSkeleton, ScheduledBadge, SnoozedBadge, UnansweredBadge } from '@/components/ui/Tags'
 import { UNANSWERED_BADGE_AFTER } from '@/config'
 import { cn } from '@/lib/cn'
-import { messagePreview } from '@/lib/format'
+import { messagePreview, typingLabel } from '@/lib/format'
 import { formatAgo, formatDuration, formatWhen } from '@/lib/time'
-import type { ThreadView } from '@/store/selectors'
+import { useInbox } from '@/store/inbox'
+import { threadPicture, type ThreadView } from '@/store/selectors'
 import { useUi } from '@/store/ui'
 
 interface ThreadRowProps {
@@ -20,6 +21,7 @@ interface ThreadRowProps {
 
 export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts, showWaitingOnThem }: ThreadRowProps) {
   const draft = useUi((s) => s.composer[view.id])
+  const typing = useInbox((s) => s.typing[view.id])
   const ref = useRef<HTMLButtonElement>(null)
 
   // Keep the selected row visible while moving with J/K.
@@ -76,7 +78,13 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
           transition={{ type: 'spring', stiffness: 560, damping: 42 }}
         />
       )}
-      <Avatar name={thread.title} seed={thread.id} group={isGroup} network={thread.network} />
+      <Avatar
+        name={thread.title}
+        seed={thread.id}
+        group={isGroup}
+        network={thread.network}
+        imageUrl={threadPicture(thread, contacts)}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className={cn('truncate text-sm text-fg', unread ? 'font-semibold' : 'font-medium')}>
@@ -88,7 +96,11 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
         </div>
         <div className="mt-0.5 flex items-center gap-2">
           <p className={cn('min-w-0 flex-1 truncate text-[13px]', unread ? 'text-fg' : 'text-muted')}>
-            {draft ? (
+            {typing?.length ? (
+              <span className="font-medium text-accent-ink">
+                {typingLabel(typing.map((id) => contacts[id]?.name ?? 'Someone'), isGroup)}
+              </span>
+            ) : draft ? (
               <>
                 <span className="font-medium text-accent-ink">Draft:</span> {draft}
               </>

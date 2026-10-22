@@ -1,5 +1,9 @@
+import { ObjectId } from 'mongodb'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { Browser, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
+import { Browser, PIXEL, startTestServer, TEST_MONGODB_URI, waitFor, type FakeWaSocket, type TestServer } from './testing/helpers.ts'
+
+const enc = encodeURIComponent
+const byId = (messages: { id: string }[]) => Object.fromEntries(messages.map((m) => [m.id, m])) as Record<string, any>
 
 describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   let server: TestServer
@@ -121,7 +125,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(code.json).toEqual({ via: 'app' })
       expect(tg.state.codesSent).toContain('+919876543210')
       expect((await browser.get('/api/accounts')).json.accounts).toEqual([
-        { network: 'telegram', status: 'linking', label: '+919876543210', detail: 'Enter the code Telegram sent to your Telegram app.' },
+        { network: 'telegram', status: 'linking', step: 'code', label: '+919876543210', detail: 'Enter the code Telegram sent to your Telegram app.' },
       ])
       expect((await browser.post('/api/link/telegram/verify', { code: '11111' })).json.error).toMatch(/isn't right/)
 
@@ -140,8 +144,8 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(inbox.threads[1]).toMatchObject({ title: 'Trek crew', kind: 'group', participantIds: ['tga:6002'] })
       expect(inbox.contacts).toEqual(
         expect.arrayContaining([
-          { id: 'tga:5001', name: 'Asha Rao', network: 'telegram', handle: '@asha' },
-          { id: 'tga:6002', name: 'Kabir', network: 'telegram', handle: '@kabir' },
+          expect.objectContaining({ id: 'tga:5001', name: 'Asha Rao', network: 'telegram', handle: '@asha' }),
+          expect.objectContaining({ id: 'tga:6002', name: 'Kabir', network: 'telegram', handle: '@kabir' }),
         ]),
       )
       const byId = Object.fromEntries(inbox.messages.map((m: { id: string }) => [m.id, m]))
@@ -199,6 +203,92 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(after.threads).toEqual([])
       expect(after.accounts).toEqual([])
       expect(await server.database.col.messages.countDocuments({ id: /^tga:/ })).toBe(0)
+    })
+
+    it('brings in replies, reactions, pictures and older messages; sends replies, reactions and typing', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('tg-extras@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00003' })
+      expect((await browser.post('/api/link/telegram/verify', { code: '12345' })).json).toEqual({ status: 'connected' })
+
+      // Quotes, reactions and pictures come in with the first sync.
+      const inbox = await waitFor(async () => {
+        const json = (await browser.get('/api/inbox')).json
+        if (!json.contacts.find((c: { id: string; avatarUrl?: string }) => c.id === 'tga:5001')?.avatarUrl) throw new Error('No picture yet')
+        return json
+      })
+      const messages = byId(inbox.messages)
+      expect(messages['tga:5001:12'].replyTo).toEqual({ id: 'tga:5001:11', senderId: 'me', body: 'Yes! See you at 9' })
+      expect(messages['tga:5001:11'].reactions).toEqual([{ emoji: '👍', count: 1, mine: false }])
+
+      // Pictures are served to their owner only.
+      const { avatarUrl } = inbox.contacts.find((c: { id: string }) => c.id === 'tga:5001')
+      expect(avatarUrl).toMatch(/^\/api\/avatars\/tga%3A5001\?v=\w+$/)
+      const picture = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(picture.headers.get('content-type')).toBe('image/jpeg')
+      expect(Buffer.from(await picture.arrayBuffer())).toEqual(PIXEL)
+      expect((await fetch(server.url + avatarUrl)).status).toBe(401)
+      const stranger = await newUser('tg-extras-stranger@example.com')
+      expect((await fetch(server.url + avatarUrl, { headers: { Cookie: stranger.cookie } })).status).toBe(404)
+
+      // Earlier messages, fetched from Telegram.
+      const older = await browser.get(`/api/threads/${enc('tga:5001')}/messages?before=${enc('tga:5001:11')}`)
+      expect(older.json.messages.map((m: { body: string }) => m.body)).toEqual(['Rajmachi, the long one', 'Which trail are we doing?'])
+      expect(older.json.hasMore).toBe(false)
+
+      // Replying quotes the message.
+      const events = await browser.events()
+      const reply = await browser.post(`/api/threads/${enc('tga:5001')}/messages`, { body: 'Yes, Saturday', replyToId: 'tga:5001:12' })
+      expect(reply.json.message.replyTo).toEqual({ id: 'tga:5001:12', senderId: 'tga:5001', body: 'Are we still on for Saturday?' })
+      expect(tg.state.sent.at(-1)).toEqual({ chatId: '5001', text: 'Yes, Saturday', replyToId: 12 })
+
+      // Reacting, and what Telegram doesn't allow.
+      const react = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: 'tga:5001:12', emoji: '❤️' })
+      expect(react.json.message.reactions).toEqual([{ emoji: '❤️', count: 1, mine: true }])
+      expect(tg.state.reactions.at(-1)).toEqual({ chatId: '5001', messageId: 12, emoji: '❤️' })
+      const refused = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: 'tga:5001:12', emoji: '🦄' })
+      expect(refused.json.error).toMatch(/doesn't allow/)
+      const notEmoji = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: 'tga:5001:12', emoji: 'definitely not an emoji' })
+      expect(notEmoji.status).toBe(400)
+      tg.emit({ type: 'reactions', chatId: '5001', messageId: 11, reactions: [{ emoji: '🔥', count: 2, mine: false }] })
+      await events.next((e) => e.type === 'message.updated' && e.message.id === 'tga:5001:11' && e.message.reactions?.[0]?.emoji === '🔥')
+
+      // Typing, both ways.
+      await browser.post(`/api/threads/${enc('tga:5001')}/typing`, { typing: true })
+      expect(tg.state.typing.at(-1)).toEqual({ chatId: '5001', typing: true })
+      tg.emit({ type: 'typing', chatId: '5001', senderId: '5001', active: true })
+      await events.next((e) => e.type === 'typing' && e.threadId === 'tga:5001' && e.senderId === 'tga:5001' && e.active)
+
+      events.close()
+      await browser.delete('/api/link/telegram')
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      expect(await server.database.col.avatars.countDocuments({ userId })).toBe(0)
+    })
+
+    it('links by QR code, then the two-step password', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = true
+      const browser = await newUser('tg-qr@example.com')
+      const events = await browser.events()
+
+      const qr = await browser.post('/api/link/telegram/qr')
+      expect(qr.json.qr).toMatch(/^data:image\/png;base64,/)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'linking', step: 'qr' })
+
+      tg.state.scanQr()
+      await events.next((e) => e.type === 'account.updated' && e.account.step === 'password')
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ step: 'password', hint: 'first pet' })
+      expect((await browser.post('/api/link/telegram/password', { password: 'nope' })).status).toBe(400)
+      expect((await browser.post('/api/link/telegram/password', { password: 'hunter2' })).json).toEqual({ status: 'connected' })
+      await events.next((e) => e.type === 'reloaded')
+      events.close()
+      await browser.delete('/api/link/telegram')
+
+      // Cancelling a QR sign-in midway leaves nothing behind.
+      await browser.post('/api/link/telegram/qr')
+      await browser.delete('/api/link/telegram')
+      expect((await browser.get('/api/accounts')).json.accounts).toEqual([])
     })
 
     it('notices a session ended from Telegram when restarting', async () => {
@@ -297,6 +387,115 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(reopened.loggedOut).toBe(true)
       expect((await browser.get('/api/inbox')).json).toMatchObject({ threads: [], accounts: [] })
       expect(await server.database.col.waAuth.countDocuments({})).toBe(0)
+    })
+
+    /** Links WhatsApp the way a phone would, and returns the connected socket. */
+    async function linkWhatsApp(browser: Browser): Promise<FakeWaSocket> {
+      await browser.post('/api/link/whatsapp', { phone: '+91 98765 43210' })
+      const socket = server.sockets.at(-1)!
+      socket.authState.creds.registered = true
+      socket.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() },
+      })
+      const linked = await waitFor(() => {
+        const s = server.sockets.at(-1)!
+        if (s === socket) throw new Error('Not reconnected yet')
+        return s
+      })
+      linked.user = { id: '919876543210:4@s.whatsapp.net' }
+      linked.emit('connection.update', { connection: 'open' })
+      await waitFor(async () => expect((await browser.get('/api/accounts')).json.accounts[0]?.status).toBe('connected'))
+      return linked
+    }
+
+    it('handles replies, reactions, typing, pictures and older messages', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const thread = enc(`wa:${RAVI}`)
+      const browser = await newUser('wa-extras@example.com')
+      const socket = await linkWhatsApp(browser)
+      const events = await browser.events()
+      const ts = Math.floor(Date.now() / 1000)
+
+      socket.emit('messaging-history.set', {
+        chats: [{ id: RAVI }],
+        contacts: [{ id: RAVI, name: 'Ravi Kumar' }],
+        messages: [
+          // Newest first, as WhatsApp sends them: the reaction and the reply come before what they point at.
+          { key: { remoteJid: RAVI, fromMe: false, id: 'R1' }, message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, text: '🙏' } }, messageTimestamp: ts - 40 },
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: 'M1' },
+            message: {
+              extendedTextMessage: {
+                text: 'Got it, thanks!',
+                contextInfo: { stanzaId: 'M0', participant: '919876543210@s.whatsapp.net', quotedMessage: { conversation: 'Sent it Monday' } },
+              },
+            },
+            messageTimestamp: ts - 50,
+          },
+          { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, message: { conversation: 'Sent it Monday' }, messageTimestamp: ts - 100, status: 4 },
+        ],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      await events.next((e) => e.type === 'reloaded')
+
+      const inbox = await waitFor(async () => {
+        const json = (await browser.get('/api/inbox')).json
+        if (!json.contacts.find((c: { id: string; avatarUrl?: string }) => c.id === `wa:${RAVI}`)?.avatarUrl) throw new Error('No picture yet')
+        return json
+      })
+      const messages = byId(inbox.messages)
+      expect(messages[`wa:${RAVI}:M1`].replyTo).toEqual({ id: `wa:${RAVI}:M0`, senderId: 'me', body: 'Sent it Monday' })
+      expect(messages[`wa:${RAVI}:M0`].reactions).toEqual([{ emoji: '🙏', count: 1, mine: false }])
+      expect(messages[`wa:${RAVI}:R1`]).toBeUndefined()
+      const { avatarUrl } = inbox.contacts.find((c: { id: string }) => c.id === `wa:${RAVI}`)
+      const picture = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(picture.headers.get('content-type')).toBe('image/png')
+
+      // Replying and reacting.
+      const reply = await browser.post(`/api/threads/${thread}/messages`, { body: 'Great!', replyToId: `wa:${RAVI}:M1` })
+      expect(reply.json.message.replyTo).toEqual({ id: `wa:${RAVI}:M1`, senderId: `wa:${RAVI}`, body: 'Got it, thanks!' })
+      expect(socket.sent.at(-1)).toEqual({ jid: RAVI, text: 'Great!', quotedId: 'M1' })
+      const react = await browser.post(`/api/threads/${thread}/reactions`, { messageId: `wa:${RAVI}:M1`, emoji: '👍' })
+      expect(react.json.message.reactions).toEqual([{ emoji: '👍', count: 1, mine: true }])
+      expect(socket.reactions.at(-1)).toEqual({ jid: RAVI, emoji: '👍', targetId: 'M1' })
+      const unreact = await browser.post(`/api/threads/${thread}/reactions`, { messageId: `wa:${RAVI}:M1`, emoji: null })
+      expect(unreact.json.message.reactions).toBeUndefined()
+      expect(socket.reactions.at(-1)).toEqual({ jid: RAVI, emoji: '', targetId: 'M1' })
+
+      // Ravi reacts to my reply, live.
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'R2' }, message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'SENT1' }, text: '❤️' } }, messageTimestamp: ts }],
+      } as never)
+      await events.next((e) => e.type === 'message.updated' && e.message.id === `wa:${RAVI}:SENT1` && e.message.reactions?.[0]?.emoji === '❤️')
+
+      // Typing, both ways.
+      await browser.post(`/api/threads/${thread}/typing`, { typing: true })
+      expect(socket.presence).toContainEqual({ type: 'composing', jid: RAVI })
+      socket.emit('presence.update', { id: RAVI, presences: { [RAVI]: { lastKnownPresence: 'composing' } } })
+      await events.next((e) => e.type === 'typing' && e.senderId === `wa:${RAVI}` && e.active)
+
+      // Older messages: none stored, so the phone is asked; they arrive as new messages.
+      const first = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:M0`)}`)
+      expect(first.json).toEqual({ messages: [], hasMore: true })
+      expect(socket.historyRequests).toEqual([{ count: 50, oldestId: 'M0' }])
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'OLD1' }, message: { conversation: 'Parcel booked?' }, messageTimestamp: ts - 86400 }],
+        syncType: 6,
+      } as never)
+      await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:OLD1`)
+      const second = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:M0`)}`)
+      expect(second.json.messages.map((m: { body: string }) => m.body)).toEqual(['Parcel booked?'])
+      // Nothing older on the phone either: asking from the same message again ends it.
+      const third = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:OLD1`)}`)
+      expect(third.json).toEqual({ messages: [], hasMore: false })
+
+      events.close()
+      await browser.delete('/api/link/whatsapp')
     })
 
     it('explains when linking fails', async () => {

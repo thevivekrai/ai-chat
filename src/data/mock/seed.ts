@@ -1,4 +1,4 @@
-import type { Attachment, Contact, InboxSnapshot, Message, ScheduledMessage, Thread } from '../types'
+import type { Attachment, Contact, InboxSnapshot, Message, Reaction, ScheduledMessage, Thread } from '../types'
 import { ME_ID } from '../types'
 import { DAY, HOUR, MINUTE, addDays, atTime, weekdayName } from '@/lib/time'
 
@@ -13,7 +13,7 @@ import { DAY, HOUR, MINUTE, addDays, atTime, weekdayName } from '@/lib/time'
  */
 
 /** Bump when the seed changes so data stored by an older version is replaced. */
-export const SEED_VERSION = 4
+export const SEED_VERSION = 5
 
 const ME_NAME = 'Aarav'
 
@@ -67,6 +67,9 @@ interface SeedMessage {
   ago: number
   body: string
   attachments?: Attachment[]
+  /** Index of the message in the same chat that this one replies to. */
+  replyTo?: number
+  reactions?: Reaction[]
 }
 
 interface SeedThread extends Omit<Thread, 'doneAt' | 'snoozedUntil' | 'unreadCount'> {
@@ -147,9 +150,9 @@ function buildThreads(now: number): SeedThread[] {
       participantIds: ['c-divya'],
       messages: [
         msg('c-divya', ago(6, 3), 'Aarav! Kab mil rahe hain? Bahut din ho gaye yaar 😅'),
-        msg(me, ago(6, 1), 'Haan yaar, is week pakka plan karte hain ☕'),
+        { ...msg(me, ago(6, 1), 'Haan yaar, is week pakka plan karte hain ☕'), reactions: [{ emoji: '❤️', count: 1, mine: false }] },
         msg('c-divya', ago(1, 5), 'Sunday ko movie chalein? Shaam 7 baje wala show, tickets main book kar rahi hoon 🎬'),
-        msg('c-divya', ago(1, 4, 58), 'Bata de jaldi, sirf 4 seats bachi hain 😬'),
+        { ...msg('c-divya', ago(1, 4, 58), 'Bata de jaldi, sirf 4 seats bachi hain 😬'), replyTo: 2 },
       ],
     },
 
@@ -222,16 +225,15 @@ function buildThreads(now: number): SeedThread[] {
         msg('c-arjun', ago(2, 2, 28), 'Same day is easier, next day sab ka kuch na kuch hai'),
         msg('c-meera', ago(2, 2, 27), 'Same day 👍'),
         msg('c-kabir', ago(2, 2, 25), 'Same day works'),
-        msg(
-          'c-arjun',
-          ago(1, 6),
-          `Ok final plan: ${wd(3)} 5 AM from Dadar, breakfast at Lonavala, trek starts around 8`,
-        ),
+        {
+          ...msg('c-arjun', ago(1, 6), `Ok final plan: ${wd(3)} 5 AM from Dadar, breakfast at Lonavala, trek starts around 8`),
+          reactions: [{ emoji: '👍', count: 4, mine: false }],
+        },
         msg('c-sneha', ago(1, 5, 58), "Who's getting snacks? I can do theplas 😋"),
         msg('c-dev', ago(1, 5, 57), "I'll get energy bars + electrolytes"),
         msg('c-meera', ago(1, 5, 55), 'First aid kit mere paas hai'),
-        msg('c-kabir', ago(1, 5, 50), "I'll bring the speaker 🔊"),
-        msg('c-meera', ago(1, 5, 49), 'Kabir NO 😂'),
+        { ...msg('c-kabir', ago(1, 5, 50), "I'll bring the speaker 🔊"), reactions: [{ emoji: '😂', count: 3, mine: false }] },
+        { ...msg('c-meera', ago(1, 5, 49), 'Kabir NO 😂'), replyTo: 19 },
         msg('c-kabir', ago(1, 5, 48), 'Kabir YES'),
         msg(
           'c-arjun',
@@ -407,6 +409,7 @@ export function buildSeed(now: number = Date.now()): InboxSnapshot {
   for (const { messages: seedMessages, unread = 0, ...thread } of buildThreads(now)) {
     threads.push({ ...thread, unreadCount: unread, doneAt: null, snoozedUntil: null })
     seedMessages.forEach((m, i) => {
+      const quoted = m.replyTo === undefined ? undefined : seedMessages[m.replyTo]
       messages.push({
         id: `${thread.id}-${i + 1}`,
         threadId: thread.id,
@@ -415,6 +418,8 @@ export function buildSeed(now: number = Date.now()): InboxSnapshot {
         sentAt: new Date(now - m.ago).toISOString(),
         ...(m.from === ME_ID ? { status: 'read' as const } : {}),
         ...(m.attachments ? { attachments: m.attachments } : {}),
+        ...(quoted ? { replyTo: { id: `${thread.id}-${m.replyTo! + 1}`, senderId: quoted.from, body: quoted.body } } : {}),
+        ...(m.reactions ? { reactions: m.reactions } : {}),
       })
     })
   }

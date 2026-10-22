@@ -1,10 +1,21 @@
-import { Emitter, type Connector, type ConnectorEvent, type ConnectorSnapshot, type ConnectorStatus } from '../connectors/types'
-import type { Contact, Message, Thread } from '../types'
+import {
+  Emitter,
+  type Connector,
+  type ConnectorEvent,
+  type ConnectorSnapshot,
+  type ConnectorStatus,
+  type OlderMessages,
+  type SendOptions,
+} from '../connectors/types'
+import type { ChatCapabilities, Contact, Message, Thread } from '../types'
 import { ME_ID } from '../types'
 import { isSignedOut, serverApi } from './serverApi'
 import type { LinkedNetwork, PublicAccount, ServerEvent, ServerInbox } from './types'
 
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
+
+/** WhatsApp and Telegram, linked on the server, both do all of it. */
+const LINKED_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: true }
 
 /**
  * Chats from the WhatsApp and Telegram accounts linked on the Sytext server. The server keeps
@@ -22,7 +33,7 @@ export class ServerConnector implements Connector {
   private readonly events = new Emitter<ConnectorEvent>()
   private readonly statusEvents = new Emitter<ConnectorStatus>()
   private readonly accountEvents = new Emitter<PublicAccount[]>()
-  private readonly qrEvents = new Emitter<string>()
+  private readonly qrEvents = new Emitter<{ network: LinkedNetwork; qr: string }>()
   private current: ConnectorStatus = { state: 'connecting' }
   private source: EventSource | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -57,9 +68,13 @@ export class ServerConnector implements Connector {
     return this.accountEvents.on(listener)
   }
 
-  /** Fresh QR codes while linking WhatsApp by QR. */
-  onQr(listener: (qr: string) => void) {
-    return this.qrEvents.on(listener)
+  /** Fresh QR codes while linking by QR. */
+  onQr(listener: (network: LinkedNetwork, qr: string) => void) {
+    return this.qrEvents.on(({ network, qr }) => listener(network, qr))
+  }
+
+  capabilities(): ChatCapabilities {
+    return LINKED_CAPABILITIES
   }
 
   start() {
@@ -88,10 +103,10 @@ export class ServerConnector implements Connector {
     return this.events.on(listener)
   }
 
-  async sendMessage(threadId: string, body: string): Promise<Message> {
+  async sendMessage(threadId: string, body: string, options?: SendOptions): Promise<Message> {
     this.inFlight.set(threadId, (this.inFlight.get(threadId) ?? 0) + 1)
     try {
-      const { message } = await serverApi.send(threadId, body)
+      const { message } = await serverApi.send(threadId, body, options?.replyToId)
       this.messages.set(message.id, message)
       return message
     } catch (error) {
@@ -106,6 +121,22 @@ export class ServerConnector implements Connector {
         setTimeout(() => this.release(threadId), 0)
       }
     }
+  }
+
+  async react(threadId: string, messageId: string, emoji: string | null): Promise<Message> {
+    const { message } = await this.signedIn(serverApi.react(threadId, messageId, emoji))
+    this.messages.set(message.id, message)
+    return message
+  }
+
+  async setTyping(threadId: string, typing: boolean) {
+    await serverApi.typing(threadId, typing)
+  }
+
+  async loadOlder(threadId: string, beforeId: string): Promise<OlderMessages> {
+    const older = await this.signedIn(serverApi.older(threadId, beforeId))
+    for (const message of older.messages) this.messages.set(message.id, message)
+    return older
   }
 
   async markRead(threadId: string): Promise<Thread | null> {
@@ -192,6 +223,16 @@ export class ServerConnector implements Connector {
     this.onSignedOut()
   }
 
+  /** Passes a request's result on, noticing when the session has ended. */
+  private async signedIn<T>(request: Promise<T>): Promise<T> {
+    try {
+      return await request
+    } catch (error) {
+      if (isSignedOut(error)) this.signedOut()
+      throw error
+    }
+  }
+
   private load(inbox: ServerInbox) {
     this.threads = new Map(inbox.threads.map((t) => [t.id, t]))
     this.messages = new Map(inbox.messages.map((m) => [m.id, m]))
@@ -229,7 +270,10 @@ export class ServerConnector implements Connector {
         this.accountEvents.emit(this.accounts())
         return
       case 'account.qr':
-        this.qrEvents.emit(event.qr)
+        this.qrEvents.emit({ network: event.network, qr: event.qr })
+        return
+      case 'typing':
+        this.events.emit(event)
         return
       case 'reloaded':
         void serverApi

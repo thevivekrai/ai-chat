@@ -1,4 +1,4 @@
-import type { Contact, Message, Thread } from '../types'
+import type { ChatCapabilities, Contact, Message, Thread } from '../types'
 
 /**
  * A connector brings one real account into the inbox: a Telegram bot, a Matrix account (and,
@@ -26,6 +26,7 @@ export type ConnectorEvent =
   | { type: 'message.updated'; message: Message }
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
+  | { type: 'typing'; threadId: string; senderId: string; active: boolean }
   /** Many things changed at once (first sync, rooms joined or left): re-read the snapshot. */
   | { type: 'reloaded' }
 
@@ -47,9 +48,16 @@ export interface Connector {
   start(): void
   /** Stops syncing. The connector can be started again. */
   stop(): void
-  sendMessage(threadId: string, body: string): Promise<Message>
+  sendMessage(threadId: string, body: string, options?: SendOptions): Promise<Message>
   /** Clears the unread count, and tells the network where it can. Resolves with the updated thread. */
   markRead(threadId: string): Promise<Thread | null>
+  /** What this chat supports; connectors that leave this out support none of the extras. */
+  capabilities?(threadId: string): ChatCapabilities
+  /** Sets my reaction to a message, replacing any I had; null removes it. */
+  react?(threadId: string, messageId: string, emoji: string | null): Promise<Message>
+  setTyping?(threadId: string, typing: boolean): Promise<void>
+  /** Messages from before `beforeId`, oldest first. */
+  loadOlder?(threadId: string, beforeId: string): Promise<OlderMessages>
   subscribe(listener: (event: ConnectorEvent) => void): () => void
   status(): ConnectorStatus
   onStatus(listener: (status: ConnectorStatus) => void): () => void
@@ -57,6 +65,17 @@ export interface Connector {
   applyFix?(id: string): Promise<void>
   /** Signs out where that makes sense and deletes everything stored for this account. */
   forget(): Promise<void>
+}
+
+export interface SendOptions {
+  /** The message this one replies to. */
+  replyToId?: string
+}
+
+export interface OlderMessages {
+  messages: Message[]
+  /** False once the start of the chat is reached. */
+  hasMore: boolean
 }
 
 /** Small helper for the listener sets every connector keeps. */

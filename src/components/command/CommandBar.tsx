@@ -37,6 +37,7 @@ import { buildAnswerSources } from '@/store/aiInput'
 import { useClock } from '@/store/clock'
 import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
+import { threadPicture } from '@/store/selectors'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { useUi, type View } from '@/store/ui'
 
@@ -289,7 +290,15 @@ function CommandBody({ close }: { close(): void }) {
                 <Row
                   key={hit.messageId}
                   {...rowProps(resultsStart + i, () => openResult(r))}
-                  icon={<Avatar name={thread.title} seed={thread.id} size="sm" group={thread.kind === 'group'} />}
+                  icon={
+                    <Avatar
+                      name={thread.title}
+                      seed={thread.id}
+                      size="sm"
+                      group={thread.kind === 'group'}
+                      imageUrl={threadPicture(thread, contacts)}
+                    />
+                  }
                   tall
                 >
                   <span className="flex items-center gap-1.5 text-xs text-muted">

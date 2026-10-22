@@ -28,11 +28,12 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
-import type { WhatsAppLinkResult } from '../../src/data/server/types.ts'
-import type { Attachment, Message, MessageStatus } from '../../src/data/types.ts'
+import type { ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
+import type { Attachment, Message, MessageStatus, QuotedMessage } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
+import { createQueue, downloadImage, type Avatars } from '../inbox/avatars.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
 import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
@@ -52,12 +53,21 @@ import type { Accounts } from './accounts.ts'
 /** The parts of a Baileys socket this manager uses; tests pass a fake. */
 export interface WaSocket {
   ev: { on<E extends keyof BaileysEventMap>(event: E, listener: (arg: BaileysEventMap[E]) => void): void }
-  user?: { id: string; name?: string }
+  user?: { id: string; name?: string; lid?: string }
   authState: { creds: AuthenticationCreds }
   requestPairingCode(phoneNumber: string): Promise<string>
-  sendMessage(jid: string, content: { text: string }): Promise<WAMessage | undefined>
+  sendMessage(
+    jid: string,
+    content: { text: string } | { react: { text: string; key: WAMessageKey } },
+    options?: { quoted?: WAMessage },
+  ): Promise<WAMessage | undefined>
   readMessages(keys: WAMessageKey[]): Promise<void>
   groupMetadata(jid: string): Promise<{ subject: string }>
+  sendPresenceUpdate(type: 'composing' | 'paused', jid?: string): Promise<void>
+  presenceSubscribe(jid: string): Promise<void>
+  profilePictureUrl(jid: string, type?: 'preview' | 'image'): Promise<string | undefined>
+  /** Asks the phone for older messages; they arrive later as an on-demand history batch. */
+  fetchMessageHistory(count: number, oldestKey: WAMessageKey, oldestTimestamp: number): Promise<string>
   logout(message?: string): Promise<void>
   end(error: Error | undefined): Promise<void> | void
   updateMediaMessage?(message: WAMessage): Promise<WAMessage>
@@ -206,6 +216,17 @@ function describe(message: proto.IMessage | null | undefined): { body: string; a
   }
 }
 
+/** The reply details WhatsApp attaches to a message that quotes another. */
+function quoteOf(message: proto.IMessage | null | undefined): proto.IContextInfo | null {
+  const content = normalizeMessageContent(message)
+  const type = content && getContentType(content)
+  const inner = type ? (content[type] as { contextInfo?: proto.IContextInfo } | undefined) : undefined
+  return inner && typeof inner === 'object' && inner.contextInfo?.stanzaId ? inner.contextInfo : null
+}
+
+/** How many older messages one "Load earlier" asks for. */
+const OLDER_PAGE = 30
+
 /* ── Manager ─────────────────────────────────────────────────────────────────── */
 
 interface Session {
@@ -219,6 +240,8 @@ interface Session {
   stopped: boolean
   names: Map<string, string>
   groupTitles: Map<string, string>
+  /** Chats whose older history was last asked of the phone, and from which message. */
+  historyAsked: Map<string, string>
 }
 
 type LinkResult = WhatsAppLinkResult
@@ -230,15 +253,17 @@ export interface WhatsAppDeps {
   accounts: Accounts
   hub: Hub
   media: Media | null
+  avatars: Avatars
   createSocket?: CreateWaSocket
   /** How long to wait for WhatsApp to offer a code or QR. */
   linkTimeoutMs?: number
 }
 
 export function createWhatsApp(deps: WhatsAppDeps) {
-  const { col, sealer, store, accounts, hub, media } = deps
+  const { col, sealer, store, accounts, hub, media, avatars } = deps
   const createSocket = deps.createSocket ?? createBaileysSocket
   const sessions = new Map<string, Session>()
+  const pictures = createQueue()
   const keyOf = (userId: ObjectId) => userId.toHexString()
   const publish = (s: Session, event: Parameters<Hub['publish']>[1]) => hub.publish(keyOf(s.userId), event)
 
@@ -260,10 +285,15 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     s.socket = socket
     socket.ev.on('creds.update', () => void s.auth.saveCreds())
     socket.ev.on('connection.update', (update) => void onConnection(s, socket, update).catch(report))
-    socket.ev.on('messaging-history.set', (h) => void onHistory(s, h.chats, h.contacts, h.messages).catch(report))
-    socket.ev.on('messages.upsert', ({ messages, type }) => {
-      for (const m of messages) void onMessage(s, m, type === 'notify').catch(report)
+    socket.ev.on('messaging-history.set', (h) => {
+      // Older messages fetched for "Load earlier" go straight to the open chat.
+      const requested = h.syncType === proto.HistorySync.HistorySyncType.ON_DEMAND
+      void onHistory(s, h.chats, h.contacts, h.messages, requested).catch(report)
     })
+    socket.ev.on('messages.upsert', ({ messages, type }) => {
+      for (const m of messages) void onMessage(s, m, type === 'notify' ? 'live' : 'history').catch(report)
+    })
+    socket.ev.on('presence.update', (update) => void onPresence(s, update).catch(report))
     socket.ev.on('messages.update', (updates) => {
       for (const u of updates) void onMessageUpdate(s, u.key, u.update).catch(report)
     })
@@ -372,6 +402,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       title = nameFor(s, chatJid)
     }
     const existing = await store.thread(s.userId, `wa:${chatJid}`)
+    if (!existing) fetchPicture(s, chatJid)
     return store.upsertThread(s.userId, {
       id: `wa:${chatJid}`,
       network: 'whatsapp',
@@ -383,11 +414,80 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     })
   }
 
-  async function onMessage(s: Session, msg: WAMessage, live: boolean) {
+  /** Copies a person's or group's picture to the server, in the background. */
+  function fetchPicture(s: Session, jid: string) {
+    const id = `wa:${jid}`
+    pictures.add(`${keyOf(s.userId)}:${id}`, async () => {
+      if (s.stopped || !s.socket || (await avatars.fresh(s.userId, id))) return
+      // WhatsApp answers "not found" for no picture, and for pictures hidden by privacy settings.
+      const link = await s.socket.profilePictureUrl(jid, 'preview').catch(() => undefined)
+      const image = link ? await downloadImage(link).catch(() => null) : null
+      if (s.stopped) return
+      const url = await avatars.save(s.userId, id, image)
+      if (!url) return
+      if (isJidGroup(jid)) {
+        const thread = await store.setThreadAvatar(s.userId, id, url)
+        if (thread) publish(s, { type: 'thread.updated', thread })
+      } else {
+        // The picture can be ready before the contact is: make sure there's one to put it on.
+        if (!(await store.contact(s.userId, id))) await upsertContact(s, jid)
+        const contact = await store.setContactAvatar(s.userId, id, url)
+        if (contact) publish(s, { type: 'contact.updated', contact })
+      }
+    })
+  }
+
+  /** Typing ("composing") and recording show as typing; anything else ends it. */
+  async function onPresence(s: Session, { id, presences }: BaileysEventMap['presence.update']) {
+    if (!isChatJid(id)) return
+    const threadId = `wa:${canonicalJid(id)}`
+    if (!(await store.thread(s.userId, threadId))) return
+    for (const [participant, presence] of Object.entries(presences)) {
+      const senderId = senderIdOf(s, participant)
+      if (senderId === 'me') continue
+      const active = presence.lastKnownPresence === 'composing' || presence.lastKnownPresence === 'recording'
+      publish(s, { type: 'typing', threadId, senderId, active })
+    }
+  }
+
+  /** Who a jid is in this account's chats: "me", or a contact id. */
+  function senderIdOf(s: Session, jid: string): string {
+    const me = s.socket?.user
+    const mine = [me?.id, me?.lid].filter(Boolean).map((j) => jidNormalizedUser(j!))
+    const canonical = canonicalJid(jid)
+    return mine.includes(canonical) ? 'me' : `wa:${canonical}`
+  }
+
+  /** What a reply quotes: from the stored message when there is one, else from WhatsApp's copy. */
+  async function quotedFor(s: Session, chatJid: string, context: proto.IContextInfo): Promise<QuotedMessage> {
+    const id = `wa:${chatJid}:${context.stanzaId}`
+    const stored = await store.message(s.userId, id)
+    if (stored) return { id, senderId: stored.senderId, body: stored.body || stored.attachments?.[0]?.name || '' }
+    const senderId = context.participant ? senderIdOf(s, context.participant) : isJidGroup(chatJid) ? 'unknown' : `wa:${chatJid}`
+    const quoted = describe(context.quotedMessage)
+    return { id, senderId, body: quoted?.body || quoted?.attachments?.[0]?.name || '' }
+  }
+
+  /**
+   * A message, as it arrives: `live` ones count as unread; `history` ones are an initial sync;
+   * `requested` ones are older messages the user asked for.
+   */
+  async function onMessage(s: Session, msg: WAMessage, mode: 'live' | 'history' | 'requested') {
+    const live = mode === 'live'
     const remote = msg.key.remoteJid
     if (!isChatJid(remote)) return
     const chatJid = canonicalJid(remote, msg.key.remoteJidAlt)
     const content = normalizeMessageContent(msg.message)
+
+    // A reaction points at the message it reacts to; an empty one takes it back.
+    const reaction = content?.reactionMessage
+    if (reaction?.key?.id) {
+      const group = isJidGroup(chatJid)
+      const who = msg.key.fromMe ? 'me' : senderIdOf(s, group ? (msg.key.participant ?? remote) : remote)
+      const updated = await store.setReaction(s.userId, `wa:${chatJid}:${reaction.key.id}`, who, reaction.text || null)
+      if (updated) publish(s, { type: 'message.updated', message: updated })
+      return
+    }
 
     // Edits and deletions arrive as protocol messages pointing at the original.
     const protocol = content?.protocolMessage
@@ -414,7 +514,11 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
     const sentAt = new Date((toNumber(msg.messageTimestamp) || Date.now() / 1000) * 1000)
     const thread = await ensureThread(s, chatJid, sentAt)
-    if (senderJid && group) await store.addParticipant(s.userId, thread.id, `wa:${senderJid}`)
+    if (senderJid && group) {
+      await store.addParticipant(s.userId, thread.id, `wa:${senderJid}`)
+      fetchPicture(s, senderJid)
+    }
+    const context = quoteOf(msg.message)
 
     const message: StoredMessage = {
       id: `wa:${chatJid}:${msg.key.id}`,
@@ -424,6 +528,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       sentAt: sentAt.toISOString(),
       ...(fromMe ? { status: STATUS[msg.status ?? 2] ?? 'sent' } : {}),
       ...(parts.attachments ? { attachments: parts.attachments } : {}),
+      ...(context ? { replyTo: await quotedFor(s, chatJid, context) } : {}),
       ref: { key: { remoteJid: remote, fromMe, id: msg.key.id, participant: msg.key.participant ?? undefined } },
     }
     if (!(await store.addMessage(s.userId, message))) return
@@ -507,7 +612,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     }
   }
 
-  async function onHistory(s: Session, chats: WaChat[], contacts: WaContact[], messages: WAMessage[]) {
+  async function onHistory(s: Session, chats: WaChat[], contacts: WaContact[], messages: WAMessage[], requested = false) {
     for (const c of contacts) {
       const name = c.name || c.notify || c.verifiedName
       if (c.id && name) s.names.set(canonicalJid(c.id, c.phoneNumber), name)
@@ -515,17 +620,19 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     for (const chat of chats) {
       if (chat.name && chat.id && isJidGroup(chat.id)) s.groupTitles.set(chat.id, chat.name)
     }
-    // Only the latest few messages per chat: enough to see where each conversation stands.
+    // Only the latest few messages per chat: enough to see where each conversation stands. They're
+    // stored oldest first, so replies and reactions find the messages they point at.
     const perChat = new Map<string, number>()
     const recent = [...messages].sort((a, b) => toNumber(b.messageTimestamp) - toNumber(a.messageTimestamp))
-    for (const m of recent) {
+    const picked = recent.filter((m) => {
       const jid = m.key.remoteJid
-      if (!isChatJid(jid)) continue
+      if (!isChatJid(jid)) return false
       const n = perChat.get(jid) ?? 0
-      if (n >= 40) continue
       perChat.set(jid, n + 1)
-      await onMessage(s, m, false)
-    }
+      return n < 40
+    })
+    for (const m of picked.reverse()) await onMessage(s, m, requested ? 'requested' : 'history')
+    if (requested) return
     for (const chat of chats) {
       if (!isChatJid(chat.id)) continue
       const jid = canonicalJid(chat.id, chat.pnJid)
@@ -559,6 +666,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       stopped: false,
       names: new Map(),
       groupTitles: new Map(),
+      historyAsked: new Map(),
     }
     sessions.set(keyOf(userId), s)
     await connect(s)
@@ -567,6 +675,12 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
   function report(error: unknown) {
     console.error('[whatsapp]', error instanceof Error ? error.message : error)
+  }
+
+  function connected(userId: ObjectId): WaSocket {
+    const s = sessions.get(keyOf(userId))
+    if (!s?.socket || !s.opened) throw new HttpError(409, 'WhatsApp is not connected right now.')
+    return s.socket
   }
 
   return {
@@ -587,6 +701,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       await col.waAuth.deleteMany({ userId })
       await accounts.set(userId, 'whatsapp', {
         status: 'linking',
+        step: request.method,
         ...(phone ? { label: `+${phone}` } : {}),
         detail: request.method === 'code' ? 'Waiting for you to enter the code in WhatsApp…' : 'Waiting for you to scan the QR code…',
       })
@@ -613,17 +728,24 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       const s = sessions.get(keyOf(userId))
       if (s?.socket && s.opened) await s.socket.logout().catch(() => undefined) // Removes the device from the phone too.
       if (s) await stop(s)
+      await pictures.settled()
       await col.waAuth.deleteMany({ userId })
       await store.forgetNetwork(userId, 'wa:')
       await accounts.remove(userId, 'whatsapp')
       hub.publish(keyOf(userId), { type: 'reloaded' })
     },
 
-    async send(userId: ObjectId, threadId: string, body: string): Promise<Message> {
-      const s = sessions.get(keyOf(userId))
-      if (!s?.socket || !s.opened) throw new HttpError(409, 'WhatsApp is not connected right now.')
+    async send(userId: ObjectId, threadId: string, body: string, replyToId?: string): Promise<Message> {
+      const socket = connected(userId)
       const jid = threadId.slice('wa:'.length)
-      const sent = await s.socket.sendMessage(jid, { text: body })
+      const quoted = replyToId ? await store.message(userId, replyToId) : null
+      const quotedKey = (quoted?.ref as { key?: WAMessageKey } | undefined)?.key
+      const sent = await socket.sendMessage(
+        jid,
+        { text: body },
+        // WhatsApp shows the quote from the message given here, so it needs the original's text.
+        quotedKey ? { quoted: { key: quotedKey, message: { conversation: quoted!.body } } } : undefined,
+      )
       if (!sent?.key.id) throw new HttpError(502, 'WhatsApp didn\'t accept the message.')
       const message: StoredMessage = {
         id: `wa:${jid}:${sent.key.id}`,
@@ -632,6 +754,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
         body,
         sentAt: new Date().toISOString(),
         status: 'sent',
+        ...(quoted ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
         ref: { key: { remoteJid: jid, fromMe: true, id: sent.key.id } },
       }
       await store.addMessage(userId, message)
@@ -640,10 +763,50 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       return wire
     },
 
+    async react(userId: ObjectId, threadId: string, messageId: string, emoji: string | null): Promise<Message> {
+      const socket = connected(userId)
+      const target = await store.message(userId, messageId)
+      const key = (target?.ref as { key?: WAMessageKey } | undefined)?.key
+      if (!target || target.threadId !== threadId || !key) throw new HttpError(404, 'That message is gone.')
+      await socket.sendMessage(threadId.slice('wa:'.length), { react: { text: emoji ?? '', key } })
+      const updated = await store.setReaction(userId, messageId, 'me', emoji)
+      if (!updated) throw new HttpError(404, 'That message is gone.')
+      return updated
+    },
+
+    async setTyping(userId: ObjectId, threadId: string, typing: boolean) {
+      const s = sessions.get(keyOf(userId))
+      if (!s?.socket || !s.opened) return
+      const jid = threadId.slice('wa:'.length)
+      await s.socket.presenceSubscribe(jid).catch(() => undefined)
+      await s.socket.sendPresenceUpdate(typing ? 'composing' : 'paused', jid).catch(report)
+    },
+
+    /**
+     * Older messages: what's stored first. Beyond that, the phone is asked for more; they arrive
+     * a little later as new messages in the chat.
+     */
+    async loadOlder(userId: ObjectId, threadId: string, beforeId: string): Promise<ServerOlderMessages> {
+      const stored = await store.older(userId, threadId, beforeId, OLDER_PAGE)
+      if (stored.hasMore) return stored
+      const s = sessions.get(keyOf(userId))
+      const oldestId = stored.messages[0]?.id ?? beforeId
+      // Asking again from the same message means the phone had nothing more.
+      if (!s?.socket || !s.opened || s.historyAsked.get(threadId) === oldestId) return stored
+      const oldest = await store.message(userId, oldestId)
+      const key = (oldest?.ref as { key?: WAMessageKey } | undefined)?.key
+      if (!oldest || !key) return stored
+      s.historyAsked.set(threadId, oldestId)
+      await s.socket.fetchMessageHistory(50, key, Math.floor(Date.parse(oldest.sentAt) / 1000)).catch(report)
+      return { messages: stored.messages, hasMore: true }
+    },
+
     async markRead(userId: ObjectId, threadId: string) {
       await store.setUnread(userId, threadId, 0)
       const s = sessions.get(keyOf(userId))
       if (!s?.socket || !s.opened) return
+      // Opening a chat is when its typing notices start to matter.
+      void s.socket.presenceSubscribe(threadId.slice('wa:'.length)).catch(() => undefined)
       const keys = (await store.recentIncoming(userId, threadId))
         .map((m) => (m.ref as { key?: WAMessageKey } | undefined)?.key)
         .filter((k): k is WAMessageKey => !!k?.id)
@@ -681,6 +844,9 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     },
 
     isConnected: (userId: ObjectId) => !!sessions.get(keyOf(userId))?.opened,
+
+    /** Resolves once queued picture downloads are done (for tests). */
+    picturesIdle: () => pictures.idle(),
   }
 }
 

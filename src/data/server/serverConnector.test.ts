@@ -85,7 +85,15 @@ beforeEach(() => {
       const message: Message = { id: `${RAVI}:SENT1`, threadId: RAVI, senderId: 'me', body: body.body, sentAt: at(0), status: 'sent' }
       return json({ message })
     }
-    if (url.pathname.endsWith('/read')) return json({ ok: true })
+    if (url.pathname.endsWith('/read') || url.pathname.endsWith('/typing')) return json({ ok: true })
+    if (url.pathname.endsWith('/reactions')) {
+      const message: Message = { ...serverInbox().messages[0], reactions: [{ emoji: body.emoji, count: 1, mine: true }] }
+      return json({ message })
+    }
+    if (url.pathname.endsWith('/messages') && method === 'GET') {
+      const older: Message = { id: `${RAVI}:M0`, threadId: RAVI, senderId: RAVI, body: 'Parcel booked?', sentAt: at(60 * 24) }
+      return json({ messages: [older], hasMore: false })
+    }
     return json({ error: 'Not found.' }, 404)
   })
 })
@@ -142,6 +150,25 @@ describe('chats linked on the server', () => {
 
     await api.markRead(RAVI)
     expect(requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/threads/${RAVI}/read` })
+    stop()
+  })
+
+  it('reacts, pages back and passes typing on, for chats that support it', async () => {
+    const { api, events, stream, stop } = await signedIn()
+    expect(api.capabilities(RAVI)).toEqual({ reply: true, react: true, typing: true, history: true })
+
+    const reacted = await api.react(RAVI, `${RAVI}:M1`, '🙏')
+    expect(reacted.reactions).toEqual([{ emoji: '🙏', count: 1, mine: true }])
+    expect(requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/threads/${RAVI}/reactions`, body: { messageId: `${RAVI}:M1`, emoji: '🙏' } })
+
+    const older = await api.loadOlder(RAVI, `${RAVI}:M1`)
+    expect(older).toMatchObject({ hasMore: false, messages: [{ body: 'Parcel booked?' }] })
+    expect(requests.at(-1)).toMatchObject({ method: 'GET', path: `/api/threads/${RAVI}/messages` })
+
+    await api.setTyping(RAVI, true)
+    expect(requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/threads/${RAVI}/typing`, body: { typing: true } })
+    stream.push({ type: 'typing', threadId: RAVI, senderId: RAVI, active: true })
+    expect(events.at(-1)).toEqual({ type: 'typing', threadId: RAVI, senderId: RAVI, active: true })
     stop()
   })
 

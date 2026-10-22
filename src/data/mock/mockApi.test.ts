@@ -26,9 +26,29 @@ describe('mock api', () => {
     unsubscribe()
 
     expect(incoming?.threadId).toBe('rohan')
-    expect(events.map((e) => e.type)).toEqual(['message.created', 'thread.updated'])
+    // They're seen typing first, then the message arrives.
+    expect(events.map((e) => e.type)).toEqual(['typing', 'typing', 'message.created', 'thread.updated'])
+    expect(events[0]).toMatchObject({ type: 'typing', threadId: 'rohan', active: true })
+    expect(events[1]).toMatchObject({ type: 'typing', threadId: 'rohan', active: false })
     const thread = (await api.loadInbox()).threads.find((t) => t.id === 'rohan')
     expect(thread).toMatchObject({ snoozedUntil: null, unreadCount: 3 })
+  })
+
+  it('replies with a quote, and keeps one reaction per person', async () => {
+    const api = await freshApi()
+    const reply = await api.sendMessage('divya', 'Haan, Sunday pakka!', { replyToId: 'divya-3' })
+    expect(reply.replyTo).toMatchObject({ id: 'divya-3', senderId: 'c-divya' })
+
+    const liked = await api.react('divya', 'divya-3', '👍')
+    expect(liked.reactions).toEqual([{ emoji: '👍', count: 1, mine: true }])
+    const loved = await api.react('divya', 'divya-3', '❤️')
+    expect(loved.reactions).toEqual([{ emoji: '❤️', count: 1, mine: true }])
+    const removed = await api.react('divya', 'divya-3', null)
+    expect(removed.reactions).toBeUndefined()
+
+    const seeded = (await api.loadInbox()).messages.find((m) => m.id === 'divya-4')
+    expect(seeded?.replyTo).toMatchObject({ id: 'divya-3', senderId: 'c-divya' })
+    expect(api.capabilities('divya')).toEqual({ reply: true, react: true, typing: true, history: false })
   })
 
   it('sends scheduled messages once they are due', async () => {
