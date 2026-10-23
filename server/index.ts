@@ -4,7 +4,7 @@ import { createGoogleVerifier } from './auth/google.ts'
 import { createSessionTokens } from './auth/tokens.ts'
 import { ConfigError, loadConfig, loadEnvFiles } from './config.ts'
 import { createSealer } from './crypto.ts'
-import { connectDatabase } from './db.ts'
+import { connectDatabase, withoutCredentials } from './db.ts'
 import { createAvatars } from './inbox/avatars.ts'
 import { createInboxStore } from './inbox/store.ts'
 import { createMedia } from './media.ts'
@@ -25,6 +25,7 @@ async function main() {
   if (files.length) console.log(`Read settings from ${files.join(' and ')}`)
   const config = loadConfig()
 
+  console.log(`Connecting to ${withoutCredentials(config.mongoUri)}`)
   const database = await connectDatabase(config.mongoUri)
   console.log(`Using the database "${database.db.databaseName}"`)
   const { col } = database
