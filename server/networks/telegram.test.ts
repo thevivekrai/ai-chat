@@ -49,11 +49,15 @@ describe('reading GramJS objects', () => {
       file: true,
     })
     expect(mediaOf(document([new Api.DocumentAttributeAudio({ voice: true, duration: 3 })], 'audio/ogg'))).toEqual({ body: '🎤 Voice message' })
-    // Stickers: WebP and WebM ones are shown; animated .tgs ones (Lottie) keep their emoji.
+    // Stickers: WebP images, WebM videos and animated .tgs ones (Lottie) are all shown.
     const sticker = [new Api.DocumentAttributeSticker({ alt: '😂', stickerset: new Api.InputStickerSetEmpty() })]
     expect(mediaOf(document(sticker, 'image/webp'))).toEqual({ attachment: { kind: 'sticker', name: '😂 Sticker', mime: 'image/webp' }, file: true })
     expect(mediaOf(document(sticker, 'video/webm'))).toEqual({ attachment: { kind: 'sticker', name: '😂 Sticker', mime: 'video/webm' }, file: true })
-    expect(mediaOf(document(sticker, 'application/x-tgsticker'))).toEqual({ body: '😂 Sticker' })
+    expect(mediaOf(document(sticker, 'application/x-tgsticker'))).toEqual({
+      attachment: { kind: 'sticker', name: '😂 Sticker', mime: 'application/x-tgsticker' },
+      file: true,
+    })
+    expect(mediaOf(document(sticker, 'application/unknown-sticker'))).toEqual({ body: '😂 Sticker' })
     expect(mediaOf(message(new Api.MessageMediaGeo({ geo: new Api.GeoPointEmpty() })))).toEqual({ body: '📍 Location' })
     expect(mediaOf(message())).toBeUndefined()
   })

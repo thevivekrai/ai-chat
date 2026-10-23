@@ -113,6 +113,9 @@ export class FakeWaSocket implements WaSocket {
   pictures = new Set(['919812345678@s.whatsapp.net'])
   /** Private id (LID) → phone-number id, as WhatsApp's key store on the device has them. */
   lids = new Map<string, string>()
+  /** Messages the phone has, by id: it sends one again when asked (requestPlaceholderResend). */
+  phone = new Map<string, WAMessage>()
+  resendRequests: WAMessageKey[] = []
   signalRepository = {
     lidMapping: {
       getPNForLID: async (lid: string) => this.lids.get(lid) ?? null,
@@ -179,6 +182,13 @@ export class FakeWaSocket implements WaSocket {
     return `data:image/png;base64,${PIXEL.toString('base64')}`
   }
 
+  async requestPlaceholderResend(key: WAMessageKey) {
+    this.resendRequests.push(key)
+    const message = this.phone.get(key.id!)
+    if (message) setTimeout(() => this.emit('messages.upsert', { type: 'notify', messages: [message] } as never), 5)
+    return 'resend-request'
+  }
+
   async fetchMessageHistory(count: number, oldestKey: WAMessageKey) {
     this.historyRequests.push({ count, oldestId: oldestKey.id! })
     return 'history-request'
@@ -235,6 +245,16 @@ export function fakeTelegram() {
     { id: 9, chat: asha, out: true, text: 'Rajmachi, the long one', date: now - 86500 },
   ]
 
+  const trekPhoto: TgMessage = {
+    id: 7,
+    chat: trek,
+    sender: { id: '6002', kind: 'direct' as const, name: 'Kabir', handle: '@kabir' },
+    out: false,
+    text: '',
+    date: now - 3600,
+    media: { attachment: { kind: 'image' as const, name: 'Photo', mime: 'image/jpeg' }, file: true },
+  }
+
   const create: CreateTgClient = (session) => {
     state.sessions.push(session)
     return {
@@ -284,19 +304,10 @@ export function fakeTelegram() {
           // The first sync gets the latest two; earlier ones come when asked for.
           return beforeId ? ashaMessages.filter((m) => m.id < beforeId).slice(0, limit) : ashaMessages.slice(0, 2)
         }
-        return [
-          {
-            id: 7,
-            chat: trek,
-            sender: { id: '6002', kind: 'direct' as const, name: 'Kabir', handle: '@kabir' },
-            out: false,
-            text: '',
-            date: now - 3600,
-            media: { attachment: { kind: 'image' as const, name: 'Photo', mime: 'image/jpeg' }, file: true },
-          },
-        ]
+        return [trekPhoto]
       },
       async message(chatId, id) {
+        if (chatId === trek.id) return id === trekPhoto.id ? trekPhoto : null
         return chatId === asha.id ? (ashaMessages.find((m) => m.id === id) ?? null) : null
       },
       async send(chatId, text, replyToId) {
@@ -389,6 +400,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       avatars,
       files,
       downloadMedia: downloadFakeMedia,
+      filesRepairDelayMs: 50,
       createSocket: (auth) => {
         const socket = new FakeWaSocket(auth)
         sockets.push(socket)
