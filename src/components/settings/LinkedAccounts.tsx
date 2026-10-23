@@ -74,10 +74,36 @@ function WhereChatsAreKept() {
 }
 
 /**
- * Shown when the app can't find its server: it was published as a static site (only the app's
- * files are online), or, in development, the API isn't running. Says what to change.
+ * Shown when accounts aren't available: the site was published without its server (only the app's
+ * files are online), or the server is running but can't reach its database. Says what to change.
  */
 export function ServerMissing() {
+  const problem = useSession((s) => s.serverProblem)
+  if (problem === 'database') {
+    return (
+      <Card>
+        <CardHeader icon={<LinkIcons />} title="Waiting for the database">
+          The Sytext server is running, but it can't reach its database, so signing in and linking WhatsApp and Telegram
+          are unavailable. It keeps trying: once the database answers, reload this page and they're back.
+        </CardHeader>
+        <div className="mt-3 space-y-2 border-t border-line pt-3 text-xs leading-relaxed text-muted">
+          <p>If this is your site, the server's log says why. With MongoDB Atlas it's usually one of:</p>
+          <ul className="list-disc space-y-1 pl-5 marker:text-faint">
+            <li>
+              <b className="font-medium text-fg">Network Access</b> doesn't let the server in. Add{' '}
+              <Code>0.0.0.0/0</Code> there, since a host like Render has no fixed address.
+            </li>
+            <li>
+              The cluster is <b className="font-medium text-fg">paused</b> (Clusters → Resume).
+            </li>
+            <li>
+              <Code>MONGODB_URI</Code> names a cluster or user that no longer exists.
+            </li>
+          </ul>
+        </div>
+      </Card>
+    )
+  }
   return (
     <Card>
       <CardHeader icon={<LinkIcons />} title="Needs the Sytext server">
