@@ -21,6 +21,7 @@ import type { Attachment, ChatCapabilities, Contact, Message, MessageStatus, Quo
 import { ME_ID } from '@/data/types'
 import { cn } from '@/lib/cn'
 import { downloadUrl } from '@/lib/files'
+import { isAnimatedSticker } from '@/lib/lottie'
 import { hashString } from '@/lib/format'
 import { MINUTE, formatClock, formatDayLabel, formatWhen, toMs } from '@/lib/time'
 import { startReply, toggleReaction } from '@/store/actions'
@@ -29,6 +30,7 @@ import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
+import { LottieSticker } from './LottieSticker'
 import { RichText, type Highlight } from './RichText'
 
 const NO_MESSAGES: Message[] = []
@@ -416,9 +418,10 @@ function Attachments({ message, fromMe }: { message: Message; fromMe: boolean })
 function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attachment; fromMe: boolean; sending: boolean }) {
   const [broken, setBroken] = useState(false)
   if (a.kind === 'sticker') {
-    // Animated WebM stickers (Telegram's video stickers) play on a loop; the rest are WebP images.
+    // WebP images; WebM videos (Telegram's video stickers) and Lottie animations play on a loop.
     if (a.url && !broken) {
       const look = 'block size-32 object-contain drop-shadow-sm'
+      if (isAnimatedSticker(a.mime)) return <LottieSticker url={a.url} name={a.name} onFail={() => setBroken(true)} className={look} />
       return a.mime === 'video/webm' ? (
         <video src={a.url} autoPlay loop muted playsInline aria-label={a.name} onError={() => setBroken(true)} className={look} />
       ) : (

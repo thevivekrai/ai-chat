@@ -170,8 +170,8 @@ export function mediaOf(m: Api.Message): TgMessage['media'] {
   if (m.sticker) {
     const name = `${m.file?.emoji ?? ''} Sticker`.trim()
     const mime = m.file?.mimeType
-    // Animated .tgs stickers (Lottie) need Telegram's own player: those are named rather than shown.
-    if (mime !== 'image/webp' && mime !== 'video/webm') return { body: name }
+    // WebP images, WebM videos, and animated .tgs ones (gzipped Lottie) the app plays.
+    if (mime !== 'image/webp' && mime !== 'video/webm' && mime !== 'application/x-tgsticker') return { body: name }
     return { attachment: { kind: 'sticker', name, mime }, file: true }
   }
   if (m.voice) return { body: '🎤 Voice message' }
@@ -540,6 +540,9 @@ interface PendingLogin {
   abort?: AbortController
 }
 
+/** How many old stickers, photos and files without a link are fetched again per connection. */
+const FILES_TO_REPAIR = 40
+
 /** How many older messages one "Load earlier" fetches. */
 const OLDER_PAGE = 30
 
@@ -698,6 +701,8 @@ export function createTelegram(deps: TelegramDeps) {
     const { ref, ...wire } = message
     void ref
     const added = await store.addMessage(s.userId, message)
+    // Already kept, but without a link to its sticker, photo or file (kept before they could be opened).
+    if (!added && message.attachments?.some((a) => a.url)) await addFileLinks(s, message.id, message.body, message.attachments)
     if (!added || !live) return { message: wire, added }
 
     if (!m.out) await store.incrementUnread(s.userId, threadId)
@@ -705,6 +710,26 @@ export function createTelegram(deps: TelegramDeps) {
     if (thread) publish(s, { type: 'thread.updated', thread })
     publish(s, { type: 'message.created', message: wire })
     return { message: wire, added }
+  }
+
+  /** Gives a kept message the link to its sticker, photo or file, if it had none. */
+  async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
+    const stored = await store.message(s.userId, id)
+    if (!stored || stored.attachments?.some((a) => a.url)) return
+    await updateAndPublish(s, id, { body, attachments })
+  }
+
+  /**
+   * Stickers, photos and files kept before they could be opened (a sticker was only named) are
+   * fetched from Telegram again, newest first, and gain their link. Once per connection.
+   */
+  async function repairFiles(s: Session) {
+    for (const m of await store.missingFiles(s.userId, 'tga:', FILES_TO_REPAIR)) {
+      const id = Number(m.ref?.id)
+      if (!id || s.stopped) continue
+      const fresh = await s.client.message(m.threadId.slice('tga:'.length), id).catch(() => null)
+      if (fresh) await saveMessage(s, fresh, { live: false })
+    }
   }
 
   /** A message's attachment, linked so it can be opened when Telegram has it as a file. */
@@ -884,7 +909,9 @@ export function createTelegram(deps: TelegramDeps) {
     }
     const account = await accounts.get(userId, 'telegram')
     if (account?.status !== 'connected') await accounts.set(userId, 'telegram', { status: 'connected' })
-    await sync(start(userId, client))
+    const s = start(userId, client)
+    await sync(s)
+    void repairFiles(s).catch(report)
   }
 
   return {

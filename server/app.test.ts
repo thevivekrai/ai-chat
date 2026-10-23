@@ -831,7 +831,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect((await stranger.raw('GET', image.attachments[0].url)).status).toBe(404)
       expect((await browser.raw('GET', `${image.attachments[0].url.slice(0, -4)}AAAA`)).status).toBe(404)
 
-      // Stickers show as stickers, fetched the same way; Lottie ones (WhatsApp's own player) are named.
+      // Stickers show as stickers, fetched the same way; animated (Lottie) ones too, for the app to play.
       const webp = Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 sticker')
       socket.emit('messages.upsert', {
         type: 'notify',
@@ -852,8 +852,9 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(stickerFile.headers.get('content-type')).toBe('image/webp')
       expect(stickerFile.headers.get('content-disposition')).toMatch(/^inline; filename="Sticker.webp"/)
       const lottie = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:STK2`)).message
-      expect(lottie).toMatchObject({ body: 'Sticker' })
-      expect(lottie.attachments).toBeUndefined()
+      expect(lottie.attachments).toEqual([{ kind: 'sticker', name: 'Sticker', mime: 'application/was', size: '1 KB', url: expect.stringMatching(FILE_LINK) }])
+      // Not an image a browser shows by itself: fetched by the app, which plays it.
+      expect((await browser.raw('GET', lottie.attachments[0].url)).headers.get('content-type')).toBe('application/octet-stream')
 
       // Gone from WhatsApp's servers (and the phone): said so, rather than failing.
       waMedia.delete(pageMedia.documentMessage!.url)
@@ -914,6 +915,80 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect((await stranger.upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(404)
       expect((await new Browser(server.url).upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(401)
       expect(socket.files).toHaveLength(5)
+    })
+
+    it('WhatsApp: brings back stickers and photos kept before they could be opened', async () => {
+      const thread = `wa:${RAVI}`
+      const browser = await newUser('files-wa-repair@example.com')
+      await linkWhatsApp(browser)
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      // As an earlier version kept them: a sticker only by name, a photo without a link.
+      const { store } = server.current()
+      await store.upsertThread(userId, { id: thread, network: 'whatsapp', kind: 'direct', title: 'Ravi Kumar' })
+      const ts = Math.floor(Date.now() / 1000)
+      const keep = (id: string, body: string, extra: object = {}) =>
+        store.addMessage(userId, {
+          id: `${thread}:${id}`,
+          threadId: thread,
+          senderId: thread,
+          body,
+          sentAt: new Date((ts - 60) * 1000).toISOString(),
+          ...extra,
+          ref: { key: { remoteJid: RAVI, fromMe: false, id } },
+        })
+      await keep('OLDSTK', 'Sticker')
+      await keep('OLDIMG', 'From the shop', { attachments: [{ kind: 'image', name: 'Photo' }] })
+      await keep('OLDTXT', 'Just text')
+
+      await server.restart()
+      const reopened = server.sockets.at(-1)!
+      // The phone still has them, and sends each again when asked.
+      const webp = Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 an old sticker')
+      reopened.phone.set('OLDSTK', { key: { remoteJid: RAVI, fromMe: false, id: 'OLDSTK' }, message: mediaMessage('stickerMessage', webp, { mimetype: 'image/webp' }), messageTimestamp: ts - 60 } as never)
+      reopened.phone.set('OLDIMG', {
+        key: { remoteJid: RAVI, fromMe: false, id: 'OLDIMG' },
+        message: mediaMessage('imageMessage', PIXEL, { mimetype: 'image/png', caption: 'From the shop' }),
+        messageTimestamp: ts - 60,
+      } as never)
+      reopened.user = { id: '919876543210:4@s.whatsapp.net' }
+      reopened.emit('connection.update', { connection: 'open' })
+
+      const messages = await waitFor(
+        async () => {
+          const found = byId((await browser.get('/api/inbox')).json.messages)
+          expect(found[`${thread}:OLDSTK`].attachments?.[0]?.url).toMatch(FILE_LINK)
+          expect(found[`${thread}:OLDIMG`].attachments?.[0]?.url).toMatch(FILE_LINK)
+          return found
+        },
+        { timeout: 8000 },
+      )
+      expect(messages[`${thread}:OLDSTK`]).toMatchObject({ body: '', attachments: [{ kind: 'sticker', name: 'Sticker', mime: 'image/webp' }] })
+      expect(messages[`${thread}:OLDIMG`]).toMatchObject({ body: 'From the shop', attachments: [{ kind: 'image', mime: 'image/png' }] })
+      // Only what had no link was asked for; text messages weren't.
+      expect(reopened.resendRequests.map((k) => k.id).sort()).toEqual(['OLDIMG', 'OLDSTK'])
+      expect((await browser.raw('GET', messages[`${thread}:OLDSTK`].attachments[0].url)).body).toEqual(webp)
+      // Not counted as new.
+      expect((await browser.get('/api/inbox')).json.threads.find((t: { id: string }) => t.id === thread).unreadCount).toBe(0)
+      await browser.delete('/api/link/whatsapp')
+    }, 20_000)
+
+    it('Telegram: brings back photos kept before they could be opened', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('files-tg-repair@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00010' })
+      expect((await browser.post('/api/link/telegram/verify', { code: '12345' })).json).toEqual({ status: 'connected' })
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7']).toBeDefined())
+      // As an earlier version kept it: without a link.
+      await server.current().store.updateMessage(userId, 'tga:-100777:7', { attachments: [{ kind: 'image', name: 'Photo' }] })
+      expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7'].attachments[0].url).toBeUndefined()
+
+      await server.restart()
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7'].attachments[0].url).toMatch(FILE_LINK), {
+        timeout: 8000,
+      })
+      await browser.delete('/api/link/telegram')
     })
 
     it('Telegram: opens photos and files from Telegram, and sends them', async () => {

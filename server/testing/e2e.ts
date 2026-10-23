@@ -12,6 +12,7 @@
  *   POST /whatsapp/photo {"caption"}  Ravi sends a photo
  *   POST /whatsapp/file               Ravi sends a PDF
  *   POST /whatsapp/sticker {"webp"}   Ravi sends a sticker (base64 WebP)
+ *   POST /whatsapp/animated-sticker   Ravi sends an animated (Lottie) sticker: a bouncing ball
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /trim                        the server trims chats to what it keeps, now
@@ -20,6 +21,7 @@
 import { createServer } from 'node:http'
 import { resolve } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
+import { strToU8, zipSync } from 'fflate'
 import { mediaMessage, startTestServer, TEST_MONGODB_URI } from './helpers.ts'
 
 if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
@@ -73,6 +75,58 @@ async function whatsappLinked() {
     isLatest: true,
     syncType: 0,
   } as never)
+}
+
+/** A Lottie animation: an amber ball bouncing, two seconds a loop. */
+const BOUNCING_BALL = {
+  v: '5.7.4',
+  fr: 30,
+  ip: 0,
+  op: 60,
+  w: 256,
+  h: 256,
+  nm: 'bounce',
+  ddd: 0,
+  assets: [],
+  layers: [
+    {
+      ddd: 0,
+      ind: 1,
+      ty: 4,
+      nm: 'ball',
+      sr: 1,
+      ks: {
+        o: { a: 0, k: 100 },
+        r: { a: 0, k: 0 },
+        p: {
+          a: 1,
+          k: [
+            { t: 0, s: [128, 70, 0], i: { x: [0.5], y: [1] }, o: { x: [0.5], y: [0] } },
+            { t: 30, s: [128, 186, 0], i: { x: [0.5], y: [1] }, o: { x: [0.5], y: [0] } },
+            { t: 60, s: [128, 70, 0] },
+          ],
+        },
+        a: { a: 0, k: [0, 0, 0] },
+        s: { a: 0, k: [100, 100, 100] },
+      },
+      ao: 0,
+      shapes: [
+        {
+          ty: 'gr',
+          nm: 'ball',
+          it: [
+            { ty: 'el', nm: 'circle', d: 1, s: { a: 0, k: [110, 110] }, p: { a: 0, k: [0, 0] } },
+            { ty: 'fl', nm: 'fill', c: { a: 0, k: [0.98, 0.72, 0.14, 1] }, o: { a: 0, k: 100 }, r: 1 },
+            { ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } },
+          ],
+        },
+      ],
+      ip: 0,
+      op: 60,
+      st: 0,
+      bm: 0,
+    },
+  ],
 }
 
 /** A small PNG of a sunset-ish gradient, so a photo looks like one. */
@@ -158,6 +212,19 @@ createServer(async (req, res) => {
           {
             key: { remoteJid: RAVI, fromMe: false, id: `S${Date.now()}` },
             message: mediaMessage('stickerMessage', Buffer.from(String(input.webp), 'base64'), { mimetype: 'image/webp' }),
+            messageTimestamp: now(),
+          },
+        ],
+      } as never)
+    } else if (req.url === '/whatsapp/animated-sticker') {
+      // As WhatsApp sends one: a zip with the Lottie animation inside.
+      const was = Buffer.from(zipSync({ 'animation/animation.json': strToU8(JSON.stringify(BOUNCING_BALL)) }))
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: `A${Date.now()}` },
+            message: mediaMessage('stickerMessage', was, { mimetype: 'application/was', isLottie: true }),
             messageTimestamp: now(),
           },
         ],

@@ -63,6 +63,11 @@ export interface WaSocket {
   sendPresenceUpdate(type: 'composing' | 'paused', jid?: string): Promise<void>
   presenceSubscribe(jid: string): Promise<void>
   profilePictureUrl(jid: string, type?: 'preview' | 'image'): Promise<string | undefined>
+  /**
+   * Asks the phone to send one message again (WhatsApp Web does this for messages it couldn't
+   * read). It arrives as a new message with the same key.
+   */
+  requestPlaceholderResend?(key: WAMessageKey): Promise<string | undefined>
   /** Asks the phone for older messages; they arrive later as an on-demand history batch. */
   fetchMessageHistory(count: number, oldestKey: WAMessageKey, oldestTimestamp: number): Promise<string>
   logout(message?: string): Promise<void>
@@ -272,9 +277,9 @@ function describe(message: proto.IMessage | null | undefined): { body: string; a
       return { body: content.audioMessage?.ptt ? '🎤 Voice message' : '🎵 Audio' }
     case 'stickerMessage': {
       const m = content.stickerMessage
-      // Lottie stickers need WhatsApp's own player: those are named rather than shown.
-      if (m?.isLottie || (m?.mimetype && m.mimetype !== 'image/webp')) return { body: 'Sticker' }
-      return { body: '', attachments: [attachment('sticker', 'Sticker', m, 'image/webp')], file: fileOf('stickerMessage', m) }
+      // Most are WebP images; animated "Lottie" ones are a WhatsApp file (application/was) the app plays.
+      const fallback = m?.isLottie ? 'application/was' : 'image/webp'
+      return { body: '', attachments: [attachment('sticker', 'Sticker', m, fallback)], file: fileOf('stickerMessage', m) }
     }
     case 'locationMessage':
     case 'liveLocationMessage':
@@ -301,6 +306,9 @@ function quoteOf(message: proto.IMessage | null | undefined): proto.IContextInfo
   const inner = type ? (content[type] as { contextInfo?: proto.IContextInfo } | undefined) : undefined
   return inner && typeof inner === 'object' && inner.contextInfo?.stanzaId ? inner.contextInfo : null
 }
+
+/** How many old stickers, photos and files without a link are asked for again per connection. */
+const FILES_TO_REPAIR = 40
 
 /** How many older messages one "Load earlier" asks for. */
 const OLDER_PAGE = 30
@@ -340,6 +348,8 @@ interface Session {
   /** Chats whose older history was last asked of the phone, and from which message. */
   historyAsked: Map<string, string>
   repairTimer?: ReturnType<typeof setTimeout>
+  /** Old stickers, photos and files without a link were asked for again (once per connection). */
+  filesRepaired?: boolean
 }
 
 type LinkResult = WhatsAppLinkResult
@@ -355,6 +365,8 @@ export interface WhatsAppDeps {
   files: FileLinks
   createSocket?: CreateWaSocket
   downloadMedia?: DownloadWaMedia
+  /** How long after connecting old stickers, photos and files are asked for again. */
+  filesRepairDelayMs?: number
   /** How long to wait for WhatsApp to offer a code or QR. */
   linkTimeoutMs?: number
 }
@@ -363,6 +375,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   const { col, sealer, store, accounts, hub, avatars, files } = deps
   const createSocket = deps.createSocket ?? createBaileysSocket
   const downloadMedia = deps.downloadMedia ?? downloadWithBaileys
+  const filesRepairDelayMs = deps.filesRepairDelayMs ?? 20_000
   const sessions = new Map<string, Session>()
   /** Users whose session is being started, so two starts never overlap. */
   const starting = new Set<string>()
@@ -450,6 +463,8 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       })
       if (wasLinking) setTimeout(() => void finishSync(s), 90_000)
       repairSoon(s)
+      // After the first messages of the connection have landed.
+      if (!wasLinking) setTimeout(() => void repairFiles(s, socket).catch(report), filesRepairDelayMs)
       return
     }
 
@@ -772,13 +787,39 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       ...(context ? { replyTo: await quotedFor(s, chatJid, context) } : {}),
       ref: { key: { remoteJid: remote, fromMe, id: msg.key.id, participant: msg.key.participant ?? undefined } },
     }
-    if (!(await store.addMessage(s.userId, message))) return
+    if (!(await store.addMessage(s.userId, message))) {
+      // Already kept: this may be the phone sending again a sticker, photo or file that had no link.
+      if (attachments?.some((a) => a.url)) await addFileLinks(s, message.id, parts.body, attachments)
+      return
+    }
     if (live && !fromMe) await store.incrementUnread(s.userId, thread.id)
     const updated = await store.thread(s.userId, thread.id)
     if (updated) publish(s, { type: 'thread.updated', thread: updated })
     const { ref, ...wire } = message
     void ref
     publish(s, { type: 'message.created', message: wire })
+  }
+
+  /** Gives a kept message the link to its sticker, photo or file, if it had none. */
+  async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
+    const stored = await store.message(s.userId, id)
+    if (!stored || stored.attachments?.some((a) => a.url)) return
+    await updateAndPublish(s, id, { body, attachments })
+  }
+
+  /**
+   * Stickers, photos and files kept before they could be opened (a sticker was only named) are
+   * asked of the phone again, newest first; each arrives as a message with the same key, and gains
+   * its link. Once per server run, on reconnecting: the phone answers while it's online.
+   */
+  async function repairFiles(s: Session, socket: WaSocket) {
+    if (s.filesRepaired || s.stopped || s.socket !== socket || !socket.requestPlaceholderResend) return
+    s.filesRepaired = true
+    for (const m of await store.missingFiles(s.userId, 'wa:', FILES_TO_REPAIR)) {
+      const key = (m.ref as { key?: WAMessageKey } | undefined)?.key
+      if (!key?.id || s.stopped || s.socket !== socket) continue
+      await socket.requestPlaceholderResend(key).catch(report)
+    }
   }
 
   /** The message's attachments, the photo or file among them linked so it can be opened. */

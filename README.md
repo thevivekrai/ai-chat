@@ -167,8 +167,8 @@ like WhatsApp Web; your phone doesn't have to stay online.
 - It brings in your recent chats (up to 40 messages each) and every new message after that, with
   delivery and read ticks for yours, edits and deletions.
 - **Photos and files** both ways: photos show in the chat, videos and documents as cards, and
-  each one downloads (see *Photos and files* below). Stickers show as stickers (Lottie ones,
-  which need WhatsApp's own player, are named instead). The paperclip, pasting, or dropping files on
+  each one downloads (see *Photos and files* below). Stickers show as stickers, animated ones
+  too (see below). The paperclip, pasting, or dropping files on
   the message box sends them; JPEG and PNG go as photos, MP4 as video, anything else as a document.
 - Quoted replies and reactions come in and go out. You see when someone is typing, and they see
   when you are. Profile and group pictures show too.
@@ -215,6 +215,14 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
 - WhatsApp keeps media on its servers for a while, then asks your phone to upload it again when
   it's opened. If the phone no longer has it, Sytext says it's no longer available. Opening a file
   needs the account connected.
+- **Stickers** show on their own, without a bubble: WebP images, Telegram's WebM video stickers,
+  and animated Lottie stickers (Telegram's .tgs, WhatsApp's animated ones), which the app plays
+  with lottie-web's light build. It runs nothing from the file, fetches no pictures from
+  elsewhere, loads only when one is shown, and won't unpack a sticker past 8 MB.
+- **Kept before this existed?** Stickers, photos and files kept by earlier versions had no link
+  (a sticker was only named). Each time the server reconnects, it asks again for the latest 40
+  of them: WhatsApp's phone sends each one again (it must be online), and Telegram is asked by
+  message id. They then open like new ones.
 
 ### Where your chats are kept
 

@@ -320,6 +320,26 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return { messages: docs.slice(0, limit).reverse().map(toMessage), hasMore: docs.length > limit }
     },
 
+    /**
+     * Recent messages whose sticker, photo or file can't be opened: kept before files were fetched
+     * from the network (a sticker was only named then). Newest first, for asking the network again.
+     */
+    async missingFiles(userId: ObjectId, idPrefix: string, limit = 40): Promise<{ id: string; threadId: string; ref?: Record<string, unknown> }[]> {
+      const docs = await col.messages
+        .find({ userId, id: { $regex: `^${escapeRegex(idPrefix)}` } })
+        .sort({ sentAt: -1 })
+        .limit(2000)
+        .toArray()
+      const found: { id: string; threadId: string; ref?: Record<string, unknown> }[] = []
+      for (const doc of docs) {
+        const m = toMessage(doc)
+        const namedSticker = !m.attachments?.length && /^(\S+ )?Sticker$/u.test(m.body)
+        if (namedSticker || m.attachments?.some((a) => !a.url)) found.push({ id: doc.id, threadId: doc.threadId, ...(doc.ref ? { ref: doc.ref } : {}) })
+        if (found.length >= limit) break
+      }
+      return found
+    },
+
     async message(userId: ObjectId, id: string): Promise<(Message & { ref?: Record<string, unknown> }) | null> {
       const doc = await col.messages.findOne({ userId, id })
       return doc && { ...toMessage(doc), ...(doc.ref ? { ref: doc.ref } : {}) }
