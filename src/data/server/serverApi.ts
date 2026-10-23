@@ -1,8 +1,10 @@
 import type {
   AuthResult,
+  MessageHint,
   PublicUser,
   ServerFeatures,
   ServerInbox,
+  ServerOlderMessages,
   TelegramCodeResult,
   TelegramVerifyResult,
   WhatsAppLinkResult,
@@ -10,7 +12,7 @@ import type {
 import type { Message } from '../types'
 
 /**
- * The Tidings server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
+ * The Sytext server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
  * always sent as JSON, which the server requires (it's what keeps other sites from posting forms).
  */
 
@@ -49,7 +51,7 @@ const segment = (id: string) => encodeURIComponent(id)
 
 export const serverApi = {
   /**
-   * What the server offers, or null when there is no Tidings server (the app was deployed as a
+   * What the server offers, or null when there is no Sytext server (the app was deployed as a
    * static site, or the API isn't running): the app then works without accounts, as before.
    */
   async features(): Promise<ServerFeatures | null> {
@@ -85,13 +87,39 @@ export const serverApi = {
   /* ── Linked chats ────────────────────────────────────────────────────────── */
 
   inbox: () => request<ServerInbox>('GET', '/inbox'),
-  send: (threadId: string, body: string) => request<{ message: Message }>('POST', `/threads/${segment(threadId)}/messages`, { body }),
+  /**
+   * The hints say what this device knows of a message, for the server to act on it if it no longer
+   * keeps it (it keeps only the latest of each chat).
+   */
+  send: (threadId: string, body: string, replyToId?: string, replyTo?: MessageHint) =>
+    request<{ message: Message }>('POST', `/threads/${segment(threadId)}/messages`, {
+      body,
+      ...(replyToId ? { replyToId } : {}),
+      ...(replyTo ? { replyTo } : {}),
+    }),
   markRead: (threadId: string) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/read`),
+  /** The message as the server now has it, or null when it no longer keeps it. */
+  react: (threadId: string, messageId: string, emoji: string | null, message?: MessageHint) =>
+    request<{ message: Message | null }>('POST', `/threads/${segment(threadId)}/reactions`, {
+      messageId,
+      emoji,
+      ...(message ? { message } : {}),
+    }),
+  typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
+  older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
+    const query = new URLSearchParams({ before: before.id })
+    if (before.senderId && before.sentAt) {
+      query.set('senderId', before.senderId)
+      query.set('sentAt', before.sentAt)
+    }
+    return request<ServerOlderMessages>('GET', `/threads/${segment(threadId)}/messages?${query}`)
+  },
 
   linkWhatsApp: (request_: { method: 'code'; phone: string } | { method: 'qr' }) =>
     request<WhatsAppLinkResult>('POST', '/link/whatsapp', request_),
   unlinkWhatsApp: () => request<{ ok: true }>('DELETE', '/link/whatsapp'),
   telegramCode: (phone: string) => request<TelegramCodeResult>('POST', '/link/telegram/code', { phone }),
+  telegramQr: () => request<{ qr: string }>('POST', '/link/telegram/qr'),
   telegramVerify: (code: string) => request<TelegramVerifyResult>('POST', '/link/telegram/verify', { code }),
   telegramPassword: (password: string) => request<TelegramVerifyResult>('POST', '/link/telegram/password', { password }),
   unlinkTelegram: () => request<{ ok: true }>('DELETE', '/link/telegram'),

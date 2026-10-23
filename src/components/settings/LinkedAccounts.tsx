@@ -4,7 +4,8 @@ import { PasswordInput } from '@/components/auth/AuthScreen'
 import { Button } from '@/components/ui/Button'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { api, type PublicAccount } from '@/data/api'
-import type { WhatsAppLinkResult } from '@/data/server/types'
+import { deviceUsage } from '@/data/server/deviceStore'
+import { MESSAGES_KEPT_PER_CHAT, type WhatsAppLinkResult } from '@/data/server/types'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
 import { linkedNetworkConnected, unlinkNetwork } from '@/store/actions'
@@ -13,7 +14,7 @@ import { useSession } from '@/store/session'
 import { Card, CardHeader, ErrorText, Field, Input } from './parts'
 
 /**
- * WhatsApp and Telegram, linked as the user's own accounts on the Tidings server: WhatsApp with a
+ * WhatsApp and Telegram, linked as the user's own accounts on the Sytext server: WhatsApp with a
  * code (or QR) from the phone, the way WhatsApp Web links; Telegram with the phone number, a login
  * code and, if set, the two-step password.
  */
@@ -41,12 +42,83 @@ export function LinkedAccounts() {
     <>
       <WhatsAppCard account={server?.whatsapp ?? null} />
       <TelegramCard account={server?.telegram ?? null} enabled={!!features?.telegram} />
-      <p className="text-xs leading-relaxed text-muted">
-        Linked chats sync through the Tidings server, which keeps them encrypted at rest, so they're there on every device
-        you sign in on. Unlinking logs the server out and deletes them.
-      </p>
+      <WhereChatsAreKept />
     </>
   )
+}
+
+/** What's kept where: the links on the server, the chats on each device. */
+function WhereChatsAreKept() {
+  const [usage, setUsage] = useState<number | null>(null)
+  useEffect(() => {
+    let live = true
+    void deviceUsage().then((bytes) => live && setUsage(bytes))
+    return () => {
+      live = false
+    }
+  }, [])
+  return (
+    <div className="space-y-1.5 text-xs leading-relaxed text-muted">
+      <p>
+        <b className="font-medium text-fg">On this device:</b> your chats, in this browser's storage
+        {usage !== null && ` (${usage < 1024 * 1024 ? `${Math.max(1, Math.round(usage / 1024))} KB` : `${(usage / 1024 / 1024).toFixed(1)} MB`} used)`}.
+        Scrolling back further fetches older messages from WhatsApp or Telegram.
+      </p>
+      <p>
+        <b className="font-medium text-fg">On the server:</b> the links to WhatsApp and Telegram, encrypted, and only the latest{' '}
+        {MESSAGES_KEPT_PER_CHAT} messages of each chat, to pass on to your devices. The links keep running when you sign out
+        or close the app. Unlinking logs the server out and deletes it all.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Shown when the app can't find its server: it was published as a static site (only the app's
+ * files are online), or, in development, the API isn't running. Says what to change.
+ */
+export function ServerMissing() {
+  return (
+    <Card>
+      <CardHeader icon={<LinkIcons />} title="Needs the Sytext server">
+        Signing in and linking WhatsApp and Telegram run on the Sytext server, and this site was published without it.
+        Only the app's files are online, so the options don't appear.
+      </CardHeader>
+      <div className="mt-3 space-y-2 border-t border-line pt-3 text-xs leading-relaxed text-muted">
+        {import.meta.env.DEV ? (
+          <p>
+            Start it with <Code>npm run dev:server</Code> alongside <Code>npm run dev</Code>, then reload.
+          </p>
+        ) : (
+          <>
+            <p>
+              If this is your site: on Render, a <b className="font-medium text-fg">Static Site</b> can't run it. Create a{' '}
+              <b className="font-medium text-fg">Web Service</b> from the same repository and branch instead, with:
+            </p>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+              <dt>Build command</dt>
+              <dd>
+                <Code>npm ci --include=dev && npm run build</Code>
+              </dd>
+              <dt>Start command</dt>
+              <dd>
+                <Code>npm start</Code>
+              </dd>
+              <dt>Environment</dt>
+              <dd>
+                <Code>MONGODB_URI</Code> and <Code>JWT_SECRET</Code> at least
+              </dd>
+            </dl>
+            <p>Then open the Web Service's address. The README's "Deploy on Render" has the details.</p>
+          </>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function Code({ children }: { children: ReactNode }) {
+  return <code className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] break-all text-fg">{children}</code>
 }
 
 function LinkIcons() {
@@ -72,7 +144,7 @@ function WhatsAppCard({ account }: { account: PublicAccount | null }) {
   // The QR code changes every so often until it's scanned.
   useEffect(() => {
     if (!showingQr) return
-    return api.connections.onWhatsAppQr((qr) => setResult({ qr }))
+    return api.connections.onLinkQr((network, qr) => network === 'whatsapp' && setResult({ qr }))
   }, [showingQr])
 
   useLinkedOnce('whatsapp', status, () => setResult(null))
@@ -100,7 +172,7 @@ function WhatsAppCard({ account }: { account: PublicAccount | null }) {
       >
         {linked
           ? 'Linked as a device of your WhatsApp, like WhatsApp Web. New messages arrive while the server is running.'
-          : 'Link your WhatsApp the way WhatsApp Web links: with a code from your phone. Your chats and replies then go through Tidings.'}
+          : 'Link your WhatsApp the way WhatsApp Web links: with a code from your phone. Your chats and replies then go through Sytext.'}
       </CardHeader>
 
       {linked ? (
@@ -149,7 +221,7 @@ function WhatsAppCard({ account }: { account: PublicAccount | null }) {
           )}
           {account?.status === 'disconnected' && <StoppedNote account={account} network="whatsapp" />}
           <Warning>
-            WhatsApp doesn't support unofficial apps and can restrict numbers that use them. Tidings links the same way
+            WhatsApp doesn't support unofficial apps and can restrict numbers that use them. Sytext links the same way
             WhatsApp Web does, but use a number you're comfortable with.
           </Warning>
           {link.error && <ErrorText>{link.error}</ErrorText>}
@@ -215,38 +287,52 @@ function QrCode({ qr }: { qr: string }) {
 
 /* ── Telegram ──────────────────────────────────────────────────────────────── */
 
-type TelegramStep = 'phone' | 'code' | 'password'
+type TelegramStep = 'start' | 'code' | 'qr' | 'password'
 
 function TelegramCard({ account, enabled }: { account: PublicAccount | null; enabled: boolean }) {
   const status = account?.status ?? null
-  // Picks up where a sign-in left off, say after a reload.
-  const resumeStep = (): TelegramStep =>
-    status === 'linking' ? (account?.detail?.includes('password') ? 'password' : 'code') : 'phone'
-  const [step, setStep] = useState<TelegramStep>(resumeStep)
+  const serverStep = status === 'linking' ? account?.step : undefined
+  // Picks up where a sign-in left off, say after a reload (a QR code can't be shown again).
+  const [step, setStep] = useState<TelegramStep>(serverStep === 'password' || serverStep === 'code' ? serverStep : 'start')
+  const [method, setMethod] = useState<'code' | 'qr'>('code')
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [via, setVia] = useState<'app' | 'sms'>('app')
+  const [qr, setQr] = useState<string | null>(null)
   const action = useAsync()
 
-  useLinkedOnce('telegram', status, () => {
-    setStep('phone')
+  // The QR code changes every half minute or so until it's scanned.
+  useEffect(() => {
+    if (step !== 'qr') return
+    return api.connections.onLinkQr((network, next) => network === 'telegram' && setQr(next))
+  }, [step])
+
+  const reset = () => {
+    setStep('start')
     setCode('')
     setPassword('')
-  })
-  // The code expired, or the sign-in was cancelled elsewhere: back to the start.
-  const [seenStatus, setSeenStatus] = useState(status)
-  if (status !== seenStatus) {
-    setSeenStatus(status)
-    if (status === 'disconnected' || status === null) setStep('phone')
+    setQr(null)
+  }
+  useLinkedOnce('telegram', status, reset)
+  // The code expired, or the sign-in was cancelled elsewhere: back to the start. A scanned QR code
+  // with two-step verification on moves on to the password.
+  const [seen, setSeen] = useState({ status, serverStep })
+  if (status !== seen.status || serverStep !== seen.serverStep) {
+    setSeen({ status, serverStep })
+    if (status === 'disconnected' || status === null) reset()
+    else if (serverStep === 'password' && step === 'qr') setStep('password')
   }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
     void action.run(async () => {
-      if (step === 'phone') {
+      if (step === 'start' && method === 'qr') {
+        setQr((await api.connections.requestTelegramQr()).qr)
+        setStep('qr')
+      } else if (step === 'start') {
         const result = await api.connections.requestTelegramCode(phone)
         setVia(result.via)
         setStep('code')
@@ -262,6 +348,7 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
   }
 
   const linked = status === 'connected' || status === 'error'
+  const passwordHint = hint ?? account?.hint
   return (
     <Card>
       <CardHeader
@@ -271,7 +358,7 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
       >
         {linked
           ? 'Signed in as you, like Telegram on a new device. It shows in Telegram under Settings → Devices.'
-          : 'Sign in with your phone number and the code Telegram sends you. Your own chats and groups come in, and you reply as yourself.'}
+          : 'Sign in with your phone number and the code Telegram sends you, or scan a QR code. Your own chats and groups come in, and you reply as yourself.'}
       </CardHeader>
 
       {linked ? (
@@ -283,7 +370,18 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
         </p>
       ) : (
         <form onSubmit={submit} className="mt-4 space-y-3">
-          {step === 'phone' && (
+          {step === 'start' && (
+            <Segmented
+              label="Sign in with"
+              value={method}
+              options={[
+                { id: 'code' as const, label: 'Phone number' },
+                { id: 'qr' as const, label: 'QR code' },
+              ]}
+              onChange={(next) => setMethod(next)}
+            />
+          )}
+          {step === 'start' && method === 'code' && (
             <Field label="Your Telegram number" hint="With the country code.">
               <Input
                 required
@@ -313,8 +411,26 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
               />
             </Field>
           )}
+          {step === 'qr' && qr && (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <img src={qr} alt="QR code to sign in to Telegram" className="size-48 shrink-0 rounded-2xl bg-white p-2 shadow-card" />
+                <Steps>
+                  <li>Open Telegram on your phone.</li>
+                  <li>
+                    Go to <b>Settings → Devices → Link Desktop Device</b>.
+                  </li>
+                  <li>Point your phone at this code.</li>
+                </Steps>
+              </div>
+              <WaitingLine>{account?.detail ?? 'Waiting for you to scan the QR code…'}</WaitingLine>
+            </div>
+          )}
           {step === 'password' && (
-            <Field label="Two-step verification password" hint={hint ? `Your hint: ${hint}` : 'The password you set in Telegram → Privacy and Security.'}>
+            <Field
+              label="Two-step verification password"
+              hint={passwordHint ? `Your hint: ${passwordHint}` : 'The password you set in Telegram → Privacy and Security.'}
+            >
               <PasswordInput
                 value={password}
                 onChange={setPassword}
@@ -324,25 +440,25 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
               />
             </Field>
           )}
-          {step === 'phone' && account?.status === 'disconnected' && <StoppedNote account={account} network="telegram" />}
+          {step === 'start' && account?.status === 'disconnected' && <StoppedNote account={account} network="telegram" />}
           {action.error && <ErrorText>{action.error}</ErrorText>}
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" variant="primary" size="sm" disabled={action.busy}>
-              {action.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-              {step === 'phone' ? 'Send code' : step === 'code' ? 'Verify' : 'Sign in'}
-            </Button>
-            {step !== 'phone' && (
+            {step !== 'qr' && (
+              <Button type="submit" variant="primary" size="sm" disabled={action.busy}>
+                {action.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+                {step === 'start' ? (method === 'qr' ? 'Show QR code' : 'Send code') : step === 'code' ? 'Verify' : 'Sign in'}
+              </Button>
+            )}
+            {step !== 'start' && (
               <Button
                 size="sm"
-                variant="ghost"
+                variant={step === 'qr' ? 'secondary' : 'ghost'}
                 onClick={() => {
-                  setStep('phone')
-                  setCode('')
-                  setPassword('')
+                  reset()
                   void api.connections.unlink('telegram').catch(() => undefined)
                 }}
               >
-                Start over
+                {step === 'qr' ? 'Cancel' : 'Start over'}
               </Button>
             )}
           </div>
@@ -404,7 +520,7 @@ function LinkedFooter({ account, network }: { account: PublicAccount; network: '
         size="sm"
         disabled={unlink.busy}
         onClick={() => {
-          if (window.confirm(`Unlink ${name}? Tidings logs out of it, and its chats are deleted from the server.`)) {
+          if (window.confirm(`Unlink ${name}? Sytext logs out of it, and its chats are deleted from the server.`)) {
             void unlink.run(() => unlinkNetwork(network))
           }
         }}

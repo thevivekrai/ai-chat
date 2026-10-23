@@ -52,3 +52,10 @@ export function findPlaceholders(text: string): string[] {
 }
 
 export const placeholderPattern = () => new RegExp(PLACEHOLDER.source, 'g')
+
+/** "typing…" in a 1:1 chat; who is, in a group. */
+export function typingLabel(names: string[], group: boolean): string {
+  if (!group) return 'typing…'
+  if (names.length === 1) return `${shortName(names[0])} is typing…`
+  return `${names.length} people are typing…`
+}

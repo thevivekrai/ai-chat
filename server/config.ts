@@ -1,4 +1,5 @@
 import { hkdfSync } from 'node:crypto'
+import { existsSync } from 'node:fs'
 
 /**
  * Server settings, all from environment variables (set them in the host's dashboard, never in the
@@ -17,13 +18,39 @@ export interface Config {
   telegram?: { apiId: number; apiHash: string }
   /** Turns on profile photos and images in chats. */
   cloudinary?: { cloudName: string; apiKey: string; apiSecret: string }
+  /**
+   * The server's public address, visited every few minutes while accounts are linked, so hosts
+   * that put idle services to sleep don't (see keepAwake.ts). KEEP_AWAKE_URL, or the address
+   * Render provides; KEEP_AWAKE=off turns it off.
+   */
+  keepAwakeUrl?: string
 }
 
 export class ConfigError extends Error {}
 
+/**
+ * Settings can also come from a `.env` file: in the app's folder (development, or a host that puts
+ * it there), or in Render's secret files folder (a Secret File named `.env`). Variables set in the
+ * environment itself win over the files, and the first file wins over the second.
+ */
+export const ENV_FILES = ['.env', '/etc/secrets/.env']
+
+/** Reads whichever of the files exist; returns their names (never their contents). */
+export function loadEnvFiles(files: string[] = ENV_FILES): string[] {
+  return files.filter((file) => {
+    if (!existsSync(file)) return false
+    process.loadEnvFile(file)
+    return true
+  })
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const missing = ['MONGODB_URI', 'JWT_SECRET'].filter((k) => !env[k]?.trim())
-  if (missing.length) throw new ConfigError(`Set ${missing.join(' and ')} in the environment.`)
+  if (missing.length) {
+    throw new ConfigError(
+      `Set ${missing.join(' and ')} in the environment (on Render: the service's Environment tab, or a Secret File named .env).`,
+    )
+  }
 
   const jwtSecret = env.JWT_SECRET!.trim()
   if (jwtSecret.length < 32) throw new ConfigError('JWT_SECRET must be at least 32 characters of random text.')
@@ -40,6 +67,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || undefined,
     telegram: apiId && env.TELEGRAM_API_HASH?.trim() ? { apiId, apiHash: env.TELEGRAM_API_HASH.trim() } : undefined,
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
+    keepAwakeUrl: /^(off|false|no|0)$/i.test(env.KEEP_AWAKE?.trim() ?? '')
+      ? undefined
+      : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
   }
 }
 

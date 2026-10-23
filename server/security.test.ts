@@ -1,7 +1,10 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { hashPassword, verifyPassword } from './auth/passwords.ts'
 import { createSessionTokens } from './auth/tokens.ts'
-import { loadConfig } from './config.ts'
+import { loadConfig, loadEnvFiles } from './config.ts'
 import { createSealer } from './crypto.ts'
 import { databaseName } from './db.ts'
 import { parseCookies } from './http.ts'
@@ -89,6 +92,27 @@ describe('config', () => {
     expect(config.cloudinary).toBeUndefined() // The secret is missing.
     expect(config.googleClientId).toBeUndefined()
     expect(config.dataKey).toHaveLength(32)
+  })
+
+  it('reads .env files, in production too, without overriding what the environment sets', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sytext-env-'))
+    const app = join(dir, 'app.env')
+    const secrets = join(dir, 'secrets.env')
+    writeFileSync(app, 'SYTEXT_TEST_A=from-app-file\n')
+    writeFileSync(secrets, 'SYTEXT_TEST_A=from-secret-file\nSYTEXT_TEST_B=from-secret-file\nSYTEXT_TEST_C=from-secret-file\n')
+    const before = { NODE_ENV: process.env.NODE_ENV }
+    process.env.NODE_ENV = 'production'
+    process.env.SYTEXT_TEST_C = 'from-environment'
+    try {
+      expect(loadEnvFiles([app, join(dir, 'missing.env'), secrets])).toEqual([app, secrets])
+      expect(process.env.SYTEXT_TEST_A).toBe('from-app-file')
+      expect(process.env.SYTEXT_TEST_B).toBe('from-secret-file')
+      expect(process.env.SYTEXT_TEST_C).toBe('from-environment')
+    } finally {
+      if (before.NODE_ENV === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = before.NODE_ENV
+      for (const key of ['SYTEXT_TEST_A', 'SYTEXT_TEST_B', 'SYTEXT_TEST_C']) delete process.env[key]
+    }
   })
 })
 

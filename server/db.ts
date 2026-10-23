@@ -1,6 +1,7 @@
-import { MongoClient, type Collection, type Db, type ObjectId } from 'mongodb'
+import { MongoClient, type Collection, type Db, type IndexSpecification, type MongoServerError, type ObjectId } from 'mongodb'
 import type { AccountStatus, LinkedNetwork } from '../src/data/server/types.ts'
-import type { Attachment, MessageStatus, NetworkId, ThreadKind } from '../src/data/types.ts'
+import { ConfigError } from './config.ts'
+import type { Attachment, MessageStatus, NetworkId, QuotedMessage, Reaction, ThreadKind } from '../src/data/types.ts'
 
 export type { AccountStatus, LinkedNetwork }
 
@@ -29,6 +30,10 @@ export interface AccountDoc {
   detail?: string
   /** Sealed session (Telegram); WhatsApp keeps its keys in `waAuth`. */
   session?: string
+  /** While linking: what the user is asked for next. */
+  step?: 'code' | 'qr' | 'password'
+  /** Telegram's hint for the two-step verification password. */
+  hint?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -51,14 +56,34 @@ export interface ThreadDoc {
   unreadCount: number
   lastAt: Date
   updatedAt: Date
+  /** The group's picture, served by /api/avatars. */
+  avatarUrl?: string
 }
 
 export interface ContactDoc {
   userId: ObjectId
   id: string
   network: NetworkId
-  /** Sealed { name, handle }. */
+  /** Sealed { name, handle, avatarUrl }. */
   data: string
+}
+
+/**
+ * A profile or group picture: that there is one, not the image (that's kept in memory and
+ * fetched from the network again when needed, so it takes no space here).
+ */
+export interface AvatarDoc {
+  userId: ObjectId
+  /** The contact or chat it belongs to. */
+  id: string
+  /** Short content hash, so the URL changes when the picture does; absent when there's no picture. */
+  version?: string
+  /** Sealed link to download it again from, where the network gives one (WhatsApp). */
+  source?: string
+  /** Earlier versions kept the image here; removed on start. */
+  data?: string
+  contentType?: string
+  checkedAt: Date
 }
 
 export interface MessageDoc {
@@ -77,6 +102,11 @@ export interface MessageDoc {
 export interface MessagePayload {
   body: string
   attachments?: Attachment[]
+  replyTo?: QuotedMessage
+  /** Who reacted with what, by sender id ("me" for the user), where the network says (WhatsApp). */
+  reactionsBy?: Record<string, string>
+  /** Totals only, where that's all the network gives (Telegram). */
+  reactionTotals?: Reaction[]
 }
 
 export interface Collections {
@@ -86,6 +116,7 @@ export interface Collections {
   threads: Collection<ThreadDoc>
   contacts: Collection<ContactDoc>
   messages: Collection<MessageDoc>
+  avatars: Collection<AvatarDoc>
 }
 
 export interface Database {
@@ -102,7 +133,7 @@ export function databaseName(uri: string): string {
 }
 
 export async function connectDatabase(uri: string, dbName = databaseName(uri)): Promise<Database> {
-  const client = new MongoClient(uri, { appName: 'tidings' })
+  const client = new MongoClient(uri, { appName: 'sytext' })
   await client.connect()
   const db = client.db(dbName)
   const col: Collections = {
@@ -112,22 +143,47 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
     threads: db.collection('threads'),
     contacts: db.collection('contacts'),
     messages: db.collection('messages'),
+    avatars: db.collection('avatars'),
   }
-  await ensureIndexes(col)
+  try {
+    await ensureIndexes(col)
+  } catch (error) {
+    await client.close()
+    throw error
+  }
   return { client, db, col, close: () => client.close() }
 }
 
+/** MongoDB's codes for "an index like this exists, set up differently". */
+const INDEX_CONFLICTS = new Set([85, 86])
+
 async function ensureIndexes(col: Collections) {
+  // A collection of the same name from another app, in a database shared with it, has indexes of
+  // its own: say so plainly rather than with MongoDB's error.
+  const index = async <T extends object>(collection: Collection<T>, keys: IndexSpecification, options = {}) => {
+    try {
+      await collection.createIndex(keys, options)
+    } catch (error) {
+      if (!INDEX_CONFLICTS.has(Number((error as MongoServerError).code))) throw error
+      throw new ConfigError(
+        `The database "${collection.dbName}" already has a "${collection.collectionName}" collection, set up by another app. ` +
+          'Give Sytext a database of its own: put a name for it in MONGODB_URI, after the host and before any "?", ' +
+          'like mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/sytext?retryWrites=true. ' +
+          `(MongoDB said: ${(error as MongoServerError).errmsg ?? (error as Error).message})`,
+      )
+    }
+  }
   await Promise.all([
-    col.users.createIndex({ email: 1 }, { unique: true }),
-    col.users.createIndex({ googleSub: 1 }, { unique: true, partialFilterExpression: { googleSub: { $type: 'string' } } }),
-    col.accounts.createIndex({ userId: 1, network: 1 }, { unique: true }),
-    col.accounts.createIndex({ network: 1, status: 1 }),
-    col.waAuth.createIndex({ userId: 1, key: 1 }, { unique: true }),
-    col.threads.createIndex({ userId: 1, id: 1 }, { unique: true }),
-    col.threads.createIndex({ userId: 1, lastAt: -1 }),
-    col.contacts.createIndex({ userId: 1, id: 1 }, { unique: true }),
-    col.messages.createIndex({ userId: 1, id: 1 }, { unique: true }),
-    col.messages.createIndex({ userId: 1, threadId: 1, sentAt: -1 }),
+    index(col.users, { email: 1 }, { unique: true }),
+    index(col.users, { googleSub: 1 }, { unique: true, partialFilterExpression: { googleSub: { $type: 'string' } } }),
+    index(col.accounts, { userId: 1, network: 1 }, { unique: true }),
+    index(col.accounts, { network: 1, status: 1 }),
+    index(col.waAuth, { userId: 1, key: 1 }, { unique: true }),
+    index(col.threads, { userId: 1, id: 1 }, { unique: true }),
+    index(col.threads, { userId: 1, lastAt: -1 }),
+    index(col.contacts, { userId: 1, id: 1 }, { unique: true }),
+    index(col.messages, { userId: 1, id: 1 }, { unique: true }),
+    index(col.messages, { userId: 1, threadId: 1, sentAt: -1 }),
+    index(col.avatars, { userId: 1, id: 1 }, { unique: true }),
   ])
 }

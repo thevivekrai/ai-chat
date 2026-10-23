@@ -1,10 +1,12 @@
+import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eventually } from '@/test/fakeTelegram'
 import { storage, writeJson } from '../storage'
 import type { InboxEvent, Message } from '../types'
 import { CONFIG_KEY, LOCAL_KEY, loadLocal } from '../unified/persisted'
 import { createUnifiedApi } from '../unified/unifiedApi'
-import type { ServerEvent, ServerInbox } from './types'
+import { openDeviceStore, wipeDeviceStore } from './deviceStore'
+import { MESSAGES_KEPT_PER_CHAT, type ServerEvent, type ServerInbox, type ServerOlderMessages } from './types'
 
 /** Stands in for the browser's EventSource; the test pushes events through it. */
 class FakeEventSource {
@@ -56,16 +58,28 @@ function serverInbox(): ServerInbox {
   }
 }
 
-let requests: { method: string; path: string; body?: unknown }[]
+let requests: { method: string; path: string; body?: unknown; query?: Record<string, string> }[]
 let session: 'valid' | 'expired'
 let sendGate: Promise<void>
 let openSendGate: () => void
+/** What the server has, as a test sets it up. */
+let inbox: ServerInbox
+/** What "Load earlier" gets from the server, page by page. */
+let olderPages: ServerOlderMessages[]
+/** The server no longer keeps the message reacted to. */
+let reactionUnknown: boolean
+let inboxGate: Promise<void>
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await wipeDeviceStore()
+  inbox = serverInbox()
+  olderPages = [{ messages: [{ id: `${RAVI}:M0`, threadId: RAVI, senderId: RAVI, body: 'Parcel booked?', sentAt: at(60 * 24) }], hasMore: false }]
+  reactionUnknown = false
+  inboxGate = Promise.resolve()
   for (const key of [CONFIG_KEY, LOCAL_KEY, 'tidings.mockdb']) storage.remove(key)
   writeJson(CONFIG_KEY, { demo: false })
   FakeEventSource.instances = []
@@ -77,15 +91,25 @@ beforeEach(() => {
     const url = new URL(input, 'http://tidings.test')
     const method = init?.method ?? 'GET'
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
-    requests.push({ method, path: decodeURIComponent(url.pathname), body })
+    const query = Object.fromEntries(url.searchParams)
+    requests.push({ method, path: decodeURIComponent(url.pathname), body, ...(url.search ? { query } : {}) })
     if (session === 'expired') return json({ error: 'Sign in to continue.' }, 401)
-    if (url.pathname === '/api/inbox') return json(serverInbox())
+    if (url.pathname === '/api/inbox') {
+      await inboxGate
+      return json(inbox)
+    }
     if (url.pathname.endsWith('/messages') && method === 'POST') {
       await sendGate
       const message: Message = { id: `${RAVI}:SENT1`, threadId: RAVI, senderId: 'me', body: body.body, sentAt: at(0), status: 'sent' }
       return json({ message })
     }
-    if (url.pathname.endsWith('/read')) return json({ ok: true })
+    if (url.pathname.endsWith('/read') || url.pathname.endsWith('/typing')) return json({ ok: true })
+    if (url.pathname.endsWith('/reactions')) {
+      if (reactionUnknown) return json({ message: null })
+      const message: Message = { ...inbox.messages[0], reactions: [{ emoji: body.emoji, count: 1, mine: true }] }
+      return json({ message })
+    }
+    if (url.pathname.endsWith('/messages') && method === 'GET') return json(olderPages.shift() ?? { messages: [], hasMore: false })
     return json({ error: 'Not found.' }, 404)
   })
 })
@@ -94,14 +118,27 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function signedIn() {
+async function signedIn({ waitForServer = true } = {}) {
   const api = createUnifiedApi()
   const events: InboxEvent[] = []
   const stop = api.subscribe((e) => events.push(e))
-  await api.connections.setServerSession({ name: 'Aarav Mehta' })
-  await eventually(() => expect(events.some((e) => e.type === 'reset' && e.snapshot.threads.some((t) => t.id === RAVI))).toBe(true))
+  await api.connections.setServerSession({ id: 'u1', name: 'Aarav Mehta' })
+  if (waitForServer) await eventually(() => expect(api.connections.get().server?.status.state).toBe('online'))
   return { api, events, stop, stream: FakeEventSource.instances.at(-1)! }
 }
+
+/** This device's copy as written so far (it's written shortly after each change). */
+async function deviceCopy() {
+  return (await openDeviceStore('u1')).load(1000)
+}
+
+const messageAt = (n: number, minutesAgo: number): Message => ({
+  id: `${RAVI}:N${n}`,
+  threadId: RAVI,
+  senderId: RAVI,
+  body: `Message ${n}`,
+  sentAt: at(minutesAgo),
+})
 
 describe('chats linked on the server', () => {
   it('loads them with the account state once signed in', async () => {
@@ -145,6 +182,37 @@ describe('chats linked on the server', () => {
     stop()
   })
 
+  it('reacts, pages back and passes typing on, for chats that support it', async () => {
+    const { api, events, stream, stop } = await signedIn()
+    expect(api.capabilities(RAVI)).toEqual({ reply: true, react: true, typing: true, history: true })
+
+    const reacted = await api.react(RAVI, `${RAVI}:M1`, '🙏')
+    expect(reacted.reactions).toEqual([{ emoji: '🙏', count: 1, mine: true }])
+    expect(requests.at(-1)).toMatchObject({
+      method: 'POST',
+      path: `/api/threads/${RAVI}/reactions`,
+      // What this device knows of the message goes along, in case the server no longer keeps it.
+      body: { messageId: `${RAVI}:M1`, emoji: '🙏', message: { id: `${RAVI}:M1`, senderId: RAVI } },
+    })
+    // It doesn't: only this device's copy changes.
+    reactionUnknown = true
+    expect((await api.react(RAVI, `${RAVI}:M1`, '👍')).reactions).toEqual([{ emoji: '👍', count: 1, mine: true }])
+
+    const older = await api.loadOlder(RAVI, `${RAVI}:M1`)
+    expect(older).toMatchObject({ hasMore: false, messages: [{ body: 'Parcel booked?' }] })
+    expect(requests.at(-1)).toMatchObject({
+      method: 'GET',
+      path: `/api/threads/${RAVI}/messages`,
+      query: { before: `${RAVI}:M1`, senderId: RAVI, sentAt: inbox.messages[0].sentAt },
+    })
+
+    await api.setTyping(RAVI, true)
+    expect(requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/threads/${RAVI}/typing`, body: { typing: true } })
+    stream.push({ type: 'typing', threadId: RAVI, senderId: RAVI, active: true })
+    expect(events.at(-1)).toEqual({ type: 'typing', threadId: RAVI, senderId: RAVI, active: true })
+    stop()
+  })
+
   it('reports an ended session, and forgets everything about those chats on sign-out', async () => {
     const { api, stream, stop } = await signedIn()
     await api.updateThreadState(RAVI, { doneAt: at(0) })
@@ -163,6 +231,74 @@ describe('chats linked on the server', () => {
     expect(inbox.tasks).toEqual([])
     expect(loadLocal().threadState[RAVI]).toBeUndefined()
     expect(api.connections.get().server).toBeNull()
+    // This device's copy goes too.
+    await eventually(async () => expect((await (await openDeviceStore('u1')).load(10)).threads).toEqual([]))
+    stop()
+  })
+
+  it('keeps the chats on this device: shown on the next start before the server answers, and kept when the server lets go', async () => {
+    const first = await signedIn()
+    first.stream.push({ type: 'message.created', message: messageAt(2, 1) })
+    await eventually(async () => expect((await deviceCopy()).messages.map((m) => m.id)).toContain(`${RAVI}:N2`))
+    first.stop()
+
+    // Next time, the server is slow to answer, and no longer has N2 (it keeps only the latest).
+    let answer!: () => void
+    inboxGate = new Promise((resolve) => (answer = resolve))
+    const second = await signedIn({ waitForServer: false })
+    await eventually(async () => expect((await second.api.loadInbox()).messages.map((m) => m.body)).toContain('Message 2'))
+    expect(second.api.connections.get().server?.status.state).toBe('connecting')
+    answer()
+    await eventually(() => expect(second.api.connections.get().server?.status.state).toBe('online'))
+    expect((await second.api.loadInbox()).messages.map((m) => m.body)).toEqual(expect.arrayContaining(['Message 2', 'Did the parcel arrive?']))
+    second.stop()
+  })
+
+  it("pages back through this device's copy before asking the server", async () => {
+    const store = await openDeviceStore('u1')
+    store.put({ threads: inbox.threads, messages: Array.from({ length: 5 }, (_, i) => messageAt(i, 60 * (i + 1))) })
+    await store.flush()
+    const { api, stop } = await signedIn()
+
+    const before = requests.length
+    const fromDevice = await api.loadOlder(RAVI, `${RAVI}:N0`)
+    expect(fromDevice.messages.map((m) => m.body)).toEqual(['Message 4', 'Message 3', 'Message 2', 'Message 1'])
+    expect(requests.length).toBe(before)
+
+    // Nothing older here: the server (and through it, the network) is asked.
+    const fromServer = await api.loadOlder(RAVI, `${RAVI}:N4`)
+    expect(fromServer.messages.map((m) => m.body)).toEqual(['Parcel booked?'])
+    expect(requests.at(-1)).toMatchObject({ method: 'GET', query: { before: `${RAVI}:N4` } })
+    stop()
+  })
+
+  it('fills in what came while this device was away', async () => {
+    // The device last saw a message from yesterday; since then more came than the server keeps.
+    const store = await openDeviceStore('u1')
+    store.put({ threads: inbox.threads, messages: [messageAt(0, 60 * 24)] })
+    await store.flush()
+    inbox.messages = Array.from({ length: MESSAGES_KEPT_PER_CHAT }, (_, i) => messageAt(100 + i, 100 - i))
+    olderPages = [{ messages: [messageAt(50, 300), messageAt(51, 200)], hasMore: true }, { messages: [messageAt(40, 600)], hasMore: true }]
+
+    const { api, stop } = await signedIn()
+    await eventually(async () => expect((await api.loadInbox()).messages.map((m) => m.body)).toContain('Message 40'))
+    const asked = requests.filter((r) => r.method === 'GET' && r.path.endsWith('/messages'))
+    // From the oldest the server has, back to what this device has, a few pages at most.
+    expect(asked.map((r) => r.query?.before)).toEqual([`${RAVI}:N100`, `${RAVI}:N50`, `${RAVI}:N40`])
+    stop()
+  })
+
+  it('drops the chats of a network unlinked elsewhere', async () => {
+    const store = await openDeviceStore('u1')
+    const asha = { ...inbox.threads[0], id: 'tga:5001', network: 'telegram' as const, title: 'Asha' }
+    store.put({ threads: [asha], messages: [{ id: 'tga:5001:1', threadId: 'tga:5001', senderId: 'tga:5001', body: 'Hi', sentAt: at(5) }] })
+    await store.flush()
+
+    const { api, stop } = await signedIn()
+    const threads = (await api.loadInbox()).threads.map((t) => t.id)
+    expect(threads).toContain(RAVI)
+    expect(threads).not.toContain('tga:5001')
+    await eventually(async () => expect((await deviceCopy()).threads.map((t) => t.id)).toEqual([RAVI]))
     stop()
   })
 })

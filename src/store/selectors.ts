@@ -8,6 +8,11 @@ import { DAY, toMs } from '@/lib/time'
 import { useAi, type AiEntry } from './ai'
 import { useClock } from './clock'
 import { settledLastMessageId, useInbox } from './inbox'
+
+/** A chat's picture: the group's own, or the other person's in a 1:1 chat. */
+export function threadPicture(thread: Thread, contacts: Record<string, Contact>): string | undefined {
+  return thread.kind === 'group' ? thread.avatarUrl : contacts[thread.participantIds[0]]?.avatarUrl
+}
 import { canAiReadThread, useSettings } from './settings'
 import type { View } from './ui'
 

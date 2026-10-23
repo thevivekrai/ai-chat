@@ -4,6 +4,7 @@
  */
 import type { ExtractedTask } from '@/ai'
 import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/data/api'
+import { myReaction } from '@/data/reactions'
 import { serverApi } from '@/data/server/serverApi'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
@@ -27,9 +28,57 @@ export async function sendReply(threadId: string, text: string) {
   const body = text.trim()
   if (!body) return
   const ui = useUi.getState()
+  const replyToId = ui.replyingTo[threadId]
   ui.setComposer(threadId, '')
+  ui.setReplyingTo(threadId, null)
   ui.setDraftsOpen(false)
-  await useInbox.getState().sendMessage(threadId, body)
+  stopTyping(threadId)
+  await useInbox.getState().sendMessage(threadId, body, replyToId ? { replyToId } : undefined)
+}
+
+/** Quotes a message in the reply being written. */
+export function startReply(threadId: string, messageId: string) {
+  const ui = useUi.getState()
+  ui.setReplyingTo(threadId, messageId)
+  ui.focusComposer()
+}
+
+/** Reacts with `emoji`, or takes my reaction back if it's the one I already gave. */
+export async function toggleReaction(threadId: string, messageId: string, emoji: string) {
+  const message = useInbox.getState().messages[threadId]?.find((m) => m.id === messageId)
+  const next = myReaction(message?.reactions) === emoji ? null : emoji
+  try {
+    await useInbox.getState().react(threadId, messageId, next)
+  } catch (error) {
+    toast({ title: 'Reaction not sent', description: error instanceof Error ? error.message : undefined, group: 'reaction' })
+  }
+}
+
+/* ── Typing notices ─────────────────────────────────────────────────────── */
+
+/** "Typing" is renewed at most this often while the user keeps typing… */
+const TYPING_RENEW_MS = 4000
+/** …and taken back after this long without a keystroke. */
+const TYPING_IDLE_MS = 5000
+const typingSentAt = new Map<string, number>()
+const typingIdle = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Called on each keystroke in the composer: tells the chat I'm typing, where it can be told. */
+export function noteTyping(threadId: string) {
+  if (!api.capabilities(threadId).typing) return
+  if (Date.now() - (typingSentAt.get(threadId) ?? 0) > TYPING_RENEW_MS) {
+    typingSentAt.set(threadId, Date.now())
+    void api.setTyping(threadId, true)
+  }
+  clearTimeout(typingIdle.get(threadId))
+  typingIdle.set(threadId, setTimeout(() => stopTyping(threadId), TYPING_IDLE_MS))
+}
+
+export function stopTyping(threadId: string) {
+  clearTimeout(typingIdle.get(threadId))
+  typingIdle.delete(threadId)
+  if (!typingSentAt.delete(threadId)) return
+  void api.setTyping(threadId, false)
 }
 
 /**
@@ -201,7 +250,7 @@ export async function unlinkNetwork(network: LinkedNetwork) {
   forgetThreadsHere((id) => id.startsWith(prefix))
   toast({
     title: `${LINKED_NAMES[network]} unlinked`,
-    description: 'Tidings was logged out of it, and its chats were deleted from the server.',
+    description: 'Sytext was logged out of it, and its chats were deleted from the server.',
     group: 'accounts',
   })
 }

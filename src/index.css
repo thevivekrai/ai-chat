@@ -17,6 +17,7 @@
   --animate-dialog-in: dialog-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-flash: flash 1.8s ease-out both;
   --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-typing: typing 1.2s ease-in-out infinite;
 
   @keyframes fade-in {
     from {
@@ -71,6 +72,19 @@
     }
     to {
       background-position: -50% 0;
+    }
+  }
+  /* The three dots of "typing…". */
+  @keyframes typing {
+    0%,
+    60%,
+    100% {
+      opacity: 0.4;
+      transform: none;
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-3px);
     }
   }
 }

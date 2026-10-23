@@ -8,7 +8,7 @@ import { searchMessages } from '../search'
 import { serverApi } from '../server/serverApi'
 import { ServerConnector } from '../server/serverConnector'
 import type { InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
-import { ME_ID } from '../types'
+import { ME_ID, NO_CAPABILITIES } from '../types'
 import {
   CONFIG_KEY,
   LOCAL_KEY,
@@ -24,7 +24,7 @@ import {
  * The inbox as one API over every source: the demo inbox and any connected accounts.
  *
  * - Reads merge every source; writes are routed by id prefix ("tg:", "mx:", "wa:"/"tga:" for
- *   accounts linked on the Tidings server, none for demo chats).
+ *   accounts linked on the Sytext server, none for demo chats).
  * - Done/snoozed state, tasks and "send later" for real accounts live on this device, since the
  *   networks have no such thing. Scheduled messages go out while the app is open; one that was
  *   due while it was closed waits for the user rather than arriving hours late.
@@ -57,7 +57,7 @@ export function createUnifiedApi(): InboxApi {
   let config = loadConfig()
   let local: LocalState = loadLocal()
   const connectors = new Map<ConnectorId, { connector: Connector; detach: () => void }>()
-  /** Accounts linked on the Tidings server, while signed in to it. */
+  /** Accounts linked on the Sytext server, while signed in to it. */
   let server: { connector: ServerConnector; name: string; detach: () => void } | null = null
   const signedOutListeners = new Set<() => void>()
   /** Latest copy of every connector thread, for events that need the whole thread. */
@@ -375,7 +375,10 @@ export function createUnifiedApi(): InboxApi {
       }
       if (!user && !server) return
       if (user) {
-        const connector = new ServerConnector({ onSignedOut: () => signedOutListeners.forEach((listener) => listener()) })
+        const connector = new ServerConnector({
+          owner: user.id,
+          onSignedOut: () => signedOutListeners.forEach((listener) => listener()),
+        })
         const offEvents = connector.subscribe((event) => onConnectorEvent(event))
         const offStatus = connector.onStatus(() => notifyConnections())
         const offAccounts = connector.onAccounts(() => notifyConnections())
@@ -384,7 +387,8 @@ export function createUnifiedApi(): InboxApi {
       } else {
         server?.detach()
         server = null
-        // Signed out: nothing of that account's chats stays on this device.
+        // Signed out: nothing of that account's chats stays on this device (the connector deletes
+        // its copy of them). The links themselves carry on, on the server.
         forgetLocal('server', { tasks: true })
       }
       notifyConnections()
@@ -403,13 +407,20 @@ export function createUnifiedApi(): InboxApi {
       return result
     },
 
-    onWhatsAppQr(listener) {
+    onLinkQr(listener) {
       return server ? server.connector.onQr(listener) : () => {}
     },
 
     async requestTelegramCode(phone) {
       const connector = requireServer()
       const result = await serverApi.telegramCode(phone)
+      void connector.refreshAccounts().catch(() => undefined)
+      return result
+    },
+
+    async requestTelegramQr() {
+      const connector = requireServer()
+      const result = await serverApi.telegramQr()
       void connector.refreshAccounts().catch(() => undefined)
       return result
     },
@@ -448,9 +459,38 @@ export function createUnifiedApi(): InboxApi {
   return {
     loadInbox: snapshot,
 
-    async sendMessage(threadId, body) {
-      if (sourceOf(threadId) === 'demo') return demoApi.sendMessage(threadId, body)
-      return connectorFor(threadId).sendMessage(threadId, body)
+    async sendMessage(threadId, body, options) {
+      if (sourceOf(threadId) === 'demo') return demoApi.sendMessage(threadId, body, options)
+      return connectorFor(threadId).sendMessage(threadId, body, options)
+    },
+
+    capabilities(threadId) {
+      if (sourceOf(threadId) === 'demo') return demoApi.capabilities(threadId)
+      const source = sourceOf(threadId)
+      const connector = source === 'server' ? server?.connector : connectors.get(source as ConnectorId)?.connector
+      return connector?.capabilities?.(threadId) ?? NO_CAPABILITIES
+    },
+
+    async react(threadId, messageId, emoji) {
+      if (sourceOf(threadId) === 'demo') return demoApi.react(threadId, messageId, emoji)
+      const connector = connectorFor(threadId)
+      if (!connector.react) throw new Error("This chat doesn't support reactions.")
+      return connector.react(threadId, messageId, emoji)
+    },
+
+    async setTyping(threadId, typing) {
+      if (sourceOf(threadId) === 'demo') return demoApi.setTyping(threadId, typing)
+      try {
+        await connectorFor(threadId).setTyping?.(threadId, typing)
+      } catch {
+        // Only a courtesy to the other side; never worth an error.
+      }
+    },
+
+    async loadOlder(threadId, beforeId) {
+      if (sourceOf(threadId) === 'demo') return demoApi.loadOlder(threadId, beforeId)
+      const connector = connectorFor(threadId)
+      return connector.loadOlder ? connector.loadOlder(threadId, beforeId) : { messages: [], hasMore: false }
     },
 
     async markRead(threadId) {

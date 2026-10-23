@@ -1,5 +1,27 @@
+import { MongoClient, ObjectId } from 'mongodb'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { Browser, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
+import { connectDatabase } from './db.ts'
+import { Browser, PIXEL, startTestServer, TEST_MONGODB_URI, waitFor, type FakeWaSocket, type TestServer } from './testing/helpers.ts'
+
+const enc = encodeURIComponent
+const byId = (messages: { id: string }[]) => Object.fromEntries(messages.map((m) => [m.id, m])) as Record<string, any>
+
+describe.skipIf(!TEST_MONGODB_URI)('a database shared with another app', () => {
+  it('is explained, rather than failing with MongoDB\'s error', async () => {
+    const name = `sytext_shared_${Date.now()}`
+    const other = await new MongoClient(TEST_MONGODB_URI!).connect()
+    try {
+      // Another app's "users", with its own index on email.
+      await other.db(name).collection('users').createIndex({ email: 1 })
+      await expect(connectDatabase(TEST_MONGODB_URI!, name)).rejects.toThrow(
+        new RegExp(`The database "${name}" already has a "users" collection, set up by another app\\. Give Sytext a database of its own`),
+      )
+    } finally {
+      await other.db(name).dropDatabase()
+      await other.close()
+    }
+  })
+})
 
 describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   let server: TestServer
@@ -17,6 +39,26 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
     const res = await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough' })
     expect(res.status).toBe(200)
     return browser
+  }
+
+  /** Links WhatsApp the way a phone would, and returns the connected socket. */
+  async function linkWhatsApp(browser: Browser): Promise<FakeWaSocket> {
+    await browser.post('/api/link/whatsapp', { phone: '+91 98765 43210' })
+    const socket = server.sockets.at(-1)!
+    socket.authState.creds.registered = true
+    socket.emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() },
+    })
+    const linked = await waitFor(() => {
+      const s = server.sockets.at(-1)!
+      if (s === socket) throw new Error('Not reconnected yet')
+      return s
+    })
+    linked.user = { id: '919876543210:4@s.whatsapp.net' }
+    linked.emit('connection.update', { connection: 'open' })
+    await waitFor(async () => expect((await browser.get('/api/accounts')).json.accounts[0]?.status).toBe('connected'))
+    return linked
   }
 
   describe('sign-in', () => {
@@ -121,7 +163,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(code.json).toEqual({ via: 'app' })
       expect(tg.state.codesSent).toContain('+919876543210')
       expect((await browser.get('/api/accounts')).json.accounts).toEqual([
-        { network: 'telegram', status: 'linking', label: '+919876543210', detail: 'Enter the code Telegram sent to your Telegram app.' },
+        { network: 'telegram', status: 'linking', step: 'code', label: '+919876543210', detail: 'Enter the code Telegram sent to your Telegram app.' },
       ])
       expect((await browser.post('/api/link/telegram/verify', { code: '11111' })).json.error).toMatch(/isn't right/)
 
@@ -140,8 +182,8 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(inbox.threads[1]).toMatchObject({ title: 'Trek crew', kind: 'group', participantIds: ['tga:6002'] })
       expect(inbox.contacts).toEqual(
         expect.arrayContaining([
-          { id: 'tga:5001', name: 'Asha Rao', network: 'telegram', handle: '@asha' },
-          { id: 'tga:6002', name: 'Kabir', network: 'telegram', handle: '@kabir' },
+          expect.objectContaining({ id: 'tga:5001', name: 'Asha Rao', network: 'telegram', handle: '@asha' }),
+          expect.objectContaining({ id: 'tga:6002', name: 'Kabir', network: 'telegram', handle: '@kabir' }),
         ]),
       )
       const byId = Object.fromEntries(inbox.messages.map((m: { id: string }) => [m.id, m]))
@@ -201,6 +243,115 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(await server.database.col.messages.countDocuments({ id: /^tga:/ })).toBe(0)
     })
 
+    it('brings in replies, reactions, pictures and older messages; sends replies, reactions and typing', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('tg-extras@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00003' })
+      expect((await browser.post('/api/link/telegram/verify', { code: '12345' })).json).toEqual({ status: 'connected' })
+
+      // Quotes, reactions and pictures come in with the first sync.
+      const inbox = await waitFor(async () => {
+        const json = (await browser.get('/api/inbox')).json
+        if (!json.contacts.find((c: { id: string; avatarUrl?: string }) => c.id === 'tga:5001')?.avatarUrl) throw new Error('No picture yet')
+        return json
+      })
+      const messages = byId(inbox.messages)
+      expect(messages['tga:5001:12'].replyTo).toEqual({ id: 'tga:5001:11', senderId: 'me', body: 'Yes! See you at 9' })
+      expect(messages['tga:5001:11'].reactions).toEqual([{ emoji: '👍', count: 1, mine: false }])
+
+      // Pictures are served to their owner only.
+      const { avatarUrl } = inbox.contacts.find((c: { id: string }) => c.id === 'tga:5001')
+      expect(avatarUrl).toMatch(/^\/api\/avatars\/tga%3A5001\?v=\w+$/)
+      const picture = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(picture.headers.get('content-type')).toBe('image/jpeg')
+      expect(Buffer.from(await picture.arrayBuffer())).toEqual(PIXEL)
+      expect((await fetch(server.url + avatarUrl)).status).toBe(401)
+      const stranger = await newUser('tg-extras-stranger@example.com')
+      expect((await fetch(server.url + avatarUrl, { headers: { Cookie: stranger.cookie } })).status).toBe(404)
+
+      // Earlier messages, fetched from Telegram.
+      const older = await browser.get(`/api/threads/${enc('tga:5001')}/messages?before=${enc('tga:5001:11')}`)
+      expect(older.json.messages.map((m: { body: string }) => m.body)).toEqual(['Rajmachi, the long one', 'Which trail are we doing?'])
+      expect(older.json.hasMore).toBe(false)
+
+      // Replying quotes the message.
+      const events = await browser.events()
+      const reply = await browser.post(`/api/threads/${enc('tga:5001')}/messages`, { body: 'Yes, Saturday', replyToId: 'tga:5001:12' })
+      expect(reply.json.message.replyTo).toEqual({ id: 'tga:5001:12', senderId: 'tga:5001', body: 'Are we still on for Saturday?' })
+      expect(tg.state.sent.at(-1)).toEqual({ chatId: '5001', text: 'Yes, Saturday', replyToId: 12 })
+
+      // Reacting, and what Telegram doesn't allow.
+      const react = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: 'tga:5001:12', emoji: '❤️' })
+      expect(react.json.message.reactions).toEqual([{ emoji: '❤️', count: 1, mine: true }])
+      expect(tg.state.reactions.at(-1)).toEqual({ chatId: '5001', messageId: 12, emoji: '❤️' })
+      const refused = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: 'tga:5001:12', emoji: '🦄' })
+      expect(refused.json.error).toMatch(/doesn't allow/)
+      const notEmoji = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: 'tga:5001:12', emoji: 'definitely not an emoji' })
+      expect(notEmoji.status).toBe(400)
+      tg.emit({ type: 'reactions', chatId: '5001', messageId: 11, reactions: [{ emoji: '🔥', count: 2, mine: false }] })
+      await events.next((e) => e.type === 'message.updated' && e.message.id === 'tga:5001:11' && e.message.reactions?.[0]?.emoji === '🔥')
+
+      // Typing, both ways.
+      await browser.post(`/api/threads/${enc('tga:5001')}/typing`, { typing: true })
+      expect(tg.state.typing.at(-1)).toEqual({ chatId: '5001', typing: true })
+      tg.emit({ type: 'typing', chatId: '5001', senderId: '5001', active: true })
+      await events.next((e) => e.type === 'typing' && e.threadId === 'tga:5001' && e.senderId === 'tga:5001' && e.active)
+      events.close()
+
+      // Messages the server no longer keeps (it keeps only the latest of each chat) still work,
+      // from what the device knows of them.
+      await server.database.col.messages.deleteOne({ id: 'tga:5001:10' })
+      const hint = { id: 'tga:5001:10', senderId: 'tga:5001', sentAt: new Date().toISOString(), body: 'Which trail are we doing?' }
+      const lateReact = await browser.post(`/api/threads/${enc('tga:5001')}/reactions`, { messageId: hint.id, emoji: '👍', message: hint })
+      expect(lateReact.json).toEqual({ message: null })
+      expect(tg.state.reactions.at(-1)).toEqual({ chatId: '5001', messageId: 10, emoji: '👍' })
+      const lateReply = await browser.post(`/api/threads/${enc('tga:5001')}/messages`, { body: 'Rajmachi', replyToId: hint.id, replyTo: hint })
+      expect(lateReply.json.message.replyTo).toEqual({ id: hint.id, senderId: hint.senderId, body: hint.body })
+      expect(tg.state.sent.at(-1)).toEqual({ chatId: '5001', text: 'Rajmachi', replyToId: 10 })
+      const beforeGone = await browser.get(`/api/threads/${enc('tga:5001')}/messages?before=${enc(hint.id)}`)
+      expect(beforeGone.json.messages.map((m: { body: string }) => m.body)).toEqual(['Rajmachi, the long one'])
+
+      // Only that there is a picture is stored; after a restart it's downloaded from Telegram again.
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const record = await server.database.col.avatars.findOne({ userId, id: 'tga:5001' })
+      expect(record).toMatchObject({ version: expect.any(String) })
+      expect(record).not.toHaveProperty('data')
+      await server.restart()
+      await waitFor(() => expect(server.current().telegram.isConnected(userId)).toBe(true))
+      const again = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(again.status).toBe(200)
+      expect(Buffer.from(await again.arrayBuffer())).toEqual(PIXEL)
+
+      await browser.delete('/api/link/telegram')
+      expect(await server.database.col.avatars.countDocuments({ userId })).toBe(0)
+    })
+
+    it('links by QR code, then the two-step password', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = true
+      const browser = await newUser('tg-qr@example.com')
+      const events = await browser.events()
+
+      const qr = await browser.post('/api/link/telegram/qr')
+      expect(qr.json.qr).toMatch(/^data:image\/png;base64,/)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'linking', step: 'qr' })
+
+      tg.state.scanQr()
+      await events.next((e) => e.type === 'account.updated' && e.account.step === 'password')
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ step: 'password', hint: 'first pet' })
+      expect((await browser.post('/api/link/telegram/password', { password: 'nope' })).status).toBe(400)
+      expect((await browser.post('/api/link/telegram/password', { password: 'hunter2' })).json).toEqual({ status: 'connected' })
+      await events.next((e) => e.type === 'reloaded')
+      events.close()
+      await browser.delete('/api/link/telegram')
+
+      // Cancelling a QR sign-in midway leaves nothing behind.
+      await browser.post('/api/link/telegram/qr')
+      await browser.delete('/api/link/telegram')
+      expect((await browser.get('/api/accounts')).json.accounts).toEqual([])
+    })
+
     it('notices a session ended from Telegram when restarting', async () => {
       const tg = server.telegram
       tg.state.needsPassword = false
@@ -215,6 +366,33 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(accounts[0]).toMatchObject({ network: 'telegram', status: 'disconnected' })
       expect(accounts[0].detail).toMatch(/Settings → Devices/)
       tg.state.revoked = false
+      await browser.delete('/api/link/telegram')
+    })
+
+    it('catches up on messages missed while the connection was down', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('tg-catchup@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00004' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeDefined())
+      const events = await browser.events()
+
+      // A message Telegram never told the server about: the regular check finds it.
+      tg.ashaMessages.unshift({ id: 15, chat: tg.asha, out: false, text: 'Missed this one?', date: Math.floor(Date.now() / 1000) })
+      try {
+        await server.current().telegram.checkAll()
+        await events.next((e) => e.type === 'reloaded')
+        expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:15']).toMatchObject({ body: 'Missed this one?' })
+      } finally {
+        tg.ashaMessages.shift()
+      }
+      // Nothing new: nothing to tell the browser.
+      const before = events.received.length
+      await server.current().telegram.checkAll()
+      expect(events.received.slice(before).some((e) => e.type === 'reloaded')).toBe(false)
+
+      events.close()
       await browser.delete('/api/link/telegram')
     })
   })
@@ -299,9 +477,205 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(await server.database.col.waAuth.countDocuments({})).toBe(0)
     })
 
+    it('handles replies, reactions, typing, pictures and older messages', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const thread = enc(`wa:${RAVI}`)
+      const browser = await newUser('wa-extras@example.com')
+      const socket = await linkWhatsApp(browser)
+      const events = await browser.events()
+      const ts = Math.floor(Date.now() / 1000)
+
+      socket.emit('messaging-history.set', {
+        chats: [{ id: RAVI }],
+        contacts: [{ id: RAVI, name: 'Ravi Kumar' }],
+        messages: [
+          // Newest first, as WhatsApp sends them: the reaction and the reply come before what they point at.
+          { key: { remoteJid: RAVI, fromMe: false, id: 'R1' }, message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, text: '🙏' } }, messageTimestamp: ts - 40 },
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: 'M1' },
+            message: {
+              extendedTextMessage: {
+                text: 'Got it, thanks!',
+                contextInfo: { stanzaId: 'M0', participant: '919876543210@s.whatsapp.net', quotedMessage: { conversation: 'Sent it Monday' } },
+              },
+            },
+            messageTimestamp: ts - 50,
+          },
+          { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, message: { conversation: 'Sent it Monday' }, messageTimestamp: ts - 100, status: 4 },
+        ],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      await events.next((e) => e.type === 'reloaded')
+
+      const inbox = await waitFor(async () => {
+        const json = (await browser.get('/api/inbox')).json
+        if (!json.contacts.find((c: { id: string; avatarUrl?: string }) => c.id === `wa:${RAVI}`)?.avatarUrl) throw new Error('No picture yet')
+        return json
+      })
+      const messages = byId(inbox.messages)
+      expect(messages[`wa:${RAVI}:M1`].replyTo).toEqual({ id: `wa:${RAVI}:M0`, senderId: 'me', body: 'Sent it Monday' })
+      expect(messages[`wa:${RAVI}:M0`].reactions).toEqual([{ emoji: '🙏', count: 1, mine: false }])
+      expect(messages[`wa:${RAVI}:R1`]).toBeUndefined()
+      const { avatarUrl } = inbox.contacts.find((c: { id: string }) => c.id === `wa:${RAVI}`)
+      const picture = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(picture.headers.get('content-type')).toBe('image/png')
+
+      // Replying and reacting.
+      const reply = await browser.post(`/api/threads/${thread}/messages`, { body: 'Great!', replyToId: `wa:${RAVI}:M1` })
+      expect(reply.json.message.replyTo).toEqual({ id: `wa:${RAVI}:M1`, senderId: `wa:${RAVI}`, body: 'Got it, thanks!' })
+      expect(socket.sent.at(-1)).toEqual({ jid: RAVI, text: 'Great!', quotedId: 'M1' })
+      const react = await browser.post(`/api/threads/${thread}/reactions`, { messageId: `wa:${RAVI}:M1`, emoji: '👍' })
+      expect(react.json.message.reactions).toEqual([{ emoji: '👍', count: 1, mine: true }])
+      expect(socket.reactions.at(-1)).toEqual({ jid: RAVI, emoji: '👍', targetId: 'M1' })
+      const unreact = await browser.post(`/api/threads/${thread}/reactions`, { messageId: `wa:${RAVI}:M1`, emoji: null })
+      expect(unreact.json.message.reactions).toBeUndefined()
+      expect(socket.reactions.at(-1)).toEqual({ jid: RAVI, emoji: '', targetId: 'M1' })
+
+      // Ravi reacts to my reply, live.
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'R2' }, message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'SENT1' }, text: '❤️' } }, messageTimestamp: ts }],
+      } as never)
+      await events.next((e) => e.type === 'message.updated' && e.message.id === `wa:${RAVI}:SENT1` && e.message.reactions?.[0]?.emoji === '❤️')
+
+      // Typing, both ways.
+      await browser.post(`/api/threads/${thread}/typing`, { typing: true })
+      expect(socket.presence).toContainEqual({ type: 'composing', jid: RAVI })
+      socket.emit('presence.update', { id: RAVI, presences: { [RAVI]: { lastKnownPresence: 'composing' } } })
+      await events.next((e) => e.type === 'typing' && e.senderId === `wa:${RAVI}` && e.active)
+
+      // Older messages: none stored, so the phone is asked; they arrive as new messages.
+      const first = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:M0`)}`)
+      expect(first.json).toEqual({ messages: [], hasMore: true })
+      expect(socket.historyRequests).toEqual([{ count: 50, oldestId: 'M0' }])
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'OLD1' }, message: { conversation: 'Parcel booked?' }, messageTimestamp: ts - 86400 }],
+        syncType: 6,
+      } as never)
+      await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:OLD1`)
+      const second = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:M0`)}`)
+      expect(second.json.messages.map((m: { body: string }) => m.body)).toEqual(['Parcel booked?'])
+      // Nothing older on the phone either: asking from the same message again ends it.
+      const third = await browser.get(`/api/threads/${thread}/messages?before=${enc(`wa:${RAVI}:OLD1`)}`)
+      expect(third.json).toEqual({ messages: [], hasMore: false })
+      events.close()
+
+      // Messages the server no longer keeps still work, from what the device knows of them.
+      await server.database.col.messages.deleteOne({ id: `wa:${RAVI}:M1` })
+      const hint = { id: `wa:${RAVI}:M1`, senderId: `wa:${RAVI}`, sentAt: new Date((ts - 50) * 1000).toISOString(), body: 'Got it, thanks!' }
+      const lateReact = await browser.post(`/api/threads/${thread}/reactions`, { messageId: hint.id, emoji: '😂', message: hint })
+      expect(lateReact.json).toEqual({ message: null })
+      expect(socket.reactions.at(-1)).toEqual({ jid: RAVI, emoji: '😂', targetId: 'M1' })
+      const lateReply = await browser.post(`/api/threads/${thread}/messages`, { body: 'Haha', replyToId: hint.id, replyTo: hint })
+      expect(lateReply.json.message.replyTo).toEqual({ id: hint.id, senderId: hint.senderId, body: hint.body })
+      expect(socket.sent.at(-1)).toEqual({ jid: RAVI, text: 'Haha', quotedId: 'M1' })
+      // Without it (or with a hint for another message), there's nothing to go on.
+      expect((await browser.post(`/api/threads/${thread}/reactions`, { messageId: hint.id, emoji: '😂' })).status).toBe(404)
+      const mismatched = { ...hint, id: `wa:${RAVI}:OTHER` }
+      expect((await browser.post(`/api/threads/${thread}/reactions`, { messageId: hint.id, emoji: '😂', message: mismatched })).status).toBe(404)
+      // Paging back from a message only the device has asks the phone from it.
+      const gone = { id: `wa:${RAVI}:GONE`, sentAt: new Date((ts - 90_000) * 1000).toISOString() }
+      const fromDevice = await browser.get(`/api/threads/${thread}/messages?before=${enc(gone.id)}&senderId=me&sentAt=${enc(gone.sentAt)}`)
+      expect(fromDevice.json).toEqual({ messages: [], hasMore: true })
+      expect(socket.historyRequests.at(-1)).toEqual({ count: 50, oldestId: 'GONE' })
+
+      // After a restart the picture is downloaded again from the link WhatsApp gave.
+      await server.restart()
+      const again = await fetch(server.url + avatarUrl, { headers: { Cookie: browser.cookie } })
+      expect(again.status).toBe(200)
+      expect(Buffer.from(await again.arrayBuffer())).toEqual(PIXEL)
+
+      await browser.delete('/api/link/whatsapp')
+    })
+
+    it('keeps only the latest messages of each chat', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const browser = await newUser('wa-trim@example.com')
+      const socket = await linkWhatsApp(browser)
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const ts = Math.floor(Date.now() / 1000)
+      const say = (target: FakeWaSocket, n: number) =>
+        target.emit('messages.upsert', {
+          type: 'notify',
+          messages: [{ key: { remoteJid: RAVI, fromMe: false, id: `N${n}` }, message: { conversation: `Message ${n}` }, messageTimestamp: ts - 1000 + n }],
+        } as never)
+      const stored = () => server.database.col.messages.countDocuments({ userId, threadId: `wa:${RAVI}` })
+
+      for (let n = 1; n <= 45; n++) say(socket, n)
+      await waitFor(async () => expect(await stored()).toBe(45))
+      expect(await server.current().store.trim()).toBe(5)
+      expect(await stored()).toBe(40)
+      const inbox = (await browser.get('/api/inbox')).json
+      const bodies = inbox.messages.map((m: { body: string }) => m.body)
+      expect(bodies).toHaveLength(40)
+      expect(bodies).toContain('Message 45')
+      expect(bodies).not.toContain('Message 5')
+
+      // Data stored before the limit existed is trimmed on start.
+      await server.restart()
+      const reopened = server.sockets.at(-1)!
+      reopened.emit('connection.update', { connection: 'open' })
+      for (let n = 46; n <= 48; n++) say(reopened, n)
+      await waitFor(async () => expect(await stored()).toBe(43))
+      expect(await server.current().store.trimAll()).toBe(3)
+      expect(await stored()).toBe(40)
+
+      await browser.delete('/api/link/whatsapp')
+    })
+
     it('explains when linking fails', async () => {
       const browser = await newUser('wa2@example.com')
       expect((await browser.post('/api/link/whatsapp', { phone: '12' })).status).toBe(400)
+    })
+  })
+
+  describe('signing out of Sytext', () => {
+    it('leaves WhatsApp and Telegram linked: messages keep coming in, and are there on signing back in', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('away@example.com')
+      const socket = await linkWhatsApp(browser)
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00005' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeDefined())
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const loggedOutBefore = tg.state.loggedOut
+
+      await browser.post('/api/auth/logout')
+      expect((await browser.get('/api/inbox')).status).toBe(401)
+
+      // Signed out, both links carry on.
+      const now = Math.floor(Date.now() / 1000)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'AWAY1' }, message: { conversation: 'Are you there?' }, messageTimestamp: now }],
+      } as never)
+      tg.emit({ type: 'message', message: { id: 16, chat: tg.asha, out: false, text: 'Ping', date: now } })
+      expect(server.current().whatsapp.isConnected(userId)).toBe(true)
+      expect(server.current().telegram.isConnected(userId)).toBe(true)
+      expect(socket.ended || socket.loggedOut).toBe(false)
+      expect(tg.state.loggedOut).toBe(loggedOutBefore)
+
+      // Back in: what arrived meanwhile is there.
+      expect((await browser.post('/api/auth/login', { email: 'away@example.com', password: 'long enough' })).status).toBe(200)
+      const inbox = await waitFor(async () => {
+        const json = (await browser.get('/api/inbox')).json
+        const messages = byId(json.messages)
+        expect(messages[`wa:${RAVI}:AWAY1`]).toMatchObject({ body: 'Are you there?' })
+        expect(messages['tga:5001:16']).toMatchObject({ body: 'Ping' })
+        return json
+      })
+      expect(inbox.accounts.map((a: { network: string; status: string }) => `${a.network}:${a.status}`).sort()).toEqual([
+        'telegram:connected',
+        'whatsapp:connected',
+      ])
+
+      await browser.delete('/api/link/whatsapp')
+      await browser.delete('/api/link/telegram')
     })
   })
 })

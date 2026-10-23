@@ -1,14 +1,16 @@
 import { create } from 'zustand'
 import { api } from '@/data/api'
+import { wipeDeviceStore } from '@/data/server/deviceStore'
 import { serverApi } from '@/data/server/serverApi'
 import type { PublicUser, ServerFeatures } from '@/data/server/types'
 import { storage } from '@/data/storage'
 import { useInbox } from './inbox'
+import { useUi } from './ui'
 
 /**
  * Who is using the app.
  *
- * - no-server: there is no Tidings server (a static deploy); the app runs without accounts.
+ * - no-server: there is no Sytext server (a static deploy); the app runs without accounts.
  * - signed-out: the sign-in screen.
  * - guest: trying the demo without an account.
  * - signed-in: the WhatsApp and Telegram accounts linked on the server are in the inbox.
@@ -52,6 +54,8 @@ export const useSession = create<SessionState>()((set, get) => ({
       set({ features })
       await get().signedIn(user)
     } else {
+      // The session ended while the app was closed: chats kept on this device go too.
+      void wipeDeviceStore()
       set({ features, status: storage.get(GUEST_KEY) ? 'guest' : 'signed-out' })
     }
   },
@@ -70,6 +74,8 @@ export const useSession = create<SessionState>()((set, get) => ({
   async signedOut(notice) {
     storage.remove(GUEST_KEY)
     useInbox.getState().clear()
+    // Signing back in starts at the inbox, not wherever the last person left off.
+    useUi.getState().closeDialog()
     set({ status: 'signed-out', user: null, notice: notice ?? null })
     await api.connections.setServerSession(null)
   },

@@ -1,5 +1,6 @@
 import type { InboxApi } from '../api'
-import type { InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
+import { withMyReaction } from '../reactions'
+import type { ChatCapabilities, InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
 import { ME_ID } from '../types'
 import { toMs } from '@/lib/time'
 import { loadDb, saveDb, seedDb, type MockDb } from './db'
@@ -15,6 +16,9 @@ const newId = (prefix: string) =>
   `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 
 const clone = <T>(value: T): T => structuredClone(value)
+
+/** The demo shows replies, reactions and typing; it has no older history to fetch. */
+const DEMO_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: false }
 
 /** The demo inbox's backend: the inbox API minus account management, with its demo controls. */
 export type DemoApi = Omit<InboxApi, 'connections' | 'demo'> & { demo: NonNullable<InboxApi['demo']> }
@@ -91,9 +95,10 @@ export function createMockApi(): DemoApi {
       return snapshot()
     },
 
-    async sendMessage(threadId, body) {
+    async sendMessage(threadId, body, options) {
       await latency(240)
       findThread(threadId)
+      const quoted = options?.replyToId ? db.messages.find((m) => m.id === options.replyToId) : undefined
       const message: Message = {
         id: newId('m'),
         threadId,
@@ -101,11 +106,33 @@ export function createMockApi(): DemoApi {
         body,
         sentAt: new Date().toISOString(),
         status: 'sent',
+        ...(quoted ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
       }
       db.messages.push(message)
       persist()
       markDelivered(message)
       return clone(message)
+    },
+
+    capabilities: () => DEMO_CAPABILITIES,
+
+    async react(threadId, messageId, emoji) {
+      await latency(80)
+      const message = db.messages.find((m) => m.id === messageId && m.threadId === threadId)
+      if (!message) throw new Error(`Unknown message ${messageId}`)
+      const reactions = withMyReaction(message.reactions, emoji)
+      if (reactions.length) message.reactions = reactions
+      else delete message.reactions
+      persist()
+      return clone(message)
+    },
+
+    async setTyping() {
+      // Nobody on the other end of the demo.
+    },
+
+    async loadOlder() {
+      return { messages: [], hasMore: false }
     },
 
     async markRead(threadId) {
@@ -209,6 +236,10 @@ export function createMockApi(): DemoApi {
         const next = INCOMING_POOL[db.incomingCursor % INCOMING_POOL.length]
         db.incomingCursor += 1
         const thread = findThread(next.threadId)
+        // They type for a moment first, as people do.
+        emit({ type: 'typing', threadId: next.threadId, senderId: next.senderId, active: true })
+        await latency(1800)
+        emit({ type: 'typing', threadId: next.threadId, senderId: next.senderId, active: false })
         const message: Message = {
           id: newId('m'),
           threadId: next.threadId,

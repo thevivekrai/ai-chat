@@ -1,16 +1,30 @@
 import type { ObjectId } from 'mongodb'
-import type { Contact, Message, Thread } from '../../src/data/types.ts'
+import { MESSAGES_KEPT_PER_CHAT } from '../../src/data/server/types.ts'
+import type { Contact, Message, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, MessageDoc, MessagePayload, ThreadDoc } from '../db.ts'
 
-/** How much of each chat the browser gets on load. */
+/** How many chats the browser gets on load (each with every message the server keeps of it). */
 const SNAPSHOT_THREADS = 200
-const SNAPSHOT_MESSAGES_PER_THREAD = 50
 
 export interface StoredMessage extends Message {
   /** Network-specific reference kept alongside (e.g. a WhatsApp message key). */
   ref?: Record<string, unknown>
 }
+
+/** Totals per emoji from who-reacted-with-what. */
+function totals(by: Record<string, string>): Reaction[] {
+  const byEmoji = new Map<string, Reaction>()
+  for (const [sender, emoji] of Object.entries(by)) {
+    const reaction = byEmoji.get(emoji) ?? { emoji, count: 0, mine: false }
+    reaction.count++
+    if (sender === 'me') reaction.mine = true
+    byEmoji.set(emoji, reaction)
+  }
+  return [...byEmoji.values()]
+}
+
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 export interface InboxSnapshotPart {
   threads: Thread[]
@@ -50,19 +64,58 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     // Done and snoozed live in the browser for linked chats, like for every other connector.
     doneAt: null,
     snoozedUntil: null,
+    ...(doc.avatarUrl ? { avatarUrl: doc.avatarUrl } : {}),
   })
 
   const toMessage = (doc: MessageDoc): Message => {
-    const { body, attachments } = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
+    const payload = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
+    const reactions = payload.reactionTotals ?? (payload.reactionsBy ? totals(payload.reactionsBy) : [])
     return {
       id: doc.id,
       threadId: doc.threadId,
       senderId: doc.senderId,
-      body,
+      body: payload.body,
       sentAt: doc.sentAt.toISOString(),
       ...(doc.status ? { status: doc.status } : {}),
-      ...(attachments?.length ? { attachments } : {}),
+      ...(payload.attachments?.length ? { attachments: payload.attachments } : {}),
+      ...(payload.replyTo ? { replyTo: payload.replyTo } : {}),
+      ...(reactions.length ? { reactions } : {}),
     }
+  }
+
+  const toContact = (doc: { id: string; network: Contact['network']; data: string }): Contact => {
+    const { name, handle, avatarUrl } = openJson<{ name: string; handle: string; avatarUrl?: string }>(doc.data, {
+      name: 'Unknown',
+      handle: '',
+    })
+    return { id: doc.id, network: doc.network, name, handle, ...(avatarUrl ? { avatarUrl } : {}) }
+  }
+
+  /** Chats that got new messages since they were last trimmed, by user and chat id. */
+  const untrimmed = new Map<string, { userId: ObjectId; threadId: string }>()
+
+  /** Deletes what's beyond the latest messages of a chat; returns how many went. */
+  async function trimThread(userId: ObjectId, threadId: string): Promise<number> {
+    const extra = await col.messages
+      .find({ userId, threadId }, { projection: { _id: 1 } })
+      .sort({ sentAt: -1 })
+      .skip(MESSAGES_KEPT_PER_CHAT)
+      .toArray()
+    if (!extra.length) return 0
+    return (await col.messages.deleteMany({ _id: { $in: extra.map((d) => d._id) } })).deletedCount
+  }
+
+  /** Rewrites a message's sealed payload. */
+  async function updatePayload(userId: ObjectId, id: string, change: (payload: MessagePayload) => MessagePayload) {
+    const doc = await col.messages.findOne({ userId, id })
+    if (!doc) return null
+    const payload = change(openJson<MessagePayload>(doc.payload, { body: UNREADABLE }))
+    const updated = await col.messages.findOneAndUpdate(
+      { userId, id },
+      { $set: { payload: sealer.sealJson(payload) } },
+      { returnDocument: 'after' },
+    )
+    return updated && toMessage(updated)
   }
 
   return {
@@ -111,12 +164,14 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       await col.threads.updateOne({ userId, id: threadId }, { $inc: { unreadCount: 1 } })
     },
 
+    /** Creates or updates a contact; a picture already stored is kept unless a new one is given. */
     async upsertContact(userId: ObjectId, contact: Contact): Promise<boolean> {
-      const data = sealer.sealJson({ name: contact.name, handle: contact.handle })
       const existing = await col.contacts.findOne({ userId, id: contact.id })
-      if (existing) {
-        const old = openJson(existing.data, { name: '', handle: '' })
-        if (old.name === contact.name && old.handle === contact.handle) return false
+      const old = existing && toContact(existing)
+      const avatarUrl = contact.avatarUrl ?? old?.avatarUrl
+      const data = sealer.sealJson({ name: contact.name, handle: contact.handle, ...(avatarUrl ? { avatarUrl } : {}) })
+      if (old) {
+        if (old.name === contact.name && old.handle === contact.handle && old.avatarUrl === avatarUrl) return false
         await col.contacts.updateOne({ userId, id: contact.id }, { $set: { data } })
         return true
       }
@@ -128,9 +183,43 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return true
     },
 
+    async contact(userId: ObjectId, id: string): Promise<Contact | null> {
+      const doc = await col.contacts.findOne({ userId, id })
+      return doc && toContact(doc)
+    },
+
+    /** Sets a contact's picture; returns the contact if it changed. */
+    async setContactAvatar(userId: ObjectId, id: string, avatarUrl: string): Promise<Contact | null> {
+      const doc = await col.contacts.findOne({ userId, id })
+      if (!doc) return null
+      const contact = toContact(doc)
+      if (contact.avatarUrl === avatarUrl) return null
+      const updated = { ...contact, avatarUrl }
+      await col.contacts.updateOne(
+        { userId, id },
+        { $set: { data: sealer.sealJson({ name: updated.name, handle: updated.handle, avatarUrl }) } },
+      )
+      return updated
+    },
+
+    /** Sets a group's picture; returns the thread if it changed. */
+    async setThreadAvatar(userId: ObjectId, id: string, avatarUrl: string): Promise<Thread | null> {
+      const doc = await col.threads.findOneAndUpdate(
+        { userId, id, avatarUrl: { $ne: avatarUrl } },
+        { $set: { avatarUrl } },
+        { returnDocument: 'after' },
+      )
+      return doc && toThread(doc)
+    },
+
     /** Stores a message; false if it was already there (history replays, echoes of our own sends). */
     async addMessage(userId: ObjectId, message: StoredMessage): Promise<boolean> {
-      const payload: MessagePayload = { body: message.body, ...(message.attachments ? { attachments: message.attachments } : {}) }
+      const payload: MessagePayload = {
+        body: message.body,
+        ...(message.attachments ? { attachments: message.attachments } : {}),
+        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        ...(message.reactions?.length ? { reactionTotals: message.reactions } : {}),
+      }
       const result = await col.messages.updateOne(
         { userId, id: message.id },
         {
@@ -147,6 +236,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       )
       if (result.upsertedCount) {
         await col.threads.updateOne({ userId, id: message.threadId }, { $max: { lastAt: new Date(message.sentAt) } })
+        untrimmed.set(`${userId.toHexString()}:${message.threadId}`, { userId, threadId: message.threadId })
       }
       return result.upsertedCount > 0
     },
@@ -161,16 +251,61 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       if (!doc) return null
       const set: Partial<MessageDoc> = {}
       if (patch.body !== undefined || patch.attachments !== undefined) {
-        const current = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
+        // The quote and reactions stay as they are.
+        const { attachments, ...current } = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
+        const nextAttachments = patch.attachments ?? attachments
         set.payload = sealer.sealJson({
+          ...current,
           body: patch.body ?? current.body,
-          ...((patch.attachments ?? current.attachments) ? { attachments: patch.attachments ?? current.attachments } : {}),
+          ...(nextAttachments?.length ? { attachments: nextAttachments } : {}),
         })
       }
       if (patch.status) set.status = patch.status
       if (Object.keys(set).length === 0) return toMessage(doc)
       const updated = await col.messages.findOneAndUpdate({ userId, id }, { $set: set }, { returnDocument: 'after' })
       return updated && toMessage(updated)
+    },
+
+    /** One person's reaction (`senderId` "me" for the user) changed; null removes it. */
+    async setReaction(userId: ObjectId, id: string, senderId: string, emoji: string | null): Promise<Message | null> {
+      return updatePayload(userId, id, (payload) => {
+        const by = { ...payload.reactionsBy }
+        if (emoji) by[senderId] = emoji
+        else delete by[senderId]
+        const { reactionTotals, ...rest } = payload
+        void reactionTotals
+        return { ...rest, reactionsBy: by }
+      })
+    },
+
+    /** The network reported new totals (Telegram doesn't always say who). */
+    async setReactionTotals(userId: ObjectId, id: string, reactions: Reaction[]): Promise<Message | null> {
+      return updatePayload(userId, id, (payload) => {
+        const { reactionsBy, ...rest } = payload
+        void reactionsBy
+        return { ...rest, reactionTotals: reactions }
+      })
+    },
+
+    /**
+     * Stored messages from before `before`, oldest first. The message itself may be gone from the
+     * server (it keeps only the latest); then the time the device gave is used.
+     */
+    async older(
+      userId: ObjectId,
+      threadId: string,
+      before: { id: string; sentAt?: string },
+      limit = 30,
+    ): Promise<{ messages: Message[]; hasMore: boolean }> {
+      const stored = await col.messages.findOne({ userId, id: before.id, threadId })
+      const sentAt = stored?.sentAt ?? (before.sentAt ? new Date(before.sentAt) : null)
+      if (!sentAt || Number.isNaN(sentAt.getTime())) return { messages: [], hasMore: false }
+      const docs = await col.messages
+        .find({ userId, threadId, sentAt: { $lt: sentAt } })
+        .sort({ sentAt: -1 })
+        .limit(limit + 1)
+        .toArray()
+      return { messages: docs.slice(0, limit).reverse().map(toMessage), hasMore: docs.length > limit }
     },
 
     async message(userId: ObjectId, id: string): Promise<(Message & { ref?: Record<string, unknown> }) | null> {
@@ -212,27 +347,49 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         .aggregate<{ docs: MessageDoc[] }>([
           { $match: { userId, threadId: { $in: ids } } },
           { $sort: { sentAt: -1 } },
-          { $group: { _id: '$threadId', docs: { $firstN: { input: '$$ROOT', n: SNAPSHOT_MESSAGES_PER_THREAD } } } },
+          { $group: { _id: '$threadId', docs: { $firstN: { input: '$$ROOT', n: MESSAGES_KEPT_PER_CHAT } } } },
         ])
         .toArray()
       const contactDocs = await col.contacts.find({ userId }).limit(5000).toArray()
       return {
         threads: threadDocs.map(toThread),
-        contacts: contactDocs.map((c) => ({
-          id: c.id,
-          network: c.network,
-          ...openJson(c.data, { name: 'Unknown', handle: '' }),
-        })),
+        contacts: contactDocs.map(toContact),
         messages: grouped.flatMap((g) => g.docs.map(toMessage)),
       }
     },
 
+    /**
+     * Keeps the server's copy small: of each chat that got new messages, only the latest
+     * MESSAGES_KEPT_PER_CHAT stay. Devices keep everything they've seen. Returns how many went.
+     */
+    async trim(): Promise<number> {
+      const due = [...untrimmed.values()]
+      untrimmed.clear()
+      let removed = 0
+      for (const { userId, threadId } of due) removed += await trimThread(userId, threadId)
+      return removed
+    },
+
+    /** Trims every chat holding more than it should (data stored before the limit existed). */
+    async trimAll(): Promise<number> {
+      const over = await col.messages
+        .aggregate<{ _id: { userId: ObjectId; threadId: string } }>([
+          { $group: { _id: { userId: '$userId', threadId: '$threadId' }, count: { $sum: 1 } } },
+          { $match: { count: { $gt: MESSAGES_KEPT_PER_CHAT } } },
+        ])
+        .toArray()
+      let removed = 0
+      for (const { _id } of over) removed += await trimThread(_id.userId, _id.threadId)
+      return removed
+    },
+
     /** Deletes every chat, contact and message of one network for a user (on unlink). */
     async forgetNetwork(userId: ObjectId, idPrefix: string) {
-      const match = { userId, id: { $regex: `^${idPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` } }
+      const match = { userId, id: { $regex: `^${escapeRegex(idPrefix)}` } }
       await Promise.all([
         col.threads.deleteMany(match),
         col.contacts.deleteMany(match),
+        col.avatars.deleteMany(match),
         col.messages.deleteMany({ userId, threadId: match.id }),
       ])
     },

@@ -23,6 +23,8 @@ interface UiState {
   snoozeMenuOpen: boolean
   /** Unsent composer text per thread. */
   composer: Record<string, string>
+  /** The message being replied to, per thread. */
+  replyingTo: Record<string, string>
   composerFocusTick: number
   searchFocusTick: number
   flash: { messageId: string; tick: number } | null
@@ -44,6 +46,7 @@ interface UiState {
   moveSelection(delta: 1 | -1): void
   setNavThreadIds(ids: string[]): void
   setComposer(threadId: string, text: string): void
+  setReplyingTo(threadId: string, messageId: string | null): void
   focusComposer(): void
   focusSearch(): void
   setDraftsOpen(open: boolean): void
@@ -75,6 +78,7 @@ export const useUi = create<UiState>()(
       draftsOpen: false,
       snoozeMenuOpen: false,
       composer: {},
+      replyingTo: {},
       composerFocusTick: 0,
       searchFocusTick: 0,
       flash: null,
@@ -131,6 +135,13 @@ export const useUi = create<UiState>()(
           if (text) composer[threadId] = text
           else delete composer[threadId]
           return { composer }
+        }),
+      setReplyingTo: (threadId, messageId) =>
+        set((s) => {
+          const replyingTo = { ...s.replyingTo }
+          if (messageId) replyingTo[threadId] = messageId
+          else delete replyingTo[threadId]
+          return { replyingTo }
         }),
       focusComposer: () => set((s) => ({ composerFocusTick: s.composerFocusTick + 1 })),
       focusSearch: () => set((s) => ({ searchFocusTick: s.searchFocusTick + 1 })),

@@ -81,7 +81,7 @@ export async function signInToMatrix(login: MatrixLogin): Promise<MatrixConfig> 
       type: 'm.login.password',
       identifier: { type: 'm.id.user', user: login.user?.trim() ?? '' },
       password: login.password ?? '',
-      initial_device_display_name: 'Tidings inbox',
+      initial_device_display_name: 'Sytext inbox',
     })
     return {
       baseUrl,
@@ -184,7 +184,7 @@ export class MatrixConnector implements Connector {
     const client = this.requireClient()
     const roomId = threadId.slice('mx:'.length)
     if (client.getRoom(roomId)?.hasEncryptionStateEvent()) {
-      throw new Error("This chat is end-to-end encrypted, and Tidings can't send encrypted messages yet. Reply from a Matrix app.")
+      throw new Error("This chat is end-to-end encrypted, and Sytext can't send encrypted messages yet. Reply from a Matrix app.")
     }
     const { event_id } = await client.sendTextMessage(roomId, body)
     return { id: `mx:${event_id}`, threadId, senderId: ME_ID, body, sentAt: new Date().toISOString(), status: 'sent' }

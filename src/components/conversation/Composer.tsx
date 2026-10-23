@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertTriangle, CalendarClock, SendHorizontal, Sparkles } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CornerUpLeft, SendHorizontal, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Menu } from '@/components/ui/Popover'
@@ -9,7 +9,8 @@ import { findPlaceholders, placeholderPattern, shortName } from '@/lib/format'
 import { NETWORKS } from '@/lib/networks'
 import { sendLaterOptions } from '@/lib/schedule'
 import { formatShortWhen } from '@/lib/time'
-import { scheduleReply, sendReply, toggleDrafts } from '@/store/actions'
+import { ME_ID } from '@/data/types'
+import { noteTyping, scheduleReply, sendReply, stopTyping, toggleDrafts } from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { useUi } from '@/store/ui'
@@ -35,6 +36,11 @@ export function Composer({ threadId }: { threadId: string }) {
     return person ? shortName(person.name) : (t?.title ?? '')
   })
   const text = useUi((s) => s.composer[threadId] ?? '')
+  const replyingToId = useUi((s) => s.replyingTo[threadId])
+  const replyingTo = useInbox((s) => (replyingToId ? s.messages[threadId]?.find((m) => m.id === replyingToId) : undefined))
+  const quotedName = useInbox((s) =>
+    !replyingTo ? '' : replyingTo.senderId === ME_ID ? 'yourself' : (s.contacts[replyingTo.senderId]?.name ?? 'someone'),
+  )
   const draftsOpen = useUi((s) => s.draftsOpen)
   const focusTick = useUi((s) => s.composerFocusTick)
   const now = useClock((s) => s.now)
@@ -63,7 +69,10 @@ export function Composer({ threadId }: { threadId: string }) {
   const setText = (value: string) => {
     setConfirmingBlanks(false)
     useUi.getState().setComposer(threadId, value)
+    if (value.trim()) noteTyping(threadId)
+    else stopTyping(threadId)
   }
+  const cancelReply = () => useUi.getState().setReplyingTo(threadId, null)
 
   const send = () => {
     if (!text.trim()) return
@@ -84,6 +93,7 @@ export function Composer({ threadId }: { threadId: string }) {
     } else if (e.key === 'Escape') {
       e.preventDefault()
       if (useUi.getState().draftsOpen) useUi.getState().setDraftsOpen(false)
+      else if (replyingToId) cancelReply()
       else e.currentTarget.blur()
     }
   }
@@ -93,6 +103,18 @@ export function Composer({ threadId }: { threadId: string }) {
 
   return (
     <div className="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
+      {replyingTo && replyingToId && (
+        <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-line bg-surface px-3 py-2 shadow-card animate-pop-in">
+          <CornerUpLeft className="size-4 shrink-0 text-accent-ink" aria-hidden />
+          <div className="min-w-0 flex-1 border-l-[3px] border-accent pl-2.5">
+            <p className="text-xs font-semibold text-accent-ink">Replying to {quotedName}</p>
+            <p className="truncate text-xs text-muted">{replyingTo.body || replyingTo.attachments?.[0]?.name || 'Message'}</p>
+          </div>
+          <Button variant="ghost" size="icon-sm" aria-label="Cancel reply" title="Cancel reply (Esc)" onClick={cancelReply}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      )}
       {confirmingBlanks && (
         <p role="alert" className="mb-2 flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />

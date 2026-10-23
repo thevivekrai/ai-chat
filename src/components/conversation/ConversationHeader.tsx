@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Menu } from '@/components/ui/Popover'
+import { typingLabel } from '@/lib/format'
 import { useBreakpoint } from '@/lib/media'
 import { NETWORKS } from '@/lib/networks'
 import { snoozeOptions } from '@/lib/schedule'
@@ -15,11 +16,11 @@ import { useInbox } from '@/store/inbox'
 import { useUi } from '@/store/ui'
 
 export function ConversationHeader({ threadId }: { threadId: string }) {
-  const { thread, contacts, lastAt } = useInbox(
+  const { thread, contacts, lastAt, typing } = useInbox(
     useShallow((s) => {
       const messages = s.messages[threadId]
       const last = messages?.[messages.length - 1]
-      return { thread: s.threads[threadId], contacts: s.contacts, lastAt: last ? toMs(last.sentAt) : 0 }
+      return { thread: s.threads[threadId], contacts: s.contacts, lastAt: last ? toMs(last.sentAt) : 0, typing: s.typing[threadId] }
     }),
   )
   const { aiPanelOpen, aiSheetOpen } = useUi(useShallow((s) => ({ aiPanelOpen: s.aiPanelOpen, aiSheetOpen: s.aiSheetOpen })))
@@ -52,12 +53,24 @@ export function ConversationHeader({ threadId }: { threadId: string }) {
       >
         <ArrowLeft className="size-5" />
       </Button>
-      <Avatar name={thread.title} seed={thread.id} group={isGroup} network={thread.network} />
+      <Avatar
+        name={thread.title}
+        seed={thread.id}
+        group={isGroup}
+        network={thread.network}
+        imageUrl={isGroup ? thread.avatarUrl : person?.avatarUrl}
+      />
       <div className="min-w-0 flex-1">
         <h2 className="truncate text-[15px] leading-tight font-semibold">{thread.title}</h2>
         <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
           <NetworkIcon network={thread.network} />
-          <span className="truncate">{subtitle}</span>
+          {typing?.length ? (
+            <span className="truncate font-medium text-accent-ink" aria-live="polite">
+              {typingLabel(typing.map((id) => contacts[id]?.name ?? 'Someone'), isGroup)}
+            </span>
+          ) : (
+            <span className="truncate">{subtitle}</span>
+          )}
         </p>
       </div>
 

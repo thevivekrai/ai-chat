@@ -3,10 +3,10 @@
  *
  * `api` merges every source the user has turned on: the demo inbox (./mock, generated relative to
  * now), a Telegram bot and a Matrix account (./connectors), and the WhatsApp and Telegram accounts
- * linked on the Tidings server once signed in (./server). See ./unified for how they combine.
+ * linked on the Sytext server once signed in (./server). See ./unified for how they combine.
  * Stores and components never import a source directly.
  */
-import type { ConnectorId, ConnectorStatus } from './connectors/types'
+import type { ConnectorId, ConnectorStatus, OlderMessages, SendOptions } from './connectors/types'
 import type { MatrixLogin } from './connectors/matrix/matrixConnector'
 import type {
   LinkedNetwork,
@@ -16,6 +16,7 @@ import type {
   WhatsAppLinkResult,
 } from './server/types'
 import type {
+  ChatCapabilities,
   InboxEvent,
   InboxSnapshot,
   Message,
@@ -28,14 +29,26 @@ import type {
 } from './types'
 import { createUnifiedApi } from './unified/unifiedApi'
 
-export type { ConnectorId, ConnectorStatus, LinkedNetwork, MatrixLogin, PublicAccount }
+export type { ConnectorId, ConnectorStatus, LinkedNetwork, MatrixLogin, OlderMessages, PublicAccount, SendOptions }
 
 export interface InboxApi {
   /** Initial sync: contacts, chats, recent messages, scheduled sends and tasks. */
   loadInbox(): Promise<InboxSnapshot>
 
   /** Sends a message and resolves with the stored copy (delivery receipts follow via `subscribe`). */
-  sendMessage(threadId: string, body: string): Promise<Message>
+  sendMessage(threadId: string, body: string, options?: SendOptions): Promise<Message>
+
+  /** Which of reply, react, typing and older history a chat supports. */
+  capabilities(threadId: string): ChatCapabilities
+
+  /** Sets my reaction to a message (one per person, as on WhatsApp); null removes it. */
+  react(threadId: string, messageId: string, emoji: string | null): Promise<Message>
+
+  /** Tells the chat I'm typing, or stopped. Best effort: never fails. */
+  setTyping(threadId: string, typing: boolean): Promise<void>
+
+  /** Messages from before `beforeId` (the earliest one loaded), oldest first. */
+  loadOlder(threadId: string, beforeId: string): Promise<OlderMessages>
 
   /** Clears the unread count (read receipt / read marker). */
   markRead(threadId: string): Promise<Thread>
@@ -74,7 +87,7 @@ export interface ConnectionsState {
   /** null when not connected. */
   telegram: ConnectorStatus | null
   matrix: ConnectorStatus | null
-  /** While signed in to a Tidings server: the connection to it, and the accounts linked there. */
+  /** While signed in to a Sytext server: the connection to it, and the accounts linked there. */
   server: {
     status: ConnectorStatus
     whatsapp: PublicAccount | null
@@ -96,19 +109,21 @@ export interface ConnectionsApi {
   applyFix(id: ConnectorId, fixId: string): Promise<void>
 
   /**
-   * Signing in to (or out of) the Tidings server: shows (or removes) the chats of the accounts
+   * Signing in to (or out of) the Sytext server: shows (or removes) the chats of the accounts
    * linked there. Signing out also clears what this device kept about them.
    */
-  setServerSession(user: { name: string } | null): Promise<void>
+  setServerSession(user: { id: string; name: string } | null): Promise<void>
   /** Called when the server says the session ended (expired, or signed out elsewhere). */
   onSignedOut(listener: () => void): () => void
 
   /** Starts linking WhatsApp: resolves with a code to type into WhatsApp, or a QR code. */
   linkWhatsApp(request: { method: 'code'; phone: string } | { method: 'qr' }): Promise<WhatsAppLinkResult>
-  /** Fresh QR codes while linking WhatsApp by QR (they change every so often). */
-  onWhatsAppQr(listener: (qr: string) => void): () => void
+  /** Fresh QR codes while linking by QR (they change every so often). */
+  onLinkQr(listener: (network: LinkedNetwork, qr: string) => void): () => void
   /** Linking Telegram: Telegram sends a login code, then maybe asks for the 2-step password. */
   requestTelegramCode(phone: string): Promise<TelegramCodeResult>
+  /** Or by QR, scanned in Telegram on a phone; the account's `step` then says what's next. */
+  requestTelegramQr(): Promise<{ qr: string }>
   verifyTelegramCode(code: string): Promise<TelegramVerifyResult>
   verifyTelegramPassword(password: string): Promise<TelegramVerifyResult>
   /** Logs the server out of that account and deletes its chats there. */

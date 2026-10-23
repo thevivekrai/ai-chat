@@ -17,24 +17,22 @@ import {
 } from '@/store/actions'
 import { hasRealAccount, useConnections } from '@/store/connections'
 import { useSession } from '@/store/session'
-import { LinkedAccounts } from './LinkedAccounts'
+import { LinkedAccounts, ServerMissing } from './LinkedAccounts'
 import { Card, CardHeader, ErrorText, Field, Input, SectionTitle, StatusPill } from './parts'
 
 export function AccountsTab({ close }: { close(): void }) {
   const connections = useConnections()
-  // Without a Tidings server (a static deploy) only the in-browser connections are available.
+  // Without a Sytext server (a static deploy) only the in-browser connections are available.
   const hasServer = useSession((s) => s.status !== 'no-server')
   return (
     <div className="space-y-6">
-      {hasServer && (
-        <section className="space-y-3">
-          <SectionTitle>WhatsApp and Telegram</SectionTitle>
-          <LinkedAccounts />
-        </section>
-      )}
+      <section className="space-y-3">
+        <SectionTitle>WhatsApp and Telegram</SectionTitle>
+        {hasServer ? <LinkedAccounts /> : <ServerMissing />}
+      </section>
 
       <section className="space-y-3">
-        <SectionTitle>{hasServer ? 'More connections' : 'Your accounts'}</SectionTitle>
+        <SectionTitle>{hasServer ? 'More connections' : 'From this browser'}</SectionTitle>
         <TelegramCard status={connections.telegram} />
         <MatrixCard status={connections.matrix} />
         <p className="text-xs leading-relaxed text-muted">
@@ -76,7 +74,7 @@ function TelegramCard({ status }: { status: ConnectorStatus | null }) {
         aside={status && <StatusPill status={status} />}
       >
         People message your bot, or a group it's in, and you reply as the bot. Telegram keeps undelivered messages for
-        24 hours, so chats arrive even if Tidings was closed.
+        24 hours, so chats arrive even if Sytext was closed.
       </CardHeader>
 
       {status ? (
@@ -219,7 +217,7 @@ function MatrixCard({ status }: { status: ConnectorStatus | null }) {
           ) : (
             <Field
               label="Access token"
-              hint="From another Matrix app's settings (in Element: Help & About). Tidings won't sign that session out."
+              hint="From another Matrix app's settings (in Element: Help & About). Sytext won't sign that session out."
             >
               <Input
                 required

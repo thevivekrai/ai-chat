@@ -7,6 +7,7 @@ import type { GoogleVerifier } from './auth/google.ts'
 import type { SessionTokens } from './auth/tokens.ts'
 import type { Collections } from './db.ts'
 import { errorHandler, HttpError, jsonOnly, securityHeaders } from './http.ts'
+import type { Avatars } from './inbox/avatars.ts'
 import { inboxRoutes } from './inbox/routes.ts'
 import type { InboxStore } from './inbox/store.ts'
 import type { Media } from './media.ts'
@@ -23,6 +24,7 @@ export interface AppDeps {
   googleClientId: string | undefined
   media: Media | null
   store: InboxStore
+  avatars: Avatars
   accounts: Accounts
   hub: Hub
   whatsapp: WhatsApp
