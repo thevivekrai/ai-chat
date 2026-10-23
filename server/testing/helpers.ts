@@ -68,6 +68,14 @@ export class FakeWaSocket implements WaSocket {
   ended = false
   /** Chats with a profile picture. */
   pictures = new Set(['919812345678@s.whatsapp.net'])
+  /** Private id (LID) → phone-number id, as WhatsApp's key store on the device has them. */
+  lids = new Map<string, string>()
+  signalRepository = {
+    lidMapping: {
+      getPNForLID: async (lid: string) => this.lids.get(lid) ?? null,
+      getLIDForPN: async (pn: string) => [...this.lids].find(([, p]) => p === pn)?.[0] ?? null,
+    },
+  }
 
   constructor(auth: AuthenticationState) {
     this.authState = { creds: auth.creds }

@@ -183,6 +183,18 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return true
     },
 
+    /** Every chat of one network (by id prefix), for going over them all. */
+    async threadsOf(userId: ObjectId, idPrefix: string): Promise<Thread[]> {
+      const docs = await col.threads.find({ userId, id: { $regex: `^${escapeRegex(idPrefix)}` } }).toArray()
+      return docs.map(toThread)
+    },
+
+    /** Every contact of one network (by id prefix). */
+    async contactsOf(userId: ObjectId, idPrefix: string): Promise<Contact[]> {
+      const docs = await col.contacts.find({ userId, id: { $regex: `^${escapeRegex(idPrefix)}` } }).toArray()
+      return docs.map(toContact)
+    },
+
     async contact(userId: ObjectId, id: string): Promise<Contact | null> {
       const doc = await col.contacts.findOne({ userId, id })
       return doc && toContact(doc)

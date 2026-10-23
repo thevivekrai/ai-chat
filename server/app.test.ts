@@ -45,7 +45,9 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   async function linkWhatsApp(browser: Browser): Promise<FakeWaSocket> {
     await browser.post('/api/link/whatsapp', { phone: '+91 98765 43210' })
     const socket = server.sockets.at(-1)!
+    // The code was entered: WhatsApp registers the device, and its keys are saved.
     socket.authState.creds.registered = true
+    socket.emit('creds.update', {})
     socket.emit('connection.update', {
       connection: 'close',
       lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() },
@@ -597,6 +599,73 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
       await browser.delete('/api/link/whatsapp')
     })
+
+    it('names chats that WhatsApp sends under private ids, whatever order the names come in', async () => {
+      const browser = await newUser('wa-names@example.com')
+      const socket = await linkWhatsApp(browser)
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const events = await browser.events()
+      const ts = Math.floor(Date.now() / 1000)
+      const PRIYA = { lid: '11111@lid', pn: '919811111111@s.whatsapp.net' }
+      const KABIR = { lid: '22222@lid', pn: '919822222222@s.whatsapp.net' }
+      const inbox = async () => (await browser.get('/api/inbox')).json
+      const titles = async () => Object.fromEntries((await inbox()).threads.map((t: { id: string; title: string }) => [t.id, t.title]))
+
+      // History: the chat under her private id, her saved name under her number, and the pair.
+      socket.emit('messaging-history.set', {
+        chats: [{ id: PRIYA.lid }],
+        contacts: [{ id: PRIYA.pn, name: 'Priya Shah' }],
+        messages: [{ key: { remoteJid: PRIYA.lid, fromMe: false, id: 'P1' }, message: { conversation: 'Lunch?' }, messageTimestamp: ts - 60 }],
+        lidPnMappings: [{ lid: PRIYA.lid, pn: PRIYA.pn }],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      await events.next((e) => e.type === 'reloaded')
+      expect((await titles())[`wa:${PRIYA.pn}`]).toBe('Priya Shah')
+      expect((await inbox()).contacts.find((c: { id: string }) => c.id === `wa:${PRIYA.pn}`)).toMatchObject({
+        name: 'Priya Shah',
+        handle: '+919811111111',
+      })
+
+      // A message from someone known only by private id: no name, no number yet.
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: KABIR.lid, fromMe: false, id: 'K1' }, message: { conversation: 'Hey' }, messageTimestamp: ts }],
+      } as never)
+      await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${KABIR.lid}:K1`)
+      expect((await titles())[`wa:${KABIR.lid}`]).toBe('WhatsApp contact')
+      // Then his saved name (under his number) and the pair: the chat is renamed where it is.
+      socket.emit('contacts.upsert', [{ id: KABIR.pn, name: 'Kabir' }])
+      socket.emit('lid-mapping.update', { lid: KABIR.lid, pn: KABIR.pn })
+      await waitFor(async () => expect((await titles())[`wa:${KABIR.lid}`]).toBe('Kabir'))
+      // His next message, now with both ids, lands in the same chat rather than a new one.
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: KABIR.lid, remoteJidAlt: KABIR.pn, fromMe: false, id: 'K2' }, message: { conversation: 'You there?' }, messageTimestamp: ts + 1 }],
+      } as never)
+      await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${KABIR.lid}:K2`)
+      expect(await titles()).not.toHaveProperty(`wa:${KABIR.pn}`)
+      events.close()
+
+      // Chats stored as "WhatsApp" by an earlier version are named once the link reopens.
+      const MEERA = { lid: '33333@lid', pn: '919833333333@s.whatsapp.net' }
+      const { store } = server.current()
+      await store.upsertThread(userId, { id: `wa:${MEERA.lid}`, network: 'whatsapp', kind: 'direct', title: 'WhatsApp' })
+      await store.upsertContact(userId, { id: `wa:${MEERA.lid}`, network: 'whatsapp', name: 'WhatsApp', handle: 'WhatsApp' })
+      await store.upsertContact(userId, { id: `wa:${MEERA.pn}`, network: 'whatsapp', name: 'Meera', handle: '+919833333333' })
+      await server.restart()
+      const reopened = server.sockets.at(-1)!
+      reopened.lids.set(MEERA.lid, MEERA.pn) // What the phone told this device before the update.
+      reopened.user = { id: '919876543210:4@s.whatsapp.net' }
+      reopened.emit('connection.update', { connection: 'open' })
+      await waitFor(async () => expect((await titles())[`wa:${MEERA.lid}`]).toBe('Meera'), { timeout: 8000 })
+      expect((await inbox()).contacts.find((c: { id: string }) => c.id === `wa:${MEERA.lid}`)).toMatchObject({
+        name: 'Meera',
+        handle: '+919833333333',
+      })
+
+      await browser.delete('/api/link/whatsapp')
+    }, 20_000)
 
     it('keeps only the latest messages of each chat', async () => {
       const RAVI = '919812345678@s.whatsapp.net'

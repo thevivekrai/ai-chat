@@ -71,6 +71,10 @@ export interface WaSocket {
   logout(message?: string): Promise<void>
   end(error: Error | undefined): Promise<void> | void
   updateMediaMessage?(message: WAMessage): Promise<WAMessage>
+  /** Which private id (LID) goes with which phone number, as WhatsApp has told this device. */
+  signalRepository?: {
+    lidMapping: { getPNForLID(lid: string): Promise<string | null>; getLIDForPN(pn: string): Promise<string | null> }
+  }
 }
 
 type ILogger = NonNullable<Parameters<typeof makeCacheableSignalKeyStore>[1]>
@@ -170,7 +174,16 @@ function canonicalJid(jid: string, alt?: string | null): string {
   return isJidGroup(jid) ? jid : jidNormalizedUser(jid)
 }
 
-const phoneOf = (jid: string) => (isPnUser(jid) ? `+${jid.split('@')[0]}` : 'WhatsApp')
+/** The phone number in a phone-number id; private ids (LIDs) have none. */
+const phoneOf = (jid: string): string | undefined => (isPnUser(jid) ? `+${jid.split('@')[0]}` : undefined)
+
+/** What a person or chat is called when neither a name nor a number is known. */
+const UNNAMED = 'WhatsApp contact'
+/** Names used when nothing better was known, now and in earlier versions. */
+const PLACEHOLDERS = new Set(['Chat', 'WhatsApp', UNNAMED])
+
+/** How good a name is: a real name beats a phone number, which beats a placeholder. */
+const nameRank = (name: string | undefined) => (!name || PLACEHOLDERS.has(name) ? 0 : /^\+\d+$/.test(name) ? 1 : 2)
 
 const STATUS: Record<number, MessageStatus> = { 0: 'failed', 1: 'sending', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'read' }
 
@@ -254,8 +267,14 @@ interface Session {
   stopped: boolean
   names: Map<string, string>
   groupTitles: Map<string, string>
+  /**
+   * Each person's other id: their private id (LID) for their phone-number id, and the reverse.
+   * WhatsApp may send a chat under one and their name under the other.
+   */
+  aliases: Map<string, string>
   /** Chats whose older history was last asked of the phone, and from which message. */
   historyAsked: Map<string, string>
+  repairTimer?: ReturnType<typeof setTimeout>
 }
 
 type LinkResult = WhatsAppLinkResult
@@ -308,7 +327,11 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     socket.ev.on('messaging-history.set', (h) => {
       // Older messages fetched for "Load earlier" go straight to the open chat.
       const requested = h.syncType === proto.HistorySync.HistorySyncType.ON_DEMAND
-      void onHistory(s, h.chats, h.contacts, h.messages, requested).catch(report)
+      void onHistory(s, h, requested).catch(report)
+    })
+    socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
+      learnAlias(s, lid, pn)
+      repairSoon(s)
     })
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       for (const m of messages) void onMessage(s, m, type === 'notify' ? 'live' : 'history').catch(report)
@@ -358,6 +381,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
         ...(wasLinking ? { detail: 'Syncing your recent chats…' } : {}),
       })
       if (wasLinking) setTimeout(() => void finishSync(s), 90_000)
+      repairSoon(s)
       return
     }
 
@@ -417,7 +441,106 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
   /* ── Incoming data ───────────────────────────────────────────────────────── */
 
-  const nameFor = (s: Session, jid: string) => s.names.get(jid) ?? phoneOf(jid)
+  /* ── Who's who ───────────────────────────────────────────────────────────── */
+
+  /** Records that a private id (LID) and a phone-number id are the same person. */
+  function learnAlias(s: Session, a: string | null | undefined, b: string | null | undefined) {
+    if (!a || !b) return
+    const [x, y] = [jidNormalizedUser(a), jidNormalizedUser(b)]
+    const lid = isLidUser(x) ? x : isLidUser(y) ? y : null
+    const pn = isPnUser(x) ? x : isPnUser(y) ? y : null
+    if (!lid || !pn) return
+    s.aliases.set(lid, pn)
+    s.aliases.set(pn, lid)
+  }
+
+  /** Learns a person's other id from what WhatsApp stored on this device, if it isn't known yet. */
+  async function lookUpAlias(s: Session, jid: string): Promise<string | undefined> {
+    const known = s.aliases.get(jid)
+    const lids = s.socket?.signalRepository?.lidMapping
+    if (known || !lids) return known
+    const other = isLidUser(jid) ? await lids.getPNForLID(jid).catch(() => null) : isPnUser(jid) ? await lids.getLIDForPN(jid).catch(() => null) : null
+    learnAlias(s, jid, other)
+    return s.aliases.get(jid)
+  }
+
+  /** A person's id as this app uses it: the phone-number one when it's known. */
+  function personId(s: Session, jid: string, alt?: string | null): string {
+    learnAlias(s, jid, alt)
+    const canonical = canonicalJid(jid, alt)
+    const alias = s.aliases.get(canonical)
+    return isLidUser(canonical) && alias && isPnUser(alias) ? alias : canonical
+  }
+
+  /**
+   * The id a direct chat is kept under: the one it's already stored under, if it is (by phone
+   * number or by private id), so a chat never splits in two; otherwise the person's id.
+   */
+  async function chatIdOf(s: Session, jid: string, alt?: string | null): Promise<string> {
+    if (isJidGroup(jid)) return jid
+    const preferred = personId(s, jid, alt)
+    const other = s.aliases.get(preferred)
+    if (!other || (await store.thread(s.userId, `wa:${preferred}`))) return preferred
+    return (await store.thread(s.userId, `wa:${other}`)) ? other : preferred
+  }
+
+  /** A person's phone number, from their id or its alias. */
+  const phoneFor = (s: Session, jid: string) => phoneOf(jid) ?? phoneOf(s.aliases.get(jid) ?? '')
+
+  /** What to call a person: their name (under either id), else their number. */
+  const nameFor = (s: Session, jid: string) => s.names.get(jid) ?? s.names.get(s.aliases.get(jid) ?? '') ?? phoneFor(s, jid) ?? UNNAMED
+
+  /** The best name known for a person, including what's stored for either of their ids. */
+  async function bestNameFor(s: Session, jid: string): Promise<string> {
+    const alias = await lookUpAlias(s, jid)
+    const fromMemory = nameFor(s, jid)
+    if (nameRank(fromMemory) === 2) return fromMemory
+    for (const id of [jid, alias]) {
+      const stored = id ? await store.contact(s.userId, `wa:${id}`) : null
+      if (stored && nameRank(stored.name) === 2) return stored.name
+    }
+    return fromMemory
+  }
+
+  /** Renames a stored chat if `title` is better than what it has (never a name with a number). */
+  async function improveTitle(s: Session, threadId: string, title: string, { force = false } = {}) {
+    const thread = await store.thread(s.userId, threadId)
+    if (!thread || thread.title === title) return
+    if (!force && nameRank(title) <= nameRank(thread.title)) return
+    const renamed = await store.upsertThread(s.userId, { id: thread.id, network: 'whatsapp', kind: thread.kind, title })
+    publish(s, { type: 'thread.updated', thread: renamed })
+  }
+
+  /** Re-checks names shortly, once a burst of contacts or id pairs has arrived. */
+  function repairSoon(s: Session) {
+    clearTimeout(s.repairTimer)
+    s.repairTimer = setTimeout(() => void repairNames(s).catch(report), 3000)
+  }
+
+  /**
+   * Direct chats and contacts stored without a name (shown as "WhatsApp" by earlier versions, or
+   * a bare number): named from whatever is known now, under either of the person's ids.
+   */
+  async function repairNames(s: Session) {
+    if (s.stopped) return
+    for (const thread of await store.threadsOf(s.userId, 'wa:')) {
+      if (s.stopped) return
+      if (thread.kind !== 'direct' || nameRank(thread.title) === 2) continue
+      await improveTitle(s, thread.id, await bestNameFor(s, thread.id.slice('wa:'.length)))
+    }
+    for (const contact of await store.contactsOf(s.userId, 'wa:')) {
+      if (s.stopped) return
+      const jid = contact.id.slice('wa:'.length)
+      // Only those still without a real name, or with the placeholder where the number goes.
+      if (isJidGroup(jid) || (nameRank(contact.name) === 2 && !PLACEHOLDERS.has(contact.handle))) continue
+      const name = await bestNameFor(s, jid)
+      const handle = phoneFor(s, jid) ?? ''
+      const better = nameRank(name) > nameRank(contact.name) ? name : contact.name
+      if (better === contact.name && handle === contact.handle) continue
+      const updated = { ...contact, name: better, handle }
+      if (await store.upsertContact(s.userId, updated)) publish(s, { type: 'contact.updated', contact: updated })
+    }
+  }
 
   async function ensureThread(s: Session, chatJid: string, lastAt?: Date) {
     const group = isJidGroup(chatJid)
@@ -440,8 +563,8 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       id: `wa:${chatJid}`,
       network: 'whatsapp',
       kind: group ? 'group' : 'direct',
-      // Don't replace a good title with a bare number.
-      ...(title && (!existing || existing.title === 'Chat' || !title.startsWith('+')) ? { title } : {}),
+      // Only ever a better title: a name over a number, a number over a placeholder.
+      ...(title && (!existing || nameRank(title) > nameRank(existing.title)) ? { title } : {}),
       ...(group ? {} : { participantIds: [`wa:${chatJid}`] }),
       lastAt,
     })
@@ -480,7 +603,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   /** Typing ("composing") and recording show as typing; anything else ends it. */
   async function onPresence(s: Session, { id, presences }: BaileysEventMap['presence.update']) {
     if (!isChatJid(id)) return
-    const threadId = `wa:${canonicalJid(id)}`
+    const threadId = `wa:${await chatIdOf(s, id)}`
     if (!(await store.thread(s.userId, threadId))) return
     for (const [participant, presence] of Object.entries(presences)) {
       const senderId = senderIdOf(s, participant)
@@ -491,11 +614,11 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   }
 
   /** Who a jid is in this account's chats: "me", or a contact id. */
-  function senderIdOf(s: Session, jid: string): string {
+  function senderIdOf(s: Session, jid: string, alt?: string | null): string {
     const me = s.socket?.user
     const mine = [me?.id, me?.lid].filter(Boolean).map((j) => jidNormalizedUser(j!))
-    const canonical = canonicalJid(jid)
-    return mine.includes(canonical) ? 'me' : `wa:${canonical}`
+    if (mine.includes(canonicalJid(jid))) return 'me'
+    return `wa:${personId(s, jid, alt)}`
   }
 
   /** What a reply quotes: from the stored message when there is one, else from WhatsApp's copy. */
@@ -516,14 +639,19 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     const live = mode === 'live'
     const remote = msg.key.remoteJid
     if (!isChatJid(remote)) return
-    const chatJid = canonicalJid(remote, msg.key.remoteJidAlt)
+    learnAlias(s, msg.key.participant, msg.key.participantAlt)
+    const chatJid = await chatIdOf(s, remote, msg.key.remoteJidAlt)
     const content = normalizeMessageContent(msg.message)
 
     // A reaction points at the message it reacts to; an empty one takes it back.
     const reaction = content?.reactionMessage
     if (reaction?.key?.id) {
       const group = isJidGroup(chatJid)
-      const who = msg.key.fromMe ? 'me' : senderIdOf(s, group ? (msg.key.participant ?? remote) : remote)
+      const who = msg.key.fromMe
+        ? 'me'
+        : group
+          ? senderIdOf(s, msg.key.participant ?? remote, msg.key.participantAlt)
+          : `wa:${chatJid}`
       const updated = await store.setReaction(s.userId, `wa:${chatJid}:${reaction.key.id}`, who, reaction.text || null)
       if (updated) publish(s, { type: 'message.updated', message: updated })
       return
@@ -546,8 +674,10 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     if (!parts) return
     const fromMe = !!msg.key.fromMe
     const group = isJidGroup(chatJid)
-    const senderJid = fromMe ? null : canonicalJid(group ? (msg.key.participant ?? remote) : remote, group ? msg.key.participantAlt : msg.key.remoteJidAlt)
-    if (senderJid && msg.pushName && !s.names.has(senderJid)) {
+    // In a direct chat the sender is the chat; in a group, whoever wrote it.
+    const senderJid = fromMe ? null : group ? personId(s, msg.key.participant ?? remote, msg.key.participantAlt) : chatJid
+    // The name they gave themselves on WhatsApp, until a saved contact name turns up.
+    if (senderJid && msg.pushName && !s.names.has(senderJid) && !s.names.has(s.aliases.get(senderJid) ?? '')) {
       s.names.set(senderJid, msg.pushName)
       await upsertContact(s, senderJid)
     }
@@ -601,7 +731,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
   async function onMessageUpdate(s: Session, key: WAMessageKey, update: Partial<WAMessage>) {
     if (!isChatJid(key.remoteJid)) return
-    const id = `wa:${canonicalJid(key.remoteJid, key.remoteJidAlt)}:${key.id}`
+    const id = `wa:${await chatIdOf(s, key.remoteJid, key.remoteJidAlt)}:${key.id}`
     if (typeof update.status === 'number' && key.fromMe && STATUS[update.status]) {
       await updateAndPublish(s, id, { status: STATUS[update.status] })
     }
@@ -610,31 +740,40 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   }
 
   async function upsertContact(s: Session, jid: string) {
-    const contact = { id: `wa:${jid}`, name: nameFor(s, jid), network: 'whatsapp' as const, handle: phoneOf(jid) }
+    const contact = { id: `wa:${jid}`, name: nameFor(s, jid), network: 'whatsapp' as const, handle: phoneFor(s, jid) ?? '' }
     if (await store.upsertContact(s.userId, contact)) publish(s, { type: 'contact.updated', contact })
+  }
+
+  /** Learns both ids of a contact (they can come with their private id, phone number, or both). */
+  function learnContact(s: Session, c: WaContact): string | null {
+    if (!c.id || isJidGroup(c.id)) return null
+    learnAlias(s, c.id, c.lid)
+    learnAlias(s, c.id, c.phoneNumber)
+    learnAlias(s, c.lid, c.phoneNumber)
+    return personId(s, c.id, c.phoneNumber)
   }
 
   async function onContacts(s: Session, contacts: WaContact[]) {
     for (const c of contacts) {
-      if (!c.id) continue
-      const jid = canonicalJid(c.id, c.phoneNumber)
+      const jid = learnContact(s, c)
       const name = c.name || c.notify || c.verifiedName
-      if (!name || isJidGroup(jid)) continue
-      s.names.set(jid, name)
+      if (!jid || !name) continue
+      // A name saved in the phone's contacts wins over the one they gave themselves.
+      if (c.name || !s.names.has(jid)) s.names.set(jid, name)
       await upsertContact(s, jid)
-      // A saved name is a better title for a direct chat than a number.
-      const thread = await store.thread(s.userId, `wa:${jid}`)
-      if (thread && thread.title !== name) {
-        const renamed = await store.upsertThread(s.userId, { id: thread.id, network: 'whatsapp', kind: 'direct', title: name })
-        publish(s, { type: 'thread.updated', thread: renamed })
+      // The chat with them, under whichever of their ids it's kept: a saved name renames it.
+      for (const id of [jid, s.aliases.get(jid)]) {
+        if (id) await improveTitle(s, `wa:${id}`, nameFor(s, jid), { force: !!c.name })
       }
     }
+    repairSoon(s)
   }
 
   async function onChats(s: Session, chats: WaChat[]) {
     for (const chat of chats) {
       if (!isChatJid(chat.id)) continue
-      const jid = canonicalJid(chat.id, chat.pnJid)
+      learnChat(s, chat)
+      const jid = await chatIdOf(s, chat.id, chat.pnJid)
       if (chat.name && isJidGroup(jid)) await setGroupTitle(s, jid, chat.name)
       if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
         await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
@@ -652,14 +791,33 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     }
   }
 
-  async function onHistory(s: Session, chats: WaChat[], contacts: WaContact[], messages: WAMessage[], requested = false) {
+  /** Learns a chat's other id, and the name WhatsApp shows for it. */
+  function learnChat(s: Session, chat: WaChat) {
+    if (!chat.id) return
+    if (isJidGroup(chat.id)) {
+      if (chat.name) s.groupTitles.set(chat.id, chat.name)
+      return
+    }
+    learnAlias(s, chat.id, chat.pnJid)
+    learnAlias(s, chat.id, chat.lidJid)
+    const name = chat.name || chat.displayName
+    const jid = personId(s, chat.id, chat.pnJid)
+    if (name && !s.names.has(jid) && !s.names.has(s.aliases.get(jid) ?? '')) s.names.set(jid, name)
+  }
+
+  async function onHistory(
+    s: Session,
+    { chats, contacts, messages, lidPnMappings }: Pick<BaileysEventMap['messaging-history.set'], 'chats' | 'contacts' | 'messages' | 'lidPnMappings'>,
+    requested = false,
+  ) {
+    // Who's who first, so chats and messages find their names.
+    for (const { lid, pn } of lidPnMappings ?? []) learnAlias(s, lid, pn)
     for (const c of contacts) {
+      const jid = learnContact(s, c)
       const name = c.name || c.notify || c.verifiedName
-      if (c.id && name) s.names.set(canonicalJid(c.id, c.phoneNumber), name)
+      if (jid && name && (c.name || !s.names.has(jid))) s.names.set(jid, name)
     }
-    for (const chat of chats) {
-      if (chat.name && chat.id && isJidGroup(chat.id)) s.groupTitles.set(chat.id, chat.name)
-    }
+    for (const chat of chats) learnChat(s, chat)
     // Only the latest few messages per chat: enough to see where each conversation stands. They're
     // stored oldest first, so replies and reactions find the messages they point at.
     const perChat = new Map<string, number>()
@@ -675,13 +833,14 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     if (requested) return
     for (const chat of chats) {
       if (!isChatJid(chat.id)) continue
-      const jid = canonicalJid(chat.id, chat.pnJid)
+      const jid = await chatIdOf(s, chat.id, chat.pnJid)
       if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
         await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
       }
     }
     for (const [jid] of s.names) if (!isJidGroup(jid)) await upsertContact(s, jid)
     reloadSoon(s)
+    repairSoon(s)
     await finishSync(s)
   }
 
@@ -689,6 +848,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
   async function stop(s: Session) {
     s.stopped = true
+    clearTimeout(s.repairTimer)
     const socket = s.socket
     s.socket = null
     await Promise.resolve(socket?.end(undefined)).catch(() => undefined)
@@ -706,6 +866,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       stopped: false,
       names: new Map(),
       groupTitles: new Map(),
+      aliases: new Map(),
       historyAsked: new Map(),
     }
     sessions.set(keyOf(userId), s)
