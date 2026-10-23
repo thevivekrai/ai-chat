@@ -68,7 +68,7 @@ variable. The service's log says which file it read and which features are on:
 
 | Variable | What it does |
 | --- | --- |
-| `MONGODB_URI` | Your database. With MongoDB Atlas, allow connections from Render (Network Access). |
+| `MONGODB_URI` | Your database. Give Sytext one of its own (a name after the host, like `…mongodb.net/sytext?…`), not one another app uses. With MongoDB Atlas, allow connections from Render (Network Access → `0.0.0.0/0`). |
 | `JWT_SECRET` | Signs sessions: 32+ random characters (`openssl rand -base64 48`). |
 | `DATA_ENCRYPTION_KEY` | Encrypts stored chats and sessions (`openssl rand -base64 32`; the Blueprint generates one). |
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |

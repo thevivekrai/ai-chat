@@ -1,9 +1,27 @@
-import { ObjectId } from 'mongodb'
+import { MongoClient, ObjectId } from 'mongodb'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { connectDatabase } from './db.ts'
 import { Browser, PIXEL, startTestServer, TEST_MONGODB_URI, waitFor, type FakeWaSocket, type TestServer } from './testing/helpers.ts'
 
 const enc = encodeURIComponent
 const byId = (messages: { id: string }[]) => Object.fromEntries(messages.map((m) => [m.id, m])) as Record<string, any>
+
+describe.skipIf(!TEST_MONGODB_URI)('a database shared with another app', () => {
+  it('is explained, rather than failing with MongoDB\'s error', async () => {
+    const name = `sytext_shared_${Date.now()}`
+    const other = await new MongoClient(TEST_MONGODB_URI!).connect()
+    try {
+      // Another app's "users", with its own index on email.
+      await other.db(name).collection('users').createIndex({ email: 1 })
+      await expect(connectDatabase(TEST_MONGODB_URI!, name)).rejects.toThrow(
+        new RegExp(`The database "${name}" already has a "users" collection, set up by another app\\. Give Sytext a database of its own`),
+      )
+    } finally {
+      await other.db(name).dropDatabase()
+      await other.close()
+    }
+  })
+})
 
 describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   let server: TestServer

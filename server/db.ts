@@ -1,5 +1,6 @@
-import { MongoClient, type Collection, type Db, type ObjectId } from 'mongodb'
+import { MongoClient, type Collection, type Db, type IndexSpecification, type MongoServerError, type ObjectId } from 'mongodb'
 import type { AccountStatus, LinkedNetwork } from '../src/data/server/types.ts'
+import { ConfigError } from './config.ts'
 import type { Attachment, MessageStatus, NetworkId, QuotedMessage, Reaction, ThreadKind } from '../src/data/types.ts'
 
 export type { AccountStatus, LinkedNetwork }
@@ -144,22 +145,45 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
     messages: db.collection('messages'),
     avatars: db.collection('avatars'),
   }
-  await ensureIndexes(col)
+  try {
+    await ensureIndexes(col)
+  } catch (error) {
+    await client.close()
+    throw error
+  }
   return { client, db, col, close: () => client.close() }
 }
 
+/** MongoDB's codes for "an index like this exists, set up differently". */
+const INDEX_CONFLICTS = new Set([85, 86])
+
 async function ensureIndexes(col: Collections) {
+  // A collection of the same name from another app, in a database shared with it, has indexes of
+  // its own: say so plainly rather than with MongoDB's error.
+  const index = async <T extends object>(collection: Collection<T>, keys: IndexSpecification, options = {}) => {
+    try {
+      await collection.createIndex(keys, options)
+    } catch (error) {
+      if (!INDEX_CONFLICTS.has(Number((error as MongoServerError).code))) throw error
+      throw new ConfigError(
+        `The database "${collection.dbName}" already has a "${collection.collectionName}" collection, set up by another app. ` +
+          'Give Sytext a database of its own: put a name for it in MONGODB_URI, after the host and before any "?", ' +
+          'like mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/sytext?retryWrites=true. ' +
+          `(MongoDB said: ${(error as MongoServerError).errmsg ?? (error as Error).message})`,
+      )
+    }
+  }
   await Promise.all([
-    col.users.createIndex({ email: 1 }, { unique: true }),
-    col.users.createIndex({ googleSub: 1 }, { unique: true, partialFilterExpression: { googleSub: { $type: 'string' } } }),
-    col.accounts.createIndex({ userId: 1, network: 1 }, { unique: true }),
-    col.accounts.createIndex({ network: 1, status: 1 }),
-    col.waAuth.createIndex({ userId: 1, key: 1 }, { unique: true }),
-    col.threads.createIndex({ userId: 1, id: 1 }, { unique: true }),
-    col.threads.createIndex({ userId: 1, lastAt: -1 }),
-    col.contacts.createIndex({ userId: 1, id: 1 }, { unique: true }),
-    col.messages.createIndex({ userId: 1, id: 1 }, { unique: true }),
-    col.messages.createIndex({ userId: 1, threadId: 1, sentAt: -1 }),
-    col.avatars.createIndex({ userId: 1, id: 1 }, { unique: true }),
+    index(col.users, { email: 1 }, { unique: true }),
+    index(col.users, { googleSub: 1 }, { unique: true, partialFilterExpression: { googleSub: { $type: 'string' } } }),
+    index(col.accounts, { userId: 1, network: 1 }, { unique: true }),
+    index(col.accounts, { network: 1, status: 1 }),
+    index(col.waAuth, { userId: 1, key: 1 }, { unique: true }),
+    index(col.threads, { userId: 1, id: 1 }, { unique: true }),
+    index(col.threads, { userId: 1, lastAt: -1 }),
+    index(col.contacts, { userId: 1, id: 1 }, { unique: true }),
+    index(col.messages, { userId: 1, id: 1 }, { unique: true }),
+    index(col.messages, { userId: 1, threadId: 1, sentAt: -1 }),
+    index(col.avatars, { userId: 1, id: 1 }, { unique: true }),
   ])
 }

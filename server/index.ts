@@ -26,6 +26,7 @@ async function main() {
   const config = loadConfig()
 
   const database = await connectDatabase(config.mongoUri)
+  console.log(`Using the database "${database.db.databaseName}"`)
   const { col } = database
   const sealer = createSealer(config.dataKey)
   const hub = createHub()
