@@ -1,11 +1,12 @@
 import { createServer, type RequestListener } from 'node:http'
 import { resolve } from 'node:path'
+import type { DatabaseProblem } from '../src/data/server/types.ts'
 import { createApp } from './app.ts'
 import { createGoogleVerifier } from './auth/google.ts'
 import { createSessionTokens } from './auth/tokens.ts'
 import { ConfigError, loadConfig, loadEnvFiles, type Config } from './config.ts'
 import { createSealer } from './crypto.ts'
-import { connectDatabase, withoutCredentials, type Database } from './db.ts'
+import { connectDatabase, copyDatabase, problemOf, withoutCredentials, type Database } from './db.ts'
 import { createHoldingApp } from './holding.ts'
 import { createAvatars } from './inbox/avatars.ts'
 import { createInboxStore } from './inbox/store.ts'
@@ -15,6 +16,7 @@ import { createTelegram } from './networks/telegram.ts'
 import { createWhatsApp } from './networks/whatsapp.ts'
 import { keepAwake } from './keepAwake.ts'
 import { createHub } from './realtime.ts'
+import { startTemporaryDatabase, type TemporaryDatabase } from './temporaryDatabase.ts'
 
 /** How often linked accounts that aren't connected are reconnected. */
 const RESUME_EVERY_MS = 5 * 60_000
@@ -23,6 +25,12 @@ const TRIM_EVERY_MS = 60_000
 /** How often to try the database again while it can't be reached. */
 const DATABASE_RETRY_MS = 30_000
 
+/** The app running on one database, and how to stop it (the database itself stays open). */
+interface Instance {
+  app: RequestListener
+  stop(): Promise<void>
+}
+
 async function main() {
   // Settings come from the environment, or a .env file (locally, or as a host's secret file).
   const files = loadEnvFiles()
@@ -30,21 +38,29 @@ async function main() {
   const config = loadConfig()
   const staticDir = resolve('dist')
 
-  // The site is served by whichever app is current: while there's no database, one that says so.
-  let handler: RequestListener = createHoldingApp({
+  /** Why the database in MONGODB_URI can't be used, as of the latest try. */
+  let problem: DatabaseProblem | undefined
+  // The site is served by whichever app is current: until there's a database, one that says so.
+  const holding = createHoldingApp({
     staticDir,
     reason: "Sytext can't reach its database, so accounts are unavailable. It's trying again.",
+    problem: () => problem,
   })
+  let handler: RequestListener = holding
   const server = createServer((req, res) => handler(req, res))
-  const closers: (() => Promise<void> | void)[] = []
 
+  let current: { instance: Instance; database: Database; temporary?: TemporaryDatabase } | null = null
   let closing = false
   async function shutdown(signal: string) {
     if (closing) return
     closing = true
     console.log(`${signal}: shutting down`)
     server.close()
-    for (const close of closers) await Promise.resolve(close()).catch(() => undefined)
+    if (current) {
+      await current.instance.stop().catch(() => undefined)
+      await current.database.close().catch(() => undefined)
+      await current.temporary?.stop().catch(() => undefined)
+    }
     process.exit(0)
   }
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
@@ -54,18 +70,84 @@ async function main() {
   console.log(`Sytext is listening on port ${config.port}`)
 
   console.log(`Connecting to ${withoutCredentials(config.mongoUri)}`)
-  const database = await connectWhenPossible(config, () => closing)
-  if (!database) return
-  console.log(`Using the database "${database.db.databaseName}"`)
+  const first = await connectDatabase(config.mongoUri).catch((error: unknown) => error)
+  if (!isDatabase(first)) {
+    problem = problemOf(first)
+    console.error(first instanceof ConfigError ? first.message : first)
+    if (config.temporaryStorage) current = await runOnTemporaryStorage(config, staticDir, () => problem)
+    if (current) handler = current.instance.app
+    else console.log('The site is being served meanwhile; signing in and linked accounts need the database.')
+  }
 
-  handler = start(config, database, staticDir, closers)
+  // The real database: now, or whenever it answers. Anything made in temporary storage meanwhile
+  // moves over to it.
+  for (let database = isDatabase(first) ? first : null; !closing; database = null) {
+    database ??= await connectWhenPossible(config, () => closing, (error) => {
+      const now = problemOf(error)
+      if (now !== problem) console.error(error instanceof ConfigError ? error.message : error)
+      problem = now
+    })
+    if (!database) return
+    try {
+      if (current?.temporary) {
+        handler = holding // Briefly, while everything moves.
+        await current.instance.stop()
+        // WhatsApp saves its keys in the background: let the last saves land before copying.
+        await new Promise((wait) => setTimeout(wait, 1000))
+        const moved = await copyDatabase(current.database, database)
+        await current.database.close()
+        await current.temporary.stop()
+        console.log(`The database answers: moved ${moved} ${moved === 1 ? 'record' : 'records'} over from temporary storage.`)
+      }
+      console.log(`Using the database "${database.db.databaseName}"`)
+      problem = undefined
+      current = { instance: start(config, database, staticDir), database }
+      handler = current.instance.app
+      return
+    } catch (error) {
+      console.error("Couldn't move to the database; staying on temporary storage for now:", error)
+      await database.close().catch(() => undefined)
+      if (current?.temporary) {
+        current.instance = start(config, current.database, staticDir, () => problem)
+        handler = current.instance.app
+      }
+    }
+  }
+}
+
+const isDatabase = (value: unknown): value is Database => !!value && typeof value === 'object' && 'col' in value
+
+/**
+ * A private database run by this server, so signing in and linking work while the real one can't
+ * be reached. Null if it can't be started (say, MongoDB can't be downloaded): the site then waits.
+ */
+async function runOnTemporaryStorage(
+  config: Config,
+  staticDir: string,
+  problem: () => DatabaseProblem | undefined,
+): Promise<{ instance: Instance; database: Database; temporary: TemporaryDatabase } | null> {
+  console.log('Starting temporary storage: a private database inside this server, so accounts work meanwhile…')
+  let temporary: TemporaryDatabase | undefined
+  try {
+    temporary = await startTemporaryDatabase()
+    const database = await connectDatabase(temporary.uri, 'sytext')
+    console.log(
+      'Temporary storage is ready: signing in and linking work, but only until the server restarts. ' +
+        'Everything moves to the database as soon as it answers.',
+    )
+    return { instance: start(config, database, staticDir, problem), database, temporary }
+  } catch (error) {
+    console.error("Temporary storage couldn't start, so accounts wait for the database:", error instanceof Error ? error.message : error)
+    await temporary?.stop().catch(() => undefined)
+    return null
+  }
 }
 
 /**
- * The real app, once there's a database: linked accounts reconnect, old messages are trimmed, and
- * everything that has to be stopped on shutdown is added to `closers`.
+ * The real app on a database: linked accounts reconnect and old messages are trimmed. With
+ * `temporaryProblem`, the database is temporary storage, and the app says so (and why).
  */
-function start(config: Config, database: Database, staticDir: string, closers: (() => Promise<void> | void)[]): RequestListener {
+function start(config: Config, database: Database, staticDir: string, temporaryProblem?: () => DatabaseProblem | undefined): Instance {
   const { col } = database
   const sealer = createSealer(config.dataKey)
   const hub = createHub()
@@ -90,6 +172,7 @@ function start(config: Config, database: Database, staticDir: string, closers: (
     telegram,
     secureCookies: config.production,
     staticDir,
+    ...(temporaryProblem ? { temporaryStorage: { problem: temporaryProblem } } : {}),
   })
 
   const on = [
@@ -120,17 +203,17 @@ function start(config: Config, database: Database, staticDir: string, closers: (
 
   const stopKeepingAwake = config.keepAwakeUrl ? keepAwake({ url: config.keepAwakeUrl, wanted: () => accounts.anyLinked() }) : null
 
-  closers.push(() => {
-    for (const timer of timers) clearInterval(timer)
-    stopKeepingAwake?.()
-    // Open event streams would keep the server from closing.
-    hub.closeAll()
-  })
-  // Disconnect without logging out, so the links carry on after the restart.
-  closers.push(async () => void (await Promise.allSettled([whatsapp.stopAll(), telegram.stopAll()])))
-  closers.push(() => database.close())
-
-  return app
+  return {
+    app,
+    async stop() {
+      for (const timer of timers) clearInterval(timer)
+      stopKeepingAwake?.()
+      // Open event streams would keep the server from closing; browsers reconnect by themselves.
+      hub.closeAll()
+      // Disconnect without logging out, so the links carry on after a restart or a move.
+      await Promise.allSettled([whatsapp.stopAll(), telegram.stopAll()])
+    },
+  }
 }
 
 /**
@@ -138,18 +221,15 @@ function start(config: Config, database: Database, staticDir: string, closers: (
  * list, a paused cluster) and that is something the user fixes elsewhere, without redeploying.
  * Null when the server is shutting down.
  */
-async function connectWhenPossible(config: Config, stopped: () => boolean): Promise<Database | null> {
-  for (let attempt = 1; !stopped(); attempt++) {
+async function connectWhenPossible(config: Config, stopped: () => boolean, failed: (error: unknown) => void): Promise<Database | null> {
+  for (let attempt = 2; !stopped(); attempt++) {
+    await new Promise((wait) => setTimeout(wait, DATABASE_RETRY_MS))
+    if (stopped()) break
     try {
       return await connectDatabase(config.mongoUri)
     } catch (error) {
-      if (attempt === 1) {
-        console.error(error instanceof ConfigError ? error.message : error)
-        console.log('The site is being served meanwhile; signing in and linked accounts need the database.')
-      } else if (attempt % 10 === 0) {
-        console.error(`Still no database after ${attempt} tries.`)
-      }
-      await new Promise((wait) => setTimeout(wait, DATABASE_RETRY_MS))
+      failed(error)
+      if (attempt % 10 === 0) console.error(`Still no database after ${attempt} tries.`)
     }
   }
   return null

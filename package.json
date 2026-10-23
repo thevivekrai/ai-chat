@@ -27,6 +27,7 @@
     "lucide-react": "^1.61.0",
     "matrix-js-sdk": "^44.0.0",
     "mongodb": "^7.7.0",
+    "mongodb-memory-server-core": "^11.3.0",
     "motion": "^14.5.0",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",

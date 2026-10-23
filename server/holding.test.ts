@@ -9,7 +9,7 @@ describe('the server while it has no database', () => {
   const reason = "Sytext can't reach its database, so accounts are unavailable. It's trying again."
 
   beforeAll(async () => {
-    const app = createHoldingApp({ reason })
+    const app = createHoldingApp({ reason, problem: () => 'unreachable' })
     server = await new Promise<Server>((ready) => {
       const s = app.listen(0, '127.0.0.1', () => ready(s))
     })
@@ -29,7 +29,13 @@ describe('the server while it has no database', () => {
   it('tells the app that accounts are unavailable', async () => {
     const res = await fetch(`${url}/api/config`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ database: false, whatsapp: false, telegram: false, googleClientId: null })
+    expect(await res.json()).toMatchObject({
+      database: false,
+      whatsapp: false,
+      telegram: false,
+      googleClientId: null,
+      databaseProblem: 'unreachable',
+    })
   })
 
   it('answers everything else with why, rather than pretending', async () => {
