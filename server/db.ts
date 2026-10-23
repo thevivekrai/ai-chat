@@ -126,10 +126,10 @@ export interface Database {
   close(): Promise<void>
 }
 
-/** The database named in the connection string, or "tidings" if it names none (Atlas strings often don't). */
+/** The database named in the connection string, or "sytext" if it names none (Atlas strings often don't). */
 export function databaseName(uri: string): string {
   const name = /^mongodb(?:\+srv)?:\/\/[^/]+\/([^?]+)/.exec(uri)?.[1]
-  return name ? decodeURIComponent(name) : 'tidings'
+  return name ? decodeURIComponent(name) : 'sytext'
 }
 
 export async function connectDatabase(uri: string, dbName = databaseName(uri)): Promise<Database> {

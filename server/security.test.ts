@@ -118,10 +118,10 @@ describe('config', () => {
 
 describe('database name', () => {
   it('comes from the connection string, or defaults', () => {
-    expect(databaseName('mongodb+srv://u:p@cluster0.abc.mongodb.net/?retryWrites=true&w=majority')).toBe('tidings')
+    expect(databaseName('mongodb+srv://u:p@cluster0.abc.mongodb.net/?retryWrites=true&w=majority')).toBe('sytext')
     expect(databaseName('mongodb+srv://u:p@cluster0.abc.mongodb.net/inbox?retryWrites=true')).toBe('inbox')
     expect(databaseName('mongodb://h1:27017,h2:27017/prod')).toBe('prod')
-    expect(databaseName('mongodb://localhost:27017')).toBe('tidings')
+    expect(databaseName('mongodb://localhost:27017')).toBe('sytext')
   })
 })
 
