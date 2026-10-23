@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { MotionConfig } from 'motion/react'
 import { AuthScreen } from '@/components/auth/AuthScreen'
+import { RecoveryKeyDialog } from '@/components/auth/RecoveryKeyDialog'
 import { CommandBar } from '@/components/command/CommandBar'
 import { AppShell } from '@/components/layout/AppShell'
 import { LogoMark } from '@/components/layout/LogoMark'
@@ -27,6 +28,7 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       {status === 'checking' ? <Splash /> : status === 'signed-out' ? <AuthScreen /> : <Inbox />}
+      <RecoveryKeyDialog />
       <Toaster />
     </MotionConfig>
   )

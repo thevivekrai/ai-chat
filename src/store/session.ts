@@ -33,6 +33,10 @@ interface SessionState {
   user: PublicUser | null
   /** Shown on the sign-in screen, e.g. why the user was signed out. */
   notice: string | null
+  /** A new recovery key to show the user, this once (the server keeps only its hash). */
+  recoveryKey: string | null
+  showRecoveryKey(key: string): void
+  recoveryKeySaved(): void
   /** Works out where the user stands; call once on start. */
   init(): Promise<void>
   /** After signing in or creating an account. */
@@ -51,6 +55,15 @@ export const useSession = create<SessionState>()((set, get) => ({
   serverProblem: null,
   user: null,
   notice: null,
+  recoveryKey: null,
+
+  showRecoveryKey(key) {
+    set({ recoveryKey: key })
+  },
+
+  recoveryKeySaved() {
+    set({ recoveryKey: null })
+  },
 
   async init() {
     const features = await serverApi.features()
@@ -91,7 +104,7 @@ export const useSession = create<SessionState>()((set, get) => ({
     useInbox.getState().clear()
     // Signing back in starts at the inbox, not wherever the last person left off.
     useUi.getState().closeDialog()
-    set({ status: 'signed-out', user: null, notice: notice ?? null })
+    set({ status: 'signed-out', user: null, notice: notice ?? null, recoveryKey: null })
     await api.connections.setServerSession(null)
   },
 

@@ -24,6 +24,9 @@ export interface UserDoc {
   avatarUrl?: string
   /** Sessions started before this are no longer accepted. */
   sessionsValidAfter?: Date
+  /** SHA-256 of the recovery key, which resets the password with the email address (see recoveryKeys.ts). */
+  recoveryKeyHash?: string
+  recoveryKeyCreatedAt?: Date
   createdAt: Date
   updatedAt: Date
 }

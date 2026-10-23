@@ -79,6 +79,9 @@ export const serverApi = {
   login: (input: { email: string; password: string }) => request<AuthResult>('POST', '/auth/login', input),
   google: (credential: string) => request<AuthResult>('POST', '/auth/google', { credential }),
   logout: () => request<{ ok: true }>('POST', '/auth/logout'),
+  /** A forgotten password: the email and recovery key set a new one (and a new key comes back). */
+  recover: (input: { email: string; recoveryKey: string; password: string }) => request<AuthResult>('POST', '/auth/recover', input),
+  newRecoveryKey: (current: string) => request<{ user: PublicUser; recoveryKey: string }>('POST', '/me/recovery-key', { current }),
 
   rename: (name: string) => request<{ user: PublicUser }>('PATCH', '/me', { name }),
   setPassword: (input: { password: string; current?: string }) => request<AuthResult>('POST', '/me/password', input),

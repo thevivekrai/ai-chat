@@ -9,13 +9,22 @@ import { Wallpaper } from '@/components/layout/Wallpaper'
 import { APP_NAME } from '@/config'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
-import { createAccount, signIn, signInWithGoogle } from '@/store/actions'
+import { createAccount, recoverAccount, signIn, signInWithGoogle } from '@/store/actions'
 import { DATABASE_RECHECK_MS, useSession } from '@/store/session'
 import { GoogleButton } from './GoogleButton'
 
-type Mode = 'sign-in' | 'create'
+type Mode = 'sign-in' | 'create' | 'recover'
 
-/** Sign in or create an account: with Google, or with an email and password. */
+const TITLES: Record<Mode, string> = {
+  'sign-in': `Sign in to ${APP_NAME}`,
+  create: `Create your ${APP_NAME} account`,
+  recover: 'Reset your password',
+}
+
+/**
+ * Sign in or create an account: with Google, or with an email and password. A forgotten password
+ * is reset with the recovery key given at sign-up.
+ */
 export function AuthScreen() {
   const features = useSession((s) => s.features)
   const notice = useSession((s) => s.notice)
@@ -23,18 +32,26 @@ export function AuthScreen() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [recoveryKey, setRecoveryKey] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const form = useAsyncAction()
   const google = useAsyncAction()
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    void form.run(() => (mode === 'create' ? createAccount(name.trim(), email.trim(), password) : signIn(email.trim(), password)))
+    void form.run(() =>
+      mode === 'create'
+        ? createAccount(name.trim(), email.trim(), password)
+        : mode === 'recover'
+          ? recoverAccount(email.trim(), recoveryKey, password)
+          : signIn(email.trim(), password),
+    )
   }
 
   const switchMode = (next: Mode) => {
     setMode(next)
     setPassword('')
+    setRecoveryKey('')
     form.reset()
     google.reset()
   }
@@ -45,16 +62,18 @@ export function AuthScreen() {
       <main className="glass-thick glass-edge relative w-full max-w-[380px] rounded-3xl p-6 shadow-pop sm:p-7">
         <div className="flex flex-col items-center text-center">
           <LogoMark className="size-11" />
-          <h1 className="mt-3 text-xl font-semibold tracking-tight">
-            {mode === 'create' ? `Create your ${APP_NAME} account` : `Sign in to ${APP_NAME}`}
-          </h1>
+          <h1 className="mt-3 text-xl font-semibold tracking-tight">{TITLES[mode]}</h1>
           <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
-            One inbox for your WhatsApp and Telegram chats, with AI that sorts them and drafts replies.
+            {mode === 'recover'
+              ? 'Enter your email, the recovery key you saved when you made your account, and a new password.'
+              : 'One inbox for your WhatsApp and Telegram chats, with AI that sorts them and drafts replies.'}
           </p>
-          <div className="mt-3 flex items-center gap-1.5" aria-hidden>
-            <NetworkIcon network="whatsapp" className="size-5" />
-            <NetworkIcon network="telegram" className="size-5" />
-          </div>
+          {mode !== 'recover' && (
+            <div className="mt-3 flex items-center gap-1.5" aria-hidden>
+              <NetworkIcon network="whatsapp" className="size-5" />
+              <NetworkIcon network="telegram" className="size-5" />
+            </div>
+          )}
         </div>
 
         {notice && (
@@ -79,7 +98,7 @@ export function AuthScreen() {
           </div>
         )}
 
-        {features?.googleClientId && (
+        {features?.googleClientId && mode !== 'recover' && (
           <div className="mt-6 space-y-2">
             <GoogleButton clientId={features.googleClientId} onCredential={(credential) => void google.run(() => signInWithGoogle(credential))} />
             {google.busy && (
@@ -112,31 +131,63 @@ export function AuthScreen() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
-          <Field label="Password" hint={mode === 'create' ? 'At least 8 characters.' : undefined}>
+          {mode === 'recover' && (
+            <Field label="Recovery key" hint="Five groups of five letters and numbers, like 7K2QP-M9XHD-…">
+              <Input
+                required
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                maxLength={64}
+                placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+                className="font-mono tracking-wide uppercase placeholder:normal-case"
+                value={recoveryKey}
+                onChange={(e) => setRecoveryKey(e.target.value)}
+              />
+            </Field>
+          )}
+          <Field
+            label={mode === 'recover' ? 'New password' : 'Password'}
+            hint={mode === 'sign-in' ? undefined : 'At least 8 characters.'}
+          >
             <PasswordInput
               value={password}
               onChange={setPassword}
               visible={showPassword}
               onToggle={() => setShowPassword(!showPassword)}
-              autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
-              minLength={mode === 'create' ? 8 : undefined}
+              autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+              minLength={mode === 'sign-in' ? undefined : 8}
             />
           </Field>
+          {mode === 'sign-in' && (
+            <div className="-mt-1 flex justify-end">
+              <button type="button" className="text-xs font-medium text-accent-ink hover:underline" onClick={() => switchMode('recover')}>
+                Forgot password?
+              </button>
+            </div>
+          )}
           {form.error && <ErrorText>{form.error}</ErrorText>}
           <Button type="submit" variant="primary" className="w-full" disabled={form.busy}>
             {form.busy && <Loader2 className="size-4 animate-spin" aria-hidden />}
-            {mode === 'create' ? 'Create account' : 'Sign in'}
+            {mode === 'create' ? 'Create account' : mode === 'recover' ? 'Reset password' : 'Sign in'}
           </Button>
         </form>
 
+        {mode === 'recover' && (
+          <p className="mt-4 text-[11px] leading-relaxed text-faint">
+            No recovery key? Accounts made before recovery keys existed don't have one: if you're still signed in somewhere,
+            make one in Settings → Profile. If you sign in with Google, use Continue with Google instead.
+          </p>
+        )}
+
         <p className="mt-5 text-center text-[13px] text-muted">
-          {mode === 'create' ? 'Already have an account? ' : 'New here? '}
+          {mode === 'sign-in' ? 'New here? ' : mode === 'create' ? 'Already have an account? ' : 'Remembered it? '}
           <button
             type="button"
             className="font-medium text-accent-ink hover:underline"
-            onClick={() => switchMode(mode === 'create' ? 'sign-in' : 'create')}
+            onClick={() => switchMode(mode === 'sign-in' ? 'create' : 'sign-in')}
           >
-            {mode === 'create' ? 'Sign in' : 'Create an account'}
+            {mode === 'sign-in' ? 'Create an account' : 'Sign in'}
           </button>
         </p>
       </main>
