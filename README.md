@@ -73,7 +73,7 @@ variable. The service's log says which file it read and which features are on:
 | `DATA_ENCRYPTION_KEY` | Encrypts stored chats and sessions (`openssl rand -base64 32`; the Blueprint generates one). |
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
-| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Profile photos, and pictures in linked chats. |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Your own profile photo. (Photos and files in chats don't need it.) |
 | `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
 | `TEMPORARY_STORAGE` | `off` stops the server keeping accounts in temporary storage while the database can't be reached (see below). |
 
@@ -163,8 +163,10 @@ like WhatsApp Web; your phone doesn't have to stay online.
 ![Linking WhatsApp: the pairing code and where to enter it](docs/screenshots/link-whatsapp.jpg)
 
 - It brings in your recent chats (up to 40 messages each) and every new message after that, with
-  delivery and read ticks for yours, edits and deletions. Pictures that arrive are copied to
-  Cloudinary so the app can show them; other media shows as a labelled attachment.
+  delivery and read ticks for yours, edits and deletions.
+- **Photos and files** both ways: photos show in the chat, videos and documents as cards, and
+  each one downloads (see *Photos and files* below). The paperclip, pasting, or dropping files on
+  the message box sends them; JPEG and PNG go as photos, MP4 as video, anything else as a document.
 - Quoted replies and reactions come in and go out. You see when someone is typing, and they see
   when you are. Profile and group pictures show too.
 - Scrolling back past what's stored asks your phone for older messages, as WhatsApp Web does.
@@ -185,13 +187,31 @@ your phone (**Settings → Devices → Link Desktop Device**). Sytext signs in a
 a new device, and shows up in Telegram under **Settings → Devices**, where you can end it.
 
 - Your 30 most recent chats come in (20 messages each; broadcast channels are left out), then
-  everything new, with read status both ways, edits, and pictures as above.
+  everything new, with read status both ways, edits, and photos and files both ways as above.
 - Quoted replies, reactions (Telegram's standard set), typing both ways, and profile and group
   pictures. Scrolling back fetches earlier messages from Telegram.
 - **Unlink** ends the session in Telegram and deletes its chats from the server.
 - The server needs an `api_id` and `api_hash` for the deployment from
   [my.telegram.org](https://my.telegram.org) → *API development tools*. It uses
   [GramJS](https://gram.js.org), a client for Telegram's own API (MTProto).
+
+### Photos and files
+
+Nothing is uploaded anywhere else, and nothing is stored on the server:
+
+- **Received** photos, videos and documents get a private link on your Sytext server. Opening it
+  (or the photo showing in the chat) fetches the file from WhatsApp or Telegram right then and
+  streams it to the browser, which caches it. The link carries, encrypted, what the network needs
+  to find the file again, so it keeps working for messages the server no longer keeps.
+- **Sending:** the browser hands the file to the server, which passes it straight on to WhatsApp or
+  Telegram (they keep it). Up to 50 MB each, ten at a time; the message text becomes the first
+  one's caption.
+- **Safety:** a link works only for the account it belongs to. Only plain images, video and audio
+  are shown in the page; anything else (say, an HTML file someone sent) is always a download, and
+  is served with a sandboxing policy, so it can't run as part of the site.
+- WhatsApp keeps media on its servers for a while, then asks your phone to upload it again when
+  it's opened. If the phone no longer has it, Sytext says it's no longer available. Opening a file
+  needs the account connected.
 
 ### Where your chats are kept
 

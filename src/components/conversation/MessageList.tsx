@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  Download,
   AlertCircle,
   CalendarClock,
   Check,
@@ -16,9 +17,10 @@ import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { api } from '@/data/api'
-import type { ChatCapabilities, Contact, Message, MessageStatus, QuotedMessage, Reaction } from '@/data/types'
+import type { Attachment, ChatCapabilities, Contact, Message, MessageStatus, QuotedMessage, Reaction } from '@/data/types'
 import { ME_ID } from '@/data/types'
 import { cn } from '@/lib/cn'
+import { downloadUrl } from '@/lib/files'
 import { hashString } from '@/lib/format'
 import { MINUTE, formatClock, formatDayLabel, formatWhen, toMs } from '@/lib/time'
 import { startReply, toggleReaction } from '@/store/actions'
@@ -393,33 +395,72 @@ function Quote({ quote, contacts, onAccent }: { quote: QuotedMessage; contacts: 
 }
 
 function Attachments({ message, fromMe }: { message: Message; fromMe: boolean }) {
-  return message.attachments?.map((a, index) =>
-    a.kind === 'image' && a.url ? (
-      <a key={`${a.name}-${index}`} href={a.url} target="_blank" rel="noreferrer" className="-mx-1.5 -mt-0.5 mb-1.5 block">
-        <img src={a.url} alt={a.name} loading="lazy" className="max-h-72 w-auto max-w-full rounded-xl object-cover" />
-      </a>
-    ) : (
-      <div
-        key={`${a.name}-${index}`}
-        className={cn('mb-1.5 flex items-center gap-2.5 rounded-xl px-2.5 py-2', fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line')}
-      >
-        <span
-          className={cn(
-            'grid size-9 shrink-0 place-items-center rounded-lg',
-            fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink',
-          )}
-        >
-          {a.kind === 'image' ? <ImageIcon className="size-4" aria-hidden /> : <FileText className="size-4" aria-hidden />}
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate text-[13px] font-medium">{a.name}</span>
-          <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>
-            {a.kind === 'image' ? 'Image' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'}
-            {a.size ? ` · ${a.size}` : ''}
-          </span>
-        </span>
+  return message.attachments?.map((a, index) => (
+    <AttachmentView key={`${a.name}-${index}`} attachment={a} fromMe={fromMe} sending={message.status === 'sending'} />
+  ))
+}
+
+/**
+ * A photo, shown in the chat with a button to save it; or a file, as a card that downloads it.
+ * Linked chats' files come from WhatsApp or Telegram as they're opened, so one that can't be
+ * fetched right now shows as a card instead of a broken image.
+ */
+function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attachment; fromMe: boolean; sending: boolean }) {
+  const [broken, setBroken] = useState(false)
+  if (a.kind === 'image' && a.url && !broken) {
+    return (
+      <div className="group/photo relative -mx-1.5 -mt-0.5 mb-1.5">
+        <a href={a.url} target="_blank" rel="noreferrer" className="block" aria-label="Open the photo">
+          <img
+            src={a.url}
+            alt={a.name}
+            loading="lazy"
+            onError={() => setBroken(true)}
+            className={cn('max-h-72 min-h-16 w-auto min-w-24 max-w-full rounded-xl bg-black/5 object-cover', sending && 'opacity-70')}
+          />
+        </a>
+        {!sending && (
+          <a
+            href={downloadUrl(a.url)}
+            download
+            aria-label="Save the photo"
+            title="Save"
+            className="absolute top-2 right-2 grid size-8 place-items-center rounded-full bg-black/55 text-white opacity-0 shadow-card transition-opacity group-hover/photo:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+          >
+            <Download className="size-4" aria-hidden />
+          </a>
+        )}
       </div>
-    ),
+    )
+  }
+  const link = a.url && !sending ? downloadUrl(a.url) : undefined
+  const kindLabel = a.kind === 'image' ? 'Photo' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'
+  const body = (
+    <>
+      <span className={cn('grid size-9 shrink-0 place-items-center rounded-lg', fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink')}>
+        {a.kind === 'image' ? <ImageIcon className="size-4" aria-hidden /> : <FileText className="size-4" aria-hidden />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium">{a.name}</span>
+        <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>
+          {broken ? "Couldn't be shown right now" : kindLabel}
+          {a.size ? ` · ${a.size}` : ''}
+        </span>
+      </span>
+      {link && <Download className={cn('size-4 shrink-0', fromMe ? 'text-white/80' : 'text-muted')} aria-hidden />}
+    </>
+  )
+  const look = cn(
+    'mb-1.5 flex min-w-48 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left',
+    fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line',
+    link && (fromMe ? 'transition-colors hover:bg-white/25' : 'transition-colors hover:bg-surface-2'),
+  )
+  return link ? (
+    <a href={link} download={a.name} title={`Download ${a.name}`} className={look}>
+      {body}
+    </a>
+  ) : (
+    <div className={look}>{body}</div>
   )
 }
 

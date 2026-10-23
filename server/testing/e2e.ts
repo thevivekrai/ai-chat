@@ -9,6 +9,8 @@
  *   POST /whatsapp/typing             Ravi starts typing
  *   POST /whatsapp/older              the phone sends older messages (after "Load earlier")
  *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once
+ *   POST /whatsapp/photo {"caption"}  Ravi sends a photo
+ *   POST /whatsapp/file               Ravi sends a PDF
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /trim                        the server trims chats to what it keeps, now
@@ -16,7 +18,8 @@
  */
 import { createServer } from 'node:http'
 import { resolve } from 'node:path'
-import { startTestServer, TEST_MONGODB_URI } from './helpers.ts'
+import { crc32, deflateSync } from 'node:zlib'
+import { mediaMessage, startTestServer, TEST_MONGODB_URI } from './helpers.ts'
 
 if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
 
@@ -68,6 +71,38 @@ async function whatsappLinked() {
   } as never)
 }
 
+/** A small PNG of a sunset-ish gradient, so a photo looks like one. */
+function gradientPng(width: number, height: number): Buffer {
+  const rows = Buffer.alloc((width * 3 + 1) * height)
+  for (let y = 0; y < height; y++) {
+    const row = y * (width * 3 + 1)
+    for (let x = 0; x < width; x++) {
+      const i = row + 1 + x * 3
+      rows[i] = 250 - Math.round((y / height) * 120)
+      rows[i + 1] = 120 + Math.round((x / width) * 80)
+      rows[i + 2] = 90 + Math.round((y / height) * 140)
+    }
+  }
+  const chunk = (type: string, data: Buffer) => {
+    const length = Buffer.alloc(4)
+    length.writeUInt32BE(data.length)
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(body))
+    return Buffer.concat([length, body, crc])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header.set([8, 2, 0, 0, 0], 8)
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
 createServer(async (req, res) => {
   let body = ''
   for await (const chunk of req) body += chunk
@@ -88,6 +123,29 @@ createServer(async (req, res) => {
           message: { conversation: `Update ${i + 1}` },
           messageTimestamp: base + i,
         })),
+      } as never)
+    } else if (req.url === '/whatsapp/photo') {
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: `P${Date.now()}` },
+            message: mediaMessage('imageMessage', gradientPng(480, 320), { mimetype: 'image/png', caption: input.caption ?? '' }),
+            messageTimestamp: now(),
+          },
+        ],
+      } as never)
+    } else if (req.url === '/whatsapp/file') {
+      const pdf = Buffer.from('%PDF-1.4\n% Invoice INV-2041 from Ravi Kumar\n%%EOF\n')
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: `F${Date.now()}` },
+            message: mediaMessage('documentMessage', pdf, { mimetype: 'application/pdf', fileName: 'Invoice INV-2041.pdf', caption: 'Invoice for the planters' }),
+            messageTimestamp: now(),
+          },
+        ],
       } as never)
     } else if (req.url === '/trim') {
       res.writeHead(200).end(String(await server.current().store.trim()))

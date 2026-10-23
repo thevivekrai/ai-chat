@@ -3,6 +3,7 @@ import { Api, TelegramClient, utils } from 'telegram'
 import { EditedMessage, type EditedMessageEvent } from 'telegram/events/EditedMessage.js'
 import { NewMessage, Raw, type NewMessageEvent } from 'telegram/events/index.js'
 import { Logger, LogLevel } from 'telegram/extensions/Logger.js'
+import { CustomFile } from 'telegram/client/uploads.js'
 import { computeCheck } from 'telegram/Password.js'
 import { StringSession } from 'telegram/sessions/index.js'
 import QRCode from 'qrcode'
@@ -12,8 +13,8 @@ import type { Attachment, Message, QuotedMessage, Reaction } from '../../src/dat
 import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, type Avatars, type Picture } from '../inbox/avatars.ts'
+import { sizeLabel, type FileBody, type FileLinks, type FileRef, type Upload } from '../inbox/files.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
-import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
 import type { Accounts } from './accounts.ts'
 
@@ -52,7 +53,8 @@ export interface TgMessage {
   text: string
   /** Unix seconds. */
   date: number
-  media?: { body?: string; attachment?: Attachment; download?: () => Promise<Buffer | undefined> }
+  /** What it carries besides text; `file` when the attachment can be downloaded from Telegram. */
+  media?: { body?: string; attachment?: Attachment; file?: boolean }
   /** The message this one replies to, in the same chat. */
   replyToId?: number
   reactions?: Reaction[]
@@ -109,6 +111,10 @@ export interface TgClient {
   setTyping(chatId: string, typing: boolean): Promise<void>
   /** A small profile or chat picture, if there is one. */
   picture(chatId: string): Promise<Buffer | undefined>
+  /** The photo or file in a message, fetched now; null if it has none (or the message is gone). */
+  download(chatId: string, messageId: number): Promise<{ data: Buffer | AsyncIterable<Buffer>; size?: number } | null>
+  /** Sends a photo, or any other file as a document, with a caption. */
+  sendFile(chatId: string, file: Upload, caption: string, replyToId?: number): Promise<{ id: number; date: number }>
   markRead(chatId: string, maxId: number): Promise<void>
   logOut(): Promise<void>
   onUpdate(listener: (update: TgUpdate) => void): void
@@ -154,16 +160,20 @@ const barePeer = (peer: Api.TypePeer): TgPeer => ({
   name: '',
 })
 
-export function mediaOf(m: Api.Message, download: () => Promise<Buffer | undefined>): TgMessage['media'] {
-  const size = (n: unknown) => (Number(n) ? `${Math.max(1, Math.round(Number(n) / 1024))} KB` : undefined)
-  if (m.photo) return { attachment: { kind: 'image', name: 'Photo' }, download }
+export function mediaOf(m: Api.Message): TgMessage['media'] {
+  const file = (kind: Attachment['kind'], name: string, fallbackMime?: string): TgMessage['media'] => {
+    const size = sizeLabel(Number(m.file?.size) || undefined)
+    const mime = m.file?.mimeType || fallbackMime
+    return { attachment: { kind, name, ...(size ? { size } : {}), ...(mime ? { mime } : {}) }, file: true }
+  }
+  if (m.photo) return { attachment: { kind: 'image', name: 'Photo', mime: 'image/jpeg' }, file: true }
   if (m.sticker) return { body: `${m.file?.emoji ?? ''} Sticker`.trim() }
   if (m.voice) return { body: '🎤 Voice message' }
   if (m.videoNote) return { body: '📹 Video message' }
   if (m.gif) return { body: 'GIF' }
   if (m.audio) return { body: '🎵 Audio' }
-  if (m.video) return { attachment: { kind: 'file', name: 'Video', size: size(m.file?.size) } }
-  if (m.document) return { attachment: { kind: 'file', name: m.file?.name || 'Document', size: size(m.file?.size) } }
+  if (m.video) return file('file', m.file?.name || 'Video', 'video/mp4')
+  if (m.document) return file('file', m.file?.name || 'Document')
   if (m.geo || m.venue) return { body: '📍 Location' }
   if (m.contact) return { body: `👤 ${[m.contact.firstName, m.contact.lastName].filter(Boolean).join(' ') || 'Contact'}` }
   if (m.poll) {
@@ -219,10 +229,7 @@ export const createGramClient: CreateTgClient = (session, api) => {
 
   async function messageOf(m: Api.TypeMessage): Promise<TgMessage | null> {
     if (!(m instanceof Api.Message)) return null // Service messages ("joined the group") and gaps.
-    const media = mediaOf(m, async () => {
-      const data = await client.downloadMedia(m, {})
-      return Buffer.isBuffer(data) ? data : undefined
-    })
+    const media = mediaOf(m)
     if (!m.message && !media) return null
     const chat = peerOf(m.chat ?? (await m.getChat().catch(() => undefined))) ?? barePeer(m.peerId)
     let sender: TgPeer | undefined
@@ -370,6 +377,31 @@ export const createGramClient: CreateTgClient = (session, api) => {
     },
     async markRead(chatId, maxId) {
       await client.markAsRead(await inputPeer(chatId), undefined, { maxId, clearMentions: true })
+    },
+    async download(chatId, messageId) {
+      // Fetched again for a fresh file reference: Telegram's expire after a while.
+      const [m] = await client.getMessages(await inputPeer(chatId), { ids: messageId })
+      if (!(m instanceof Api.Message) || !m.media) return null
+      if (m.photo) {
+        const data = await client.downloadMedia(m, {})
+        return Buffer.isBuffer(data) ? { data } : null
+      }
+      if (!m.document) return null
+      // Documents can be large: streamed a piece at a time rather than held in memory.
+      return { data: client.iterDownload({ file: m.media, requestSize: 512 * 1024 }), size: Number(m.document.size) }
+    },
+    async sendFile(chatId, file, caption, replyToId) {
+      const photo = /^image\/(jpeg|png|webp)$/.test(file.mime)
+      const sent = await client.sendFile(await inputPeer(chatId), {
+        file: new CustomFile(file.name, file.data.length, '', file.data),
+        caption,
+        parseMode: false,
+        // Anything but a photo or MP4 video arrives as a file, as sent, rather than recompressed.
+        forceDocument: !(photo || file.mime === 'video/mp4'),
+        workers: 1,
+        ...(replyToId ? { replyTo: replyToId } : {}),
+      })
+      return { id: sent.id, date: sent.date }
     },
     async logOut() {
       await client.invoke(new Api.auth.LogOut())
@@ -519,8 +551,9 @@ export interface TelegramDeps {
   store: InboxStore
   accounts: Accounts
   hub: Hub
-  media: Media | null
   avatars: Avatars
+  /** Links to photos and files, fetched from Telegram when opened. */
+  files: FileLinks
   /** Without it, linking Telegram is switched off. */
   api: TelegramApi | undefined
   createClient?: CreateTgClient
@@ -532,7 +565,7 @@ type CodeResult = TelegramCodeResult
 type VerifyResult = TelegramVerifyResult
 
 export function createTelegram(deps: TelegramDeps) {
-  const { sealer, store, accounts, hub, media, avatars, api } = deps
+  const { sealer, store, accounts, hub, avatars, files, api } = deps
   const createClient = deps.createClient ?? createGramClient
   const pending = new Map<string, PendingLogin>()
   const pictures = createQueue()
@@ -651,7 +684,7 @@ export function createTelegram(deps: TelegramDeps) {
       body: m.text || m.media?.body || '',
       sentAt: sentAt.toISOString(),
       ...(m.out ? { status: m.id <= readOutboxMaxId ? 'read' : 'sent' } : {}),
-      ...(m.media?.attachment ? { attachments: [m.media.attachment] } : {}),
+      ...(m.media?.attachment ? { attachments: [attachmentOf(s.userId, m.chat.id, m.id, m.media)] } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(m.reactions?.length ? { reactions: m.reactions } : {}),
       ref: { id: m.id },
@@ -665,18 +698,15 @@ export function createTelegram(deps: TelegramDeps) {
     const thread = await store.thread(s.userId, threadId)
     if (thread) publish(s, { type: 'thread.updated', thread })
     publish(s, { type: 'message.created', message: wire })
-
-    // Pictures that arrive live are copied to Cloudinary so the browser can show them.
-    const download = m.media?.download
-    if (download && media) {
-      void (async () => {
-        const data = await download()
-        if (!data) return
-        const url = await media.uploadBuffer(data, `chats/${keyOf(s.userId)}`)
-        await updateAndPublish(s, message.id, { attachments: [{ kind: 'image', name: 'Photo', url }] })
-      })().catch(report)
-    }
     return { message: wire, added }
+  }
+
+  /** A message's attachment, linked so it can be opened when Telegram has it as a file. */
+  function attachmentOf(userId: ObjectId, chatId: string, messageId: number, media: NonNullable<TgMessage['media']>): Attachment {
+    const attachment = media.attachment!
+    if (!media.file) return attachment
+    const ref: FileRef = { n: 'tg', chat: chatId, id: messageId, name: attachment.name, ...(attachment.mime ? { mime: attachment.mime } : {}) }
+    return { ...attachment, url: files.urlFor(userId, ref) }
   }
 
   async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
@@ -1052,6 +1082,58 @@ export function createTelegram(deps: TelegramDeps) {
       const { ref, ...wire } = message
       void ref
       return wire
+    },
+
+    /** Sends a photo or file, with the text as its caption. Telegram keeps it; Sytext only passes it on. */
+    async sendFile(userId: ObjectId, threadId: string, upload: Upload, caption: string, replyToId?: string, quotedHint?: MessageHint): Promise<Message> {
+      const s = connected(userId)
+      const chatId = threadId.slice('tga:'.length)
+      const stored = replyToId ? await store.message(userId, replyToId) : null
+      const hint = !stored && quotedHint?.id === replyToId ? quotedHint : undefined
+      const quoted = stored ?? (hint ? { id: hint.id, senderId: hint.senderId, body: hint.body ?? '' } : null)
+      const quotedRef = Number(stored?.ref?.id) || (hint ? refFromId(threadId, hint.id) : undefined)
+      let sent: { id: number; date: number }
+      try {
+        sent = await s.client.sendFile(chatId, upload, caption, quotedRef)
+      } catch (error) {
+        throw telegramError(error)
+      }
+      const photo = /^image\/(jpeg|png|webp)$/.test(upload.mime)
+      const size = sizeLabel(upload.data.length)
+      const media = {
+        attachment: { kind: photo ? ('image' as const) : ('file' as const), name: photo ? 'Photo' : upload.name, mime: upload.mime, ...(size ? { size } : {}) },
+        file: true,
+      }
+      const message: StoredMessage = {
+        id: `tga:${chatId}:${sent.id}`,
+        threadId,
+        senderId: 'me',
+        body: caption,
+        sentAt: new Date(sent.date * 1000).toISOString(),
+        status: 'sent',
+        attachments: [attachmentOf(userId, chatId, sent.id, media)],
+        ...(quoted && quotedRef ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
+        ref: { id: sent.id },
+      }
+      await store.addMessage(userId, message)
+      const { ref, ...wire } = message
+      void ref
+      return wire
+    },
+
+    /** A photo or file from a link, fetched from Telegram now. */
+    async openFile(userId: ObjectId, ref: FileRef): Promise<FileBody> {
+      if (ref.n !== 'tg') throw new HttpError(404, 'No such file.')
+      const s = sessions.get(keyOf(userId))
+      if (!s) throw new HttpError(409, "Telegram isn't connected right now, so this can't be fetched. Try again in a minute.")
+      let found: Awaited<ReturnType<TgClient['download']>>
+      try {
+        found = await s.client.download(ref.chat, ref.id)
+      } catch (error) {
+        throw telegramError(error)
+      }
+      if (!found) throw new HttpError(410, 'This is no longer available on Telegram.')
+      return { data: found.data, name: ref.name, ...(ref.mime ? { mime: ref.mime } : {}), ...(found.size ? { size: found.size } : {}) }
     },
 
     /**

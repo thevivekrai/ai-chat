@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
+import { Readable } from 'node:stream'
 import { exportJWK, generateKeyPair, SignJWT, createLocalJWKSet } from 'jose'
 import type { AuthenticationState, BaileysEventMap, WAMessage, WAMessageKey } from '@whiskeysockets/baileys'
 import { createApp } from '../app.ts'
@@ -8,16 +10,20 @@ import { createSessionTokens } from '../auth/tokens.ts'
 import { createSealer } from '../crypto.ts'
 import { connectDatabase, type Database } from '../db.ts'
 import { createAvatars } from '../inbox/avatars.ts'
+import { createFileLinks } from '../inbox/files.ts'
 import { createInboxStore, type InboxStore } from '../inbox/store.ts'
 import { createAccounts } from '../networks/accounts.ts'
 import { createTelegram, type CreateTgClient, type Telegram, type TgMessage, type TgSelf, type TgUpdate } from '../networks/telegram.ts'
-import { createWhatsApp, type WaSocket, type WhatsApp } from '../networks/whatsapp.ts'
+import { createWhatsApp, type DownloadWaMedia, type WaContent, type WaSocket, type WhatsApp } from '../networks/whatsapp.ts'
 import { createHub } from '../realtime.ts'
 
 /** Integration tests run against a real MongoDB when TEST_MONGODB_URI is set (each run gets its own database). */
 export const TEST_MONGODB_URI = process.env.TEST_MONGODB_URI
 
 export const GOOGLE_CLIENT_ID = 'test-client.apps.googleusercontent.com'
+
+/** The largest file the test server takes, so "too big" can be tried without 50 MB. */
+export const MAX_TEST_FILE_BYTES = 256 * 1024
 
 export async function waitFor<T>(check: () => T | Promise<T>, { timeout = 4000, interval = 20 } = {}): Promise<T> {
   const started = Date.now()
@@ -54,12 +60,45 @@ export const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAA
 
 /* ── WhatsApp: a socket the test drives ──────────────────────────────────────── */
 
+/**
+ * WhatsApp's media servers: files by URL. Sending puts them here; a test can add incoming ones
+ * with `mediaMessage`.
+ */
+export const waMedia = new Map<string, Buffer>()
+
+/** A photo, video or file message's media fields, as WhatsApp sends them, for data now in `waMedia`. */
+export function mediaMessage(type: 'imageMessage' | 'videoMessage' | 'documentMessage', data: Buffer, extra: Record<string, unknown> = {}) {
+  const url = `https://mmg.whatsapp.test/${createHash('sha256').update(data).digest('hex').slice(0, 16)}-${waMedia.size}`
+  waMedia.set(url, data)
+  return {
+    [type]: {
+      url,
+      directPath: new URL(url).pathname,
+      mediaKey: Buffer.alloc(32, 1),
+      fileEncSha256: createHash('sha256').update('enc').update(data).digest(),
+      fileSha256: createHash('sha256').update(data).digest(),
+      fileLength: data.length,
+      ...extra,
+    },
+  }
+}
+
+/** Fetches from `waMedia`, the way Baileys would from WhatsApp's servers. */
+export const downloadFakeMedia: DownloadWaMedia = async (message) => {
+  const content = message.message as Record<string, { url?: string; mediaKey?: Uint8Array } | undefined> | null | undefined
+  const media = Object.values(content ?? {}).find((m) => m?.url)
+  const data = media?.url ? waMedia.get(media.url) : undefined
+  if (!data || !media?.mediaKey?.length) throw Object.assign(new Error('Gone'), { status: 410 })
+  return Readable.from([data])
+}
+
 export class FakeWaSocket implements WaSocket {
   private listeners = new Map<string, ((arg: never) => void)[]>()
   user?: { id: string; name?: string; lid?: string }
   authState: { creds: AuthenticationState['creds'] }
   pairingPhone?: string
   sent: { jid: string; text: string; quotedId?: string }[] = []
+  files: { jid: string; kind: 'image' | 'video' | 'document'; mimetype: string; fileName?: string; caption?: string; size: number; quotedId?: string }[] = []
   reactions: { jid: string; emoji: string; targetId: string }[] = []
   presence: { type: string; jid?: string }[] = []
   historyRequests: { count: number; oldestId: string }[] = []
@@ -98,14 +137,26 @@ export class FakeWaSocket implements WaSocket {
     return 'ABCD1234'
   }
 
-  async sendMessage(
-    jid: string,
-    content: { text: string } | { react: { text: string; key: WAMessageKey } },
-    options?: { quoted?: WAMessage },
-  ) {
+  async sendMessage(jid: string, content: WaContent, options?: { quoted?: WAMessage }) {
     if ('react' in content) {
       this.reactions.push({ jid, emoji: content.react.text, targetId: content.react.key.id! })
       return { key: { remoteJid: jid, fromMe: true, id: `REACT${this.reactions.length}` } } as WAMessage
+    }
+    if (!('text' in content)) {
+      // Uploaded to WhatsApp's servers; the message carries the keys to fetch it again.
+      const [kind, data] = 'image' in content ? (['image', content.image] as const) : 'video' in content ? (['video', content.video] as const) : (['document', content.document] as const)
+      const fileName = 'document' in content ? content.fileName : undefined
+      this.files.push({
+        jid,
+        kind,
+        mimetype: content.mimetype,
+        size: data.length,
+        ...(fileName ? { fileName } : {}),
+        ...(content.caption ? { caption: content.caption } : {}),
+        ...(options?.quoted ? { quotedId: options.quoted.key.id! } : {}),
+      })
+      const message = mediaMessage(`${kind}Message`, data, { mimetype: content.mimetype, caption: content.caption, ...(fileName ? { fileName } : {}) })
+      return { key: { remoteJid: jid, fromMe: true, id: `FILE${this.files.length}` }, message } as WAMessage
     }
     this.sent.push({ jid, text: content.text, ...(options?.quoted ? { quotedId: options.quoted.key.id! } : {}) })
     return { key: { remoteJid: jid, fromMe: true, id: `SENT${this.sent.length}` } } as WAMessage
@@ -162,6 +213,7 @@ export function fakeTelegram() {
     password: 'hunter2',
     codesSent: [] as string[],
     sent: [] as { chatId: string; text: string; replyToId?: number }[],
+    files: [] as { chatId: string; name: string; mime: string; caption: string; data: Buffer; replyToId?: number }[],
     read: [] as { chatId: string; maxId: number }[],
     loggedOut: 0,
     sessions: [] as string[],
@@ -236,7 +288,7 @@ export function fakeTelegram() {
             out: false,
             text: '',
             date: now - 3600,
-            media: { attachment: { kind: 'image' as const, name: 'Photo' } },
+            media: { attachment: { kind: 'image' as const, name: 'Photo', mime: 'image/jpeg' }, file: true },
           },
         ]
       },
@@ -256,6 +308,17 @@ export function fakeTelegram() {
       },
       async picture(chatId) {
         return chatId === asha.id ? PIXEL : undefined
+      },
+      async download(chatId, messageId) {
+        if (chatId === trek.id && messageId === 7) return { data: PIXEL }
+        const sent = state.files[messageId - 201]
+        if (sent?.chatId !== chatId) return null
+        // Documents arrive in pieces.
+        return { data: Readable.from([sent.data.subarray(0, 3), sent.data.subarray(3)]), size: sent.data.length }
+      },
+      async sendFile(chatId, file, caption, replyToId) {
+        state.files.push({ chatId, name: file.name, mime: file.mime, caption, data: file.data, ...(replyToId ? { replyToId } : {}) })
+        return { id: 200 + state.files.length, date: Math.floor(Date.now() / 1000) }
       },
       async markRead(chatId, maxId) {
         state.read.push({ chatId, maxId })
@@ -312,14 +375,16 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
     const store = createInboxStore(database.col, sealer)
     const avatars = createAvatars(database.col, sealer)
     const accounts = createAccounts(database.col, hub)
+    const files = createFileLinks(sealer)
     const whatsapp = createWhatsApp({
       col: database.col,
       sealer,
       store,
       accounts,
       hub,
-      media: null,
       avatars,
+      files,
+      downloadMedia: downloadFakeMedia,
       createSocket: (auth) => {
         const socket = new FakeWaSocket(auth)
         sockets.push(socket)
@@ -334,8 +399,8 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       store,
       accounts,
       hub,
-      media: null,
       avatars,
+      files,
       api: { apiId: 1, apiHash: 'hash' },
       createClient: telegram.create,
     })
@@ -352,6 +417,8 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       hub,
       whatsapp,
       telegram: tg,
+      files,
+      maxFileBytes: MAX_TEST_FILE_BYTES,
       secureCookies: false,
       staticDir,
     })
@@ -424,6 +491,34 @@ export class Browser {
       // Not JSON.
     }
     return { status: res.status, json: json as Record<string, any>, headers: res.headers, text }
+  }
+
+  /** A request whose answer is bytes (a file), or whose body is (an upload). */
+  async raw(method: string, path: string, body?: Buffer, headers: Record<string, string> = {}) {
+    const res = await fetch(this.base + path, {
+      method,
+      headers: { ...(this.cookie ? { Cookie: this.cookie } : {}), ...headers },
+      ...(body ? { body: new Uint8Array(body) } : {}),
+    })
+    return { status: res.status, headers: res.headers, body: Buffer.from(await res.arrayBuffer()) }
+  }
+
+  /** Sends a photo or file the way the app does. */
+  async upload(threadId: string, data: Buffer, file: { name: string; type: string; caption?: string; replyToId?: string }) {
+    const res = await this.raw('POST', `/api/threads/${encodeURIComponent(threadId)}/files`, data, {
+      'Content-Type': 'application/octet-stream',
+      'X-File-Name': encodeURIComponent(file.name),
+      'X-File-Type': file.type,
+      ...(file.caption ? { 'X-Caption': encodeURIComponent(file.caption) } : {}),
+      ...(file.replyToId ? { 'X-Reply-To': encodeURIComponent(file.replyToId) } : {}),
+    })
+    let json: Record<string, any> = {}
+    try {
+      json = JSON.parse(res.body.toString('utf8'))
+    } catch {
+      // Not JSON.
+    }
+    return { status: res.status, json }
   }
 
   get = (path: string) => this.request('GET', path)

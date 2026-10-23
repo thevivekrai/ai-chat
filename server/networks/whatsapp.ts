@@ -26,6 +26,7 @@ import makeWASocket, {
   type WAMessageKey,
   type WAVersion,
 } from '@whiskeysockets/baileys'
+import type { Readable } from 'node:stream'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
 import type { MessageHint, ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
@@ -34,8 +35,8 @@ import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, downloadImage, type Avatars, type Picture } from '../inbox/avatars.ts'
+import { sizeLabel, type FileBody, type FileLinks, type FileRef, type Upload } from '../inbox/files.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
-import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
 import type { Accounts } from './accounts.ts'
 
@@ -56,11 +57,7 @@ export interface WaSocket {
   user?: { id: string; name?: string; lid?: string }
   authState: { creds: AuthenticationCreds }
   requestPairingCode(phoneNumber: string): Promise<string>
-  sendMessage(
-    jid: string,
-    content: { text: string } | { react: { text: string; key: WAMessageKey } },
-    options?: { quoted?: WAMessage },
-  ): Promise<WAMessage | undefined>
+  sendMessage(jid: string, content: WaContent, options?: { quoted?: WAMessage }): Promise<WAMessage | undefined>
   readMessages(keys: WAMessageKey[]): Promise<void>
   groupMetadata(jid: string): Promise<{ subject: string }>
   sendPresenceUpdate(type: 'composing' | 'paused', jid?: string): Promise<void>
@@ -77,7 +74,18 @@ export interface WaSocket {
   }
 }
 
+/** What this manager sends: text, a reaction, or a photo, video or file (uploaded by Baileys). */
+export type WaContent =
+  | { text: string }
+  | { react: { text: string; key: WAMessageKey } }
+  | { image: Buffer; mimetype: string; caption?: string }
+  | { video: Buffer; mimetype: string; caption?: string }
+  | { document: Buffer; mimetype: string; fileName: string; caption?: string }
+
 type ILogger = NonNullable<Parameters<typeof makeCacheableSignalKeyStore>[1]>
+
+/** Fetches a photo or file from WhatsApp's servers (asking the phone to upload it again if it expired). */
+export type DownloadWaMedia = (message: WAMessage, socket: WaSocket) => Promise<Readable>
 
 export type CreateWaSocket = (auth: AuthenticationState, logger: ILogger) => WaSocket | Promise<WaSocket>
 
@@ -101,6 +109,12 @@ async function currentVersion(): Promise<WAVersion | undefined> {
   if (latest?.isLatest) knownVersion = { version: latest.version, at: Date.now() }
   return latest?.version
 }
+
+const downloadWithBaileys: DownloadWaMedia = async (message, socket) =>
+  (await downloadMediaMessage(message, 'stream', {}, {
+    logger: quiet,
+    reuploadRequest: (m) => (socket.updateMediaMessage ? socket.updateMediaMessage(m) : Promise.resolve(m)),
+  })) as Readable
 
 export const createBaileysSocket: CreateWaSocket = async (auth, logger) =>
   makeWASocket({
@@ -187,24 +201,71 @@ const nameRank = (name: string | undefined) => (!name || PLACEHOLDERS.has(name) 
 
 const STATUS: Record<number, MessageStatus> = { 0: 'failed', 1: 'sending', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'read' }
 
-function describe(message: proto.IMessage | null | undefined): { body: string; attachments?: Attachment[]; image?: boolean } | null {
+/** A photo, video or file in a message, and what WhatsApp needs to fetch it again. */
+interface WaFile {
+  type: 'imageMessage' | 'videoMessage' | 'documentMessage'
+  media: Record<string, string | number>
+}
+
+interface WaMediaFields {
+  url?: string | null
+  directPath?: string | null
+  mediaKey?: Uint8Array | null
+  fileEncSha256?: Uint8Array | null
+  fileSha256?: Uint8Array | null
+  fileLength?: Parameters<typeof toNumber>[0] | null
+  mimetype?: string | null
+}
+
+const BYTE_FIELDS = ['mediaKey', 'fileEncSha256', 'fileSha256'] as const
+
+/** The media message's download details, as plain values (bytes in base64). */
+function fileOf(type: WaFile['type'], m: WaMediaFields | null | undefined): WaFile | undefined {
+  if (!m?.mediaKey?.length || !(m.url || m.directPath)) return undefined
+  const media: Record<string, string | number> = {}
+  if (m.url) media.url = m.url
+  if (m.directPath) media.directPath = m.directPath
+  for (const field of BYTE_FIELDS) if (m[field]?.length) media[field] = Buffer.from(m[field]!).toString('base64')
+  if (m.fileLength) media.fileLength = toNumber(m.fileLength)
+  if (m.mimetype) media.mimetype = m.mimetype
+  return { type, media }
+}
+
+/** A message as WhatsApp's download needs it, from a file link. */
+function messageForFile(ref: Extract<FileRef, { n: 'wa' }>): WAMessage {
+  const media: Record<string, unknown> = { ...ref.media }
+  for (const field of BYTE_FIELDS) if (typeof media[field] === 'string') media[field] = Buffer.from(media[field] as string, 'base64')
+  return { key: ref.key, message: { [ref.type]: media } as proto.IMessage }
+}
+
+const mimeOf = (m: WaMediaFields | null | undefined, fallback?: string) => m?.mimetype?.split(';')[0]?.trim() || fallback
+
+function describe(message: proto.IMessage | null | undefined): { body: string; attachments?: Attachment[]; file?: WaFile } | null {
   const content = normalizeMessageContent(message)
   if (!content) return null
-  const kb = (n: Parameters<typeof toNumber>[0]) => (n ? `${Math.max(1, Math.round(toNumber(n) / 1024))} KB` : undefined)
+  const size = (n: Parameters<typeof toNumber>[0] | null | undefined) => sizeLabel(n ? toNumber(n) : undefined)
+  const attachment = (kind: Attachment['kind'], name: string, m: WaMediaFields | null | undefined, fallbackMime?: string): Attachment => {
+    const mime = mimeOf(m, fallbackMime)
+    const bytes = size(m?.fileLength)
+    return { kind, name, ...(bytes ? { size: bytes } : {}), ...(mime ? { mime } : {}) }
+  }
   switch (getContentType(content)) {
     case 'conversation':
       return content.conversation ? { body: content.conversation } : null
     case 'extendedTextMessage':
       return content.extendedTextMessage?.text ? { body: content.extendedTextMessage.text } : null
-    case 'imageMessage':
-      return { body: content.imageMessage?.caption ?? '', attachments: [{ kind: 'image', name: 'Photo' }], image: true }
-    case 'videoMessage':
-      return { body: content.videoMessage?.caption ?? '', attachments: [{ kind: 'file', name: 'Video', size: kb(content.videoMessage?.fileLength) }] }
-    case 'documentMessage':
-      return {
-        body: content.documentMessage?.caption ?? '',
-        attachments: [{ kind: 'file', name: content.documentMessage?.fileName ?? 'Document', size: kb(content.documentMessage?.fileLength) }],
-      }
+    case 'imageMessage': {
+      const m = content.imageMessage
+      return { body: m?.caption ?? '', attachments: [attachment('image', 'Photo', m, 'image/jpeg')], file: fileOf('imageMessage', m) }
+    }
+    case 'videoMessage': {
+      const m = content.videoMessage
+      return { body: m?.caption ?? '', attachments: [attachment('file', 'Video', m, 'video/mp4')], file: fileOf('videoMessage', m) }
+    }
+    case 'documentMessage': {
+      const m = content.documentMessage
+      return { body: m?.caption ?? '', attachments: [attachment('file', m?.fileName || 'Document', m)], file: fileOf('documentMessage', m) }
+    }
     case 'documentWithCaptionMessage':
       return describe(content.documentWithCaptionMessage?.message)
     case 'audioMessage':
@@ -285,16 +346,19 @@ export interface WhatsAppDeps {
   store: InboxStore
   accounts: Accounts
   hub: Hub
-  media: Media | null
   avatars: Avatars
+  /** Links to photos and files, fetched from WhatsApp when opened. */
+  files: FileLinks
   createSocket?: CreateWaSocket
+  downloadMedia?: DownloadWaMedia
   /** How long to wait for WhatsApp to offer a code or QR. */
   linkTimeoutMs?: number
 }
 
 export function createWhatsApp(deps: WhatsAppDeps) {
-  const { col, sealer, store, accounts, hub, media, avatars } = deps
+  const { col, sealer, store, accounts, hub, avatars, files } = deps
   const createSocket = deps.createSocket ?? createBaileysSocket
+  const downloadMedia = deps.downloadMedia ?? downloadWithBaileys
   const sessions = new Map<string, Session>()
   /** Users whose session is being started, so two starts never overlap. */
   const starting = new Set<string>()
@@ -690,6 +754,9 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     }
     const context = quoteOf(msg.message)
 
+    const key = { remoteJid: remote, fromMe, id: msg.key.id!, ...(msg.key.participant ? { participant: msg.key.participant } : {}) }
+    const attachments = withFileLink(s.userId, key, parts)
+
     const message: StoredMessage = {
       id: `wa:${chatJid}:${msg.key.id}`,
       threadId: thread.id,
@@ -697,7 +764,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       body: parts.body,
       sentAt: sentAt.toISOString(),
       ...(fromMe ? { status: STATUS[msg.status ?? 2] ?? 'sent' } : {}),
-      ...(parts.attachments ? { attachments: parts.attachments } : {}),
+      ...(attachments ? { attachments } : {}),
       ...(context ? { replyTo: await quotedFor(s, chatJid, context) } : {}),
       ref: { key: { remoteJid: remote, fromMe, id: msg.key.id, participant: msg.key.participant ?? undefined } },
     }
@@ -708,20 +775,49 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     const { ref, ...wire } = message
     void ref
     publish(s, { type: 'message.created', message: wire })
-
-    // Pictures that arrive live are copied to Cloudinary so the browser can show them.
-    if (parts.image && live && media && s.socket) void saveImage(s, msg, message.id).catch(report)
   }
 
-  async function saveImage(s: Session, msg: WAMessage, messageId: string) {
-    const socket = s.socket
-    if (!socket || !media) return
-    const data = await downloadMediaMessage(msg, 'buffer', {}, {
-      logger: quiet,
-      reuploadRequest: (m) => (socket.updateMediaMessage ? socket.updateMediaMessage(m) : Promise.resolve(m)),
-    })
-    const url = await media.uploadBuffer(data, `chats/${keyOf(s.userId)}`)
-    await updateAndPublish(s, messageId, { attachments: [{ kind: 'image', name: 'Photo', url }] })
+  /** The message's attachments, the photo or file among them linked so it can be opened. */
+  function withFileLink(
+    userId: ObjectId,
+    key: Extract<FileRef, { n: 'wa' }>['key'],
+    parts: { attachments?: Attachment[]; file?: WaFile },
+  ): Attachment[] | undefined {
+    const [first, ...rest] = parts.attachments ?? []
+    if (!first || !parts.file) return parts.attachments
+    const url = files.urlFor(userId, { n: 'wa', key, type: parts.file.type, media: parts.file.media, name: first.name, ...(first.mime ? { mime: first.mime } : {}) })
+    return [{ ...first, url }, ...rest]
+  }
+
+  /** What a reply quotes, and how WhatsApp needs to be told. */
+  async function quoteFor(userId: ObjectId, threadId: string, replyToId?: string, quotedHint?: MessageHint) {
+    const stored = replyToId ? await store.message(userId, replyToId) : null
+    const hint = !stored && quotedHint?.id === replyToId ? quotedHint : undefined
+    const quoted = stored ?? (hint ? { id: hint.id, senderId: hint.senderId, body: hint.body ?? '' } : null)
+    const quotedKey = (stored?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint ? keyFromHint(threadId, hint) : null)
+    return {
+      replyTo: quoted && quotedKey ? { id: quoted.id, senderId: quoted.senderId, body: quoted.body } : undefined,
+      // WhatsApp shows the quote from the message given here, so it needs the original's text.
+      options: quotedKey ? { quoted: { key: quotedKey, message: { conversation: quoted!.body } } } : undefined,
+    }
+  }
+
+  /** Stores a message just sent from Sytext and returns it as the browser sees it. */
+  async function saveSent(userId: ObjectId, threadId: string, sentId: string, message: Omit<StoredMessage, 'id' | 'threadId' | 'senderId' | 'sentAt' | 'status' | 'ref'>) {
+    const jid = threadId.slice('wa:'.length)
+    const stored: StoredMessage = {
+      id: `wa:${jid}:${sentId}`,
+      threadId,
+      senderId: 'me',
+      sentAt: new Date().toISOString(),
+      status: 'sent',
+      ...message,
+      ref: { key: { remoteJid: jid, fromMe: true, id: sentId } },
+    }
+    await store.addMessage(userId, stored)
+    const { ref, ...wire } = stored
+    void ref
+    return wire
   }
 
   async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
@@ -947,32 +1043,59 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     /** `quoted` is what the device knows of the message replied to, in case the server no longer has it. */
     async send(userId: ObjectId, threadId: string, body: string, replyToId?: string, quotedHint?: MessageHint): Promise<Message> {
       const socket = connected(userId)
-      const jid = threadId.slice('wa:'.length)
-      const stored = replyToId ? await store.message(userId, replyToId) : null
-      const hint = !stored && quotedHint?.id === replyToId ? quotedHint : undefined
-      const quoted = stored ?? (hint ? { id: hint.id, senderId: hint.senderId, body: hint.body ?? '' } : null)
-      const quotedKey = (stored?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint ? keyFromHint(threadId, hint) : null)
-      const sent = await socket.sendMessage(
-        jid,
-        { text: body },
-        // WhatsApp shows the quote from the message given here, so it needs the original's text.
-        quotedKey ? { quoted: { key: quotedKey, message: { conversation: quoted!.body } } } : undefined,
-      )
+      const { replyTo, options } = await quoteFor(userId, threadId, replyToId, quotedHint)
+      const sent = await socket.sendMessage(threadId.slice('wa:'.length), { text: body }, options)
       if (!sent?.key.id) throw new HttpError(502, 'WhatsApp didn\'t accept the message.')
-      const message: StoredMessage = {
-        id: `wa:${jid}:${sent.key.id}`,
-        threadId,
-        senderId: 'me',
-        body,
-        sentAt: new Date().toISOString(),
-        status: 'sent',
-        ...(quoted ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
-        ref: { key: { remoteJid: jid, fromMe: true, id: sent.key.id } },
+      return saveSent(userId, threadId, sent.key.id, { body, ...(replyTo ? { replyTo } : {}) })
+    },
+
+    /**
+     * Sends a photo (JPEG or PNG), an MP4 video, or any other file as a document, with the text as
+     * its caption. WhatsApp keeps it; Sytext only passes it on.
+     */
+    async sendFile(userId: ObjectId, threadId: string, upload: Upload, caption: string, replyToId?: string, quotedHint?: MessageHint): Promise<Message> {
+      const socket = connected(userId)
+      const { replyTo, options } = await quoteFor(userId, threadId, replyToId, quotedHint)
+      const withCaption = caption ? { caption } : {}
+      const content: WaContent = /^image\/(jpeg|png)$/.test(upload.mime)
+        ? { image: upload.data, mimetype: upload.mime, ...withCaption }
+        : upload.mime === 'video/mp4'
+          ? { video: upload.data, mimetype: upload.mime, ...withCaption }
+          : { document: upload.data, mimetype: upload.mime, fileName: upload.name, ...withCaption }
+      let sent: WAMessage | undefined
+      try {
+        sent = await socket.sendMessage(threadId.slice('wa:'.length), content, options)
+      } catch (error) {
+        report(error)
+        throw new HttpError(502, "WhatsApp didn't accept the file. Try again in a moment.")
       }
-      await store.addMessage(userId, message)
-      const { ref, ...wire } = message
-      void ref
-      return wire
+      if (!sent?.key.id) throw new HttpError(502, "WhatsApp didn't accept the file.")
+      // WhatsApp's copy of what was sent, with the keys to fetch it again.
+      const parts = describe(sent.message) ?? {
+        body: caption,
+        attachments: [{ kind: 'image' in content ? ('image' as const) : ('file' as const), name: 'image' in content ? 'Photo' : upload.name, mime: upload.mime }],
+      }
+      const attachments = withFileLink(userId, { remoteJid: threadId.slice('wa:'.length), fromMe: true, id: sent.key.id }, parts)?.map((a) => ({
+        ...a,
+        size: a.size ?? sizeLabel(upload.data.length),
+      }))
+      return saveSent(userId, threadId, sent.key.id, { body: caption, ...(attachments ? { attachments } : {}), ...(replyTo ? { replyTo } : {}) })
+    },
+
+    /** A photo or file from a link, fetched from WhatsApp now. */
+    async openFile(userId: ObjectId, ref: FileRef): Promise<FileBody> {
+      if (ref.n !== 'wa') throw new HttpError(404, 'No such file.')
+      const s = sessions.get(keyOf(userId))
+      if (!s?.socket || !s.opened) {
+        throw new HttpError(409, "WhatsApp isn't connected right now, so this can't be fetched. Try again in a minute.")
+      }
+      try {
+        const data = await downloadMedia(messageForFile(ref), s.socket)
+        return { data, name: ref.name, ...(ref.mime ? { mime: ref.mime } : {}) }
+      } catch (error) {
+        report(error)
+        throw new HttpError(410, 'This is no longer available on WhatsApp.')
+      }
     },
 
     /**

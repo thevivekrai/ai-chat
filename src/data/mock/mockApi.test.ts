@@ -48,7 +48,7 @@ describe('mock api', () => {
 
     const seeded = (await api.loadInbox()).messages.find((m) => m.id === 'divya-4')
     expect(seeded?.replyTo).toMatchObject({ id: 'divya-3', senderId: 'c-divya' })
-    expect(api.capabilities('divya')).toEqual({ reply: true, react: true, typing: true, history: false })
+    expect(api.capabilities('divya')).toEqual({ reply: true, react: true, typing: true, history: false, files: false })
   })
 
   it('sends scheduled messages once they are due', async () => {

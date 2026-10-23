@@ -18,7 +18,7 @@ const newId = (prefix: string) =>
 const clone = <T>(value: T): T => structuredClone(value)
 
 /** The demo shows replies, reactions and typing; it has no older history to fetch. */
-const DEMO_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: false }
+const DEMO_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: false, files: false }
 
 /** The demo inbox's backend: the inbox API minus account management, with its demo controls. */
 export type DemoApi = Omit<InboxApi, 'connections' | 'demo'> & { demo: NonNullable<InboxApi['demo']> }

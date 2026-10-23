@@ -17,7 +17,7 @@ import { MESSAGES_KEPT_PER_CHAT, type LinkedNetwork, type MessageHint, type Publ
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
 
 /** WhatsApp and Telegram, linked on the server, both do all of it. */
-const LINKED_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: true }
+const LINKED_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: true, files: true }
 
 /** How many messages of each chat are read from the device on start; older ones as the user scrolls back. */
 const IN_MEMORY_PER_CHAT = 50
@@ -146,7 +146,10 @@ export class ServerConnector implements Connector {
     this.inFlight.set(threadId, (this.inFlight.get(threadId) ?? 0) + 1)
     try {
       const quoted = options?.replyToId ? this.messages.get(options.replyToId) : undefined
-      const { message } = await serverApi.send(threadId, body, options?.replyToId, quoted && hintOf(quoted, true))
+      const hint = quoted && hintOf(quoted, true)
+      const { message } = options?.file
+        ? await serverApi.sendFile(threadId, options.file, body, options.replyToId, hint)
+        : await serverApi.send(threadId, body, options?.replyToId, hint)
       this.keepMessages([message])
       return message
     } catch (error) {

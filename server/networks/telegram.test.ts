@@ -3,8 +3,6 @@ import { Api } from 'telegram'
 import { describe, expect, it } from 'vitest'
 import { mediaOf, peerOf, reactionsOf, refFromId } from './telegram.ts'
 
-const download = async () => undefined
-
 describe('reading GramJS objects', () => {
   it('maps people, groups and channels to marked ids', () => {
     const user = new Api.User({ id: bigInt(5001), firstName: 'Asha', lastName: 'Rao', username: 'asha', accessHash: bigInt(9) })
@@ -28,9 +26,9 @@ describe('reading GramJS objects', () => {
       new Api.Message({ id: 1, peerId: new Api.PeerUser({ userId: bigInt(5001) }), date: 0, message: '', media })
 
     const photo = new Api.Photo({ id: bigInt(1), accessHash: bigInt(1), fileReference: Buffer.alloc(0), date: 0, sizes: [], dcId: 1 })
-    expect(mediaOf(message(new Api.MessageMediaPhoto({ photo })), download)).toMatchObject({ attachment: { kind: 'image', name: 'Photo' } })
+    expect(mediaOf(message(new Api.MessageMediaPhoto({ photo })))).toMatchObject({ attachment: { kind: 'image', name: 'Photo' } })
     // A photo that has expired (self-destructing) is just gone.
-    expect(mediaOf(message(new Api.MessageMediaPhoto({ photo: new Api.PhotoEmpty({ id: bigInt(1) }) })), download)).toBeUndefined()
+    expect(mediaOf(message(new Api.MessageMediaPhoto({ photo: new Api.PhotoEmpty({ id: bigInt(1) }) })))).toBeUndefined()
     const document = (attributes: Api.TypeDocumentAttribute[], mimeType = 'application/pdf') =>
       message(
         new Api.MessageMediaDocument({
@@ -46,12 +44,13 @@ describe('reading GramJS objects', () => {
           }),
         }),
       )
-    expect(mediaOf(document([new Api.DocumentAttributeFilename({ fileName: 'invoice.pdf' })]), download)).toEqual({
-      attachment: { kind: 'file', name: 'invoice.pdf', size: '20 KB' },
+    expect(mediaOf(document([new Api.DocumentAttributeFilename({ fileName: 'invoice.pdf' })]))).toEqual({
+      attachment: { kind: 'file', name: 'invoice.pdf', size: '20 KB', mime: 'application/pdf' },
+      file: true,
     })
-    expect(mediaOf(document([new Api.DocumentAttributeAudio({ voice: true, duration: 3 })], 'audio/ogg'), download)).toEqual({ body: '🎤 Voice message' })
-    expect(mediaOf(message(new Api.MessageMediaGeo({ geo: new Api.GeoPointEmpty() })), download)).toEqual({ body: '📍 Location' })
-    expect(mediaOf(message(), download)).toBeUndefined()
+    expect(mediaOf(document([new Api.DocumentAttributeAudio({ voice: true, duration: 3 })], 'audio/ogg'))).toEqual({ body: '🎤 Voice message' })
+    expect(mediaOf(message(new Api.MessageMediaGeo({ geo: new Api.GeoPointEmpty() })))).toEqual({ body: '📍 Location' })
+    expect(mediaOf(message())).toBeUndefined()
   })
 })
 

@@ -24,16 +24,27 @@ export function openThread(threadId: string, messageId?: string) {
   if (messageId) ui.flashMessage(messageId)
 }
 
-export async function sendReply(threadId: string, text: string) {
+/**
+ * Sends what's in the composer. With photos or files, each goes as its own message, the text as
+ * the first one's caption (and the reply quoting from the first).
+ */
+export async function sendReply(threadId: string, text: string, files: File[] = []) {
   const body = text.trim()
-  if (!body) return
+  if (!body && !files.length) return
   const ui = useUi.getState()
   const replyToId = ui.replyingTo[threadId]
   ui.setComposer(threadId, '')
   ui.setReplyingTo(threadId, null)
   ui.setDraftsOpen(false)
   stopTyping(threadId)
-  await useInbox.getState().sendMessage(threadId, body, replyToId ? { replyToId } : undefined)
+  const inbox = useInbox.getState()
+  if (!files.length) {
+    await inbox.sendMessage(threadId, body, replyToId ? { replyToId } : undefined)
+    return
+  }
+  await Promise.all(
+    files.map((file, i) => inbox.sendMessage(threadId, i === 0 ? body : '', { file, ...(i === 0 && replyToId ? { replyToId } : {}) })),
+  )
 }
 
 /** Quotes a message in the reply being written. */

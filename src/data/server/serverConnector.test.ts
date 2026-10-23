@@ -184,7 +184,7 @@ describe('chats linked on the server', () => {
 
   it('reacts, pages back and passes typing on, for chats that support it', async () => {
     const { api, events, stream, stop } = await signedIn()
-    expect(api.capabilities(RAVI)).toEqual({ reply: true, react: true, typing: true, history: true })
+    expect(api.capabilities(RAVI)).toEqual({ reply: true, react: true, typing: true, history: true, files: true })
 
     const reacted = await api.react(RAVI, `${RAVI}:M1`, '🙏')
     expect(reacted.reactions).toEqual([{ emoji: '🙏', count: 1, mine: true }])

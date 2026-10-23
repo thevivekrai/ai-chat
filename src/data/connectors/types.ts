@@ -70,6 +70,8 @@ export interface Connector {
 export interface SendOptions {
   /** The message this one replies to. */
   replyToId?: string
+  /** A photo or file to send, with the text as its caption (where the chat can send files). */
+  file?: File
 }
 
 export interface OlderMessages {

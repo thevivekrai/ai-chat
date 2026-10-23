@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express'
+import express, { Router, type Request, type Response } from 'express'
 import type { MessageHint } from '../../src/data/server/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
@@ -8,6 +8,7 @@ import type { Telegram } from '../networks/telegram.ts'
 import type { WhatsApp } from '../networks/whatsapp.ts'
 import type { Hub } from '../realtime.ts'
 import type { Avatars } from './avatars.ts'
+import { decodedHeader, MAX_FILE_BYTES, serveFile, uploadOf, type FileLinks } from './files.ts'
 import type { InboxStore } from './store.ts'
 
 interface InboxDeps {
@@ -19,6 +20,7 @@ interface InboxDeps {
   hub: Hub
   whatsapp: WhatsApp
   telegram: Telegram
+  files: FileLinks
 }
 
 /** A reaction is one emoji (some are several code points); anything longer isn't one. */
@@ -39,7 +41,7 @@ export function hintOf(value: unknown, id: string | undefined): MessageHint | un
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
 
 /** The linked chats: a snapshot on load, then live changes as server-sent events. */
-export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsapp, telegram }: InboxDeps): Router {
+export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsapp, telegram, files }: InboxDeps): Router {
   const router = Router()
   const signedIn = requireUser(tokens, col.users)
 
@@ -111,6 +113,15 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
     res.json({ ok: true })
   })
 
+  /** A photo or file in a chat, fetched from WhatsApp or Telegram as it's opened (see files.ts). */
+  router.get('/files/:token', signedIn, async (req, res) => {
+    const userId = userIdOf(res)
+    const ref = files.open(userId, String(req.params.token))
+    if (!ref) throw new HttpError(404, 'No such file.')
+    const file = await (ref.n === 'wa' ? whatsapp : telegram).openFile(userId, ref)
+    await serveFile(res, file, { download: req.query.download === '1' })
+  })
+
   /**
    * Profile and group pictures. The URL carries a version, so they can be cached for good. The
    * server holds recent ones in memory; others are fetched from the network again.
@@ -124,6 +135,59 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable')
     res.type(image.contentType).send(image.data)
   })
+
+  return router
+}
+
+/**
+ * Sending a photo or file. The request body is the file itself (as application/octet-stream), and
+ * headers describe it, encoded with encodeURIComponent: X-File-Name, X-File-Type, and optionally
+ * X-Caption, X-Reply-To and X-Reply-Hint (what the device knows of the message replied to, as JSON).
+ *
+ * X-File-Name is required before the body is read. It's also what keeps other sites from posting
+ * here: a cross-site request can't set it without a CORS preflight, which this server never
+ * approves (the JSON-only rule does the same for every other change).
+ */
+export function uploadRoutes({
+  col,
+  tokens,
+  store,
+  whatsapp,
+  telegram,
+  maxFileBytes = MAX_FILE_BYTES,
+}: Pick<InboxDeps, 'col' | 'tokens' | 'store' | 'whatsapp' | 'telegram'> & { maxFileBytes?: number }): Router {
+  const router = Router()
+  const signedIn = requireUser(tokens, col.users)
+  const readFile = express.raw({ type: () => true, limit: maxFileBytes })
+  const limitText = `${Math.round(maxFileBytes / 1024 / 1024)} MB`
+
+  router.post(
+    '/threads/:id/files',
+    signedIn,
+    (req, res, next) => {
+      if (!req.headers['x-file-name']) return next(new HttpError(400, 'Missing the file name.'))
+      readFile(req, res, (error?: { type?: string }) =>
+        next(error?.type === 'entity.too.large' ? new HttpError(413, `Files up to ${limitText} can be sent through Sytext.`) : error),
+      )
+    },
+    async (req, res) => {
+      const userId = userIdOf(res)
+      const threadId = String(req.params.id)
+      const network = threadId.startsWith('wa:') ? whatsapp : threadId.startsWith('tga:') ? telegram : null
+      if (!network || !(await store.thread(userId, threadId))) throw new HttpError(404, 'No such chat.')
+      const upload = uploadOf(req.headers, req.body)
+      const caption = decodedHeader(req.headers, 'x-caption', 1024)?.trim() ?? ''
+      const replyToId = decodedHeader(req.headers, 'x-reply-to', 300)
+      let hint
+      try {
+        const json = decodedHeader(req.headers, 'x-reply-hint', 6000)
+        hint = json ? hintOf(JSON.parse(json), replyToId) : undefined
+      } catch {
+        hint = undefined // Only a hint: a malformed one is ignored.
+      }
+      res.json({ message: await network.sendFile(userId, threadId, upload, caption, replyToId, hint) })
+    },
+  )
 
   return router
 }

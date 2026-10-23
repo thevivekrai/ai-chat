@@ -1,10 +1,13 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertTriangle, CalendarClock, CornerUpLeft, SendHorizontal, Sparkles, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { AlertTriangle, CalendarClock, CornerUpLeft, FileText, Paperclip, SendHorizontal, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Menu } from '@/components/ui/Popover'
 import { useTickEffect } from '@/hooks/useTickEffect'
+import { api } from '@/data/api'
+import { MAX_FILE_BYTES } from '@/data/server/types'
 import { cn } from '@/lib/cn'
+import { fileSize, isPhoto } from '@/lib/files'
 import { findPlaceholders, placeholderPattern, shortName } from '@/lib/format'
 import { NETWORKS } from '@/lib/networks'
 import { sendLaterOptions } from '@/lib/schedule'
@@ -13,9 +16,12 @@ import { ME_ID } from '@/data/types'
 import { noteTyping, scheduleReply, sendReply, stopTyping, toggleDrafts } from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
+import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
 
 const MAX_HEIGHT = 200
+/** Photos and files sent at once. */
+const MAX_FILES = 10
 
 /** Selects the next [placeholder] after the cursor, wrapping around. Returns false if there is none. */
 function selectNextBlank(el: HTMLTextAreaElement): boolean {
@@ -48,6 +54,12 @@ export function Composer({ threadId }: { threadId: string }) {
   // Asking once before sending a reply that still has a [blank] in it.
   const [confirmingBlanks, setConfirmingBlanks] = useState(false)
   const blanks = findPlaceholders(text)
+  // Photos and files waiting to be sent, for this chat only.
+  const canAttach = useMemo(() => api.capabilities(threadId).files, [threadId])
+  const [attached, setAttached] = useState<{ threadId: string; files: File[] }>({ threadId, files: [] })
+  const files = attached.threadId === threadId ? attached.files : []
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -74,14 +86,56 @@ export function Composer({ threadId }: { threadId: string }) {
   }
   const cancelReply = () => useUi.getState().setReplyingTo(threadId, null)
 
+  const addFiles = (incoming: File[]) => {
+    if (!canAttach || !incoming.length) return
+    const tooBig = incoming.filter((f) => f.size > MAX_FILE_BYTES)
+    if (tooBig.length) {
+      toast({
+        title: tooBig.length === 1 ? `${tooBig[0].name} is too big` : `${tooBig.length} files are too big`,
+        description: `Files up to ${fileSize(MAX_FILE_BYTES)} can be sent from Sytext.`,
+        group: 'attach',
+      })
+    }
+    const next = [...files, ...incoming.filter((f) => f.size <= MAX_FILE_BYTES && f.size > 0)].slice(0, MAX_FILES)
+    setAttached({ threadId, files: next })
+    ref.current?.focus()
+  }
+  const removeFile = (index: number) => setAttached({ threadId, files: files.filter((_, i) => i !== index) })
+
   const send = () => {
-    if (!text.trim()) return
+    if (!text.trim() && !files.length) return
     if (blanks.length && !confirmingBlanks) {
       setConfirmingBlanks(true)
       return
     }
     setConfirmingBlanks(false)
-    void sendReply(threadId, text)
+    void sendReply(threadId, text, files)
+    setAttached({ threadId, files: [] })
+  }
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = [...e.clipboardData.files]
+    if (!canAttach || !pasted.length) return
+    e.preventDefault()
+    addFiles(pasted)
+  }
+
+  const carriesFiles = (e: DragEvent) => canAttach && [...e.dataTransfer.types].includes('Files')
+  const dropHandlers = {
+    onDragOver: (e: DragEvent) => {
+      if (!carriesFiles(e)) return
+      e.preventDefault()
+      setDragging(true)
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
+    },
+    onDrop: (e: DragEvent) => {
+      if (!carriesFiles(e)) return
+      e.preventDefault()
+      setDragging(false)
+      addFiles([...e.dataTransfer.files])
+    },
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -100,9 +154,10 @@ export function Composer({ threadId }: { threadId: string }) {
 
   const options = sendLaterOptions(now)
   const hasText = !!text.trim()
+  const canSend = hasText || files.length > 0
 
   return (
-    <div className="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
+    <div className="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4" {...dropHandlers}>
       {replyingTo && replyingToId && (
         <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-line bg-surface px-3 py-2 shadow-card animate-pop-in">
           <CornerUpLeft className="size-4 shrink-0 text-accent-ink" aria-hidden />
@@ -121,19 +176,56 @@ export function Composer({ threadId }: { threadId: string }) {
           Fill in {blanks.join(', ')} first — or press Enter again to send as is.
         </p>
       )}
+      {files.length > 0 && (
+        <ul aria-label="Attached" className="mb-2 flex gap-2 overflow-x-auto pb-1">
+          {files.map((file, i) => (
+            <FileChip key={`${file.name}-${file.size}-${i}`} file={file} onRemove={() => removeFile(i)} />
+          ))}
+        </ul>
+      )}
       <div
         className={cn(
-          'flex items-end gap-1.5 rounded-3xl border bg-surface py-1.5 pr-1.5 pl-4 shadow-card transition-[border-color,box-shadow]',
-          'border-line focus-within:border-accent/40 focus-within:ring-4 focus-within:ring-accent/10',
+          'flex items-end gap-1.5 rounded-3xl border bg-surface py-1.5 pr-1.5 shadow-card transition-[border-color,box-shadow]',
+          canAttach ? 'pl-1.5' : 'pl-4',
+          dragging
+            ? 'border-accent ring-4 ring-accent/20'
+            : 'border-line focus-within:border-accent/40 focus-within:ring-4 focus-within:ring-accent/10',
         )}
       >
+        {canAttach && (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              aria-hidden
+              tabIndex={-1}
+              onChange={(e) => {
+                addFiles([...(e.target.files ?? [])])
+                e.target.value = ''
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Attach photos or files"
+              title="Attach photos or files"
+              disabled={files.length >= MAX_FILES}
+              onClick={() => fileInput.current?.click()}
+            >
+              <Paperclip className="size-[18px]" />
+            </Button>
+          </>
+        )}
         <textarea
           ref={ref}
           rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={`Message ${recipient} on ${NETWORKS[thread.network].name}…`}
+          onPaste={onPaste}
+          placeholder={files.length ? 'Add a caption…' : `Message ${recipient} on ${NETWORKS[thread.network].name}…`}
           aria-label="Message"
           className="max-h-[200px] min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[14.5px] leading-relaxed outline-none placeholder:text-faint"
         />
@@ -149,12 +241,19 @@ export function Composer({ threadId }: { threadId: string }) {
             onSelect: () => void scheduleReply(threadId, text, o.at),
           }))}
           renderTrigger={(props) => (
-            <Button {...props} variant="ghost" size="icon-sm" aria-label="Send later" disabled={!hasText} title="Send later">
+            <Button
+              {...props}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Send later"
+              disabled={!hasText || files.length > 0}
+              title={files.length ? "Photos and files can't be sent later" : 'Send later'}
+            >
               <CalendarClock className="size-[18px]" />
             </Button>
           )}
         />
-        <Button variant="primary" size="icon-sm" aria-label="Send" title="Send (Enter)" disabled={!hasText} onClick={send}>
+        <Button variant="primary" size="icon-sm" aria-label="Send" title="Send (Enter)" disabled={!canSend} onClick={send}>
           <SendHorizontal className="size-4" />
         </Button>
       </div>
@@ -179,5 +278,36 @@ export function Composer({ threadId }: { threadId: string }) {
         </p>
       </div>
     </div>
+  )
+}
+
+/** A photo or file waiting to be sent: a preview, its name and size, and a way to take it off. */
+function FileChip({ file, onRemove }: { file: File; onRemove(): void }) {
+  const photo = isPhoto(file)
+  const image = useRef<HTMLImageElement>(null)
+  // The preview is a link to the file on this device, let go of when the chip goes.
+  useEffect(() => {
+    if (!photo || !image.current) return
+    const url = URL.createObjectURL(file)
+    image.current.src = url
+    return () => URL.revokeObjectURL(url)
+  }, [file, photo])
+  return (
+    <li className="flex max-w-56 shrink-0 items-center gap-2 rounded-2xl border border-line bg-surface py-1.5 pr-1 pl-1.5 shadow-card animate-pop-in">
+      {photo ? (
+        <img ref={image} alt="" className="size-9 shrink-0 rounded-lg bg-surface-2 object-cover" />
+      ) : (
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent-ink">
+          <FileText className="size-4" aria-hidden />
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className="block truncate text-xs font-medium">{file.name}</span>
+        <span className="block text-[11px] text-muted">{fileSize(file.size)}</span>
+      </span>
+      <Button variant="ghost" size="icon-sm" aria-label={`Remove ${file.name}`} onClick={onRemove}>
+        <X className="size-3.5" />
+      </Button>
+    </li>
   )
 }
