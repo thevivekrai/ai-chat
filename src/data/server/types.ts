@@ -85,6 +85,12 @@ export interface ServerFeatures {
 export const MESSAGES_KEPT_PER_CHAT = 40
 
 /**
+ * The largest photo or file that can be sent from Sytext (the server holds it while passing it on
+ * to WhatsApp or Telegram, which keep it). Received ones of any size can be downloaded.
+ */
+export const MAX_FILE_BYTES = 50 * 1024 * 1024
+
+/**
  * What a device knows about a message the server may no longer keep: enough for the network to
  * find it (to react to it, quote it or load what came before it).
  */

@@ -1,7 +1,18 @@
 import { MongoClient, ObjectId } from 'mongodb'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { connectDatabase } from './db.ts'
-import { Browser, PIXEL, startTestServer, TEST_MONGODB_URI, waitFor, type FakeWaSocket, type TestServer } from './testing/helpers.ts'
+import {
+  Browser,
+  mediaMessage,
+  MAX_TEST_FILE_BYTES,
+  PIXEL,
+  startTestServer,
+  TEST_MONGODB_URI,
+  waitFor,
+  waMedia,
+  type FakeWaSocket,
+  type TestServer,
+} from './testing/helpers.ts'
 
 const enc = encodeURIComponent
 const byId = (messages: { id: string }[]) => Object.fromEntries(messages.map((m) => [m.id, m])) as Record<string, any>
@@ -770,6 +781,148 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
     it('explains when linking fails', async () => {
       const browser = await newUser('wa2@example.com')
       expect((await browser.post('/api/link/whatsapp', { phone: '12' })).status).toBe(400)
+    })
+  })
+
+  describe('photos and files', () => {
+    const RAVI = '919812345678@s.whatsapp.net'
+    const FILE_LINK = /^\/api\/files\/[\w-]+$/
+
+    it('WhatsApp: opens what people send, from WhatsApp itself, only for its owner, and safely', async () => {
+      const browser = await newUser('files-wa@example.com')
+      const socket = await linkWhatsApp(browser)
+      const events = await browser.events()
+      const ts = Math.floor(Date.now() / 1000)
+      const page = Buffer.from('<html><script>alert(document.cookie)</script></html>')
+      const pageMedia = mediaMessage('documentMessage', page, { mimetype: 'text/html', fileName: 'invite.html' })
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          { key: { remoteJid: RAVI, fromMe: false, id: 'IMG1' }, message: mediaMessage('imageMessage', PIXEL, { mimetype: 'image/png', caption: 'Look!' }), messageTimestamp: ts },
+          { key: { remoteJid: RAVI, fromMe: false, id: 'DOC1' }, message: pageMedia, messageTimestamp: ts + 1 },
+        ],
+      } as never)
+      const image = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:IMG1`)).message
+      const doc = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:DOC1`)).message
+      expect(image.body).toBe('Look!')
+      expect(image.attachments).toEqual([{ kind: 'image', name: 'Photo', mime: 'image/png', size: '1 KB', url: expect.stringMatching(FILE_LINK) }])
+      expect(doc.attachments).toEqual([{ kind: 'file', name: 'invite.html', mime: 'text/html', size: '1 KB', url: expect.stringMatching(FILE_LINK) }])
+
+      // A photo is shown in the page, fetched from WhatsApp now (nothing was stored).
+      const shown = await browser.raw('GET', image.attachments[0].url)
+      expect(shown.status).toBe(200)
+      expect(shown.body).toEqual(PIXEL)
+      expect(shown.headers.get('content-type')).toBe('image/png')
+      expect(shown.headers.get('content-disposition')).toMatch(/^inline; filename="Photo.png"/)
+      expect(shown.headers.get('cache-control')).toBe('private, max-age=31536000, immutable')
+      expect(shown.headers.get('content-security-policy')).toMatch(/sandbox/)
+      const saved = await browser.raw('GET', `${image.attachments[0].url}?download=1`)
+      expect(saved.headers.get('content-disposition')).toMatch(/^attachment; filename="Photo.png"/)
+
+      // A page someone sends is only ever downloaded: it never runs as part of the site.
+      const html = await browser.raw('GET', doc.attachments[0].url)
+      expect(html.body).toEqual(page)
+      expect(html.headers.get('content-type')).toBe('application/octet-stream')
+      expect(html.headers.get('content-disposition')).toMatch(/^attachment; filename="invite.html"/)
+
+      // Only its owner can open it, and only with a real link.
+      expect((await new Browser(server.url).raw('GET', image.attachments[0].url)).status).toBe(401)
+      const stranger = await newUser('files-wa-stranger@example.com')
+      expect((await stranger.raw('GET', image.attachments[0].url)).status).toBe(404)
+      expect((await browser.raw('GET', `${image.attachments[0].url.slice(0, -4)}AAAA`)).status).toBe(404)
+
+      // Gone from WhatsApp's servers (and the phone): said so, rather than failing.
+      waMedia.delete(pageMedia.documentMessage!.url)
+      const gone = await browser.raw('GET', doc.attachments[0].url)
+      expect(gone.status).toBe(410)
+      expect(JSON.parse(gone.body.toString()).error).toMatch(/no longer available on WhatsApp/)
+    })
+
+    it('WhatsApp: sends photos, videos and files as they are, with a caption and a quote', async () => {
+      const thread = `wa:${RAVI}`
+      const browser = await newUser('files-wa-send@example.com')
+      const socket = await linkWhatsApp(browser)
+      socket.emit('messaging-history.set', {
+        chats: [{ id: RAVI }],
+        contacts: [{ id: RAVI, name: 'Ravi Kumar' }],
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'Q1' }, message: { conversation: 'Send me the quote?' }, messageTimestamp: Math.floor(Date.now() / 1000) }],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      await waitFor(async () => expect((await browser.get('/api/inbox')).json.threads.map((t: { id: string }) => t.id)).toContain(thread))
+
+      const pdf = Buffer.from('%PDF-1.7 quote for Ravi')
+      const sent = await browser.upload(thread, pdf, { name: 'Quote #2.pdf', type: 'application/pdf', caption: 'Here it is', replyToId: `${thread}:Q1` })
+      expect(sent.status).toBe(200)
+      expect(sent.json.message).toMatchObject({
+        id: `${thread}:FILE1`,
+        senderId: 'me',
+        body: 'Here it is',
+        status: 'sent',
+        replyTo: { id: `${thread}:Q1`, senderId: thread, body: 'Send me the quote?' },
+        attachments: [{ kind: 'file', name: 'Quote #2.pdf', mime: 'application/pdf', size: '1 KB', url: expect.stringMatching(FILE_LINK) }],
+      })
+      expect(socket.files[0]).toEqual({ jid: RAVI, kind: 'document', mimetype: 'application/pdf', fileName: 'Quote #2.pdf', caption: 'Here it is', size: pdf.length, quotedId: 'Q1' })
+      // It can be downloaded again, from WhatsApp.
+      const again = await browser.raw('GET', `${sent.json.message.attachments[0].url}?download=1`)
+      expect(again.body).toEqual(pdf)
+      expect(again.headers.get('content-disposition')).toMatch(/filename="Quote #2.pdf"; filename\*=UTF-8''Quote%20%232.pdf/)
+
+      // A photo goes as a photo; an MP4 as a video; a JSON file is just a file (not read as a request).
+      const photo = await browser.upload(thread, PIXEL, { name: 'IMG_0001.png', type: 'image/png' })
+      expect(photo.json.message.attachments[0]).toMatchObject({ kind: 'image', name: 'Photo', mime: 'image/png' })
+      expect(socket.files[1]).toMatchObject({ kind: 'image', mimetype: 'image/png' })
+      await browser.upload(thread, Buffer.from('fake mp4'), { name: 'clip.mp4', type: 'video/mp4' })
+      expect(socket.files[2]).toMatchObject({ kind: 'video', mimetype: 'video/mp4' })
+      const json = await browser.upload(thread, Buffer.from('{"not":"a request"}'), { name: 'data.json', type: 'application/json' })
+      expect(json.status).toBe(200)
+      expect(socket.files[3]).toMatchObject({ kind: 'document', fileName: 'data.json', mimetype: 'application/json' })
+      // A name with a path in it keeps only the name.
+      await browser.upload(thread, Buffer.from('x'), { name: '../../etc/passwd', type: '' })
+      expect(socket.files[4]).toMatchObject({ fileName: '.. .. etc passwd', mimetype: 'application/octet-stream' })
+
+      // Refused: no name, too big, someone else's chat, not signed in.
+      expect((await browser.raw('POST', `/api/threads/${enc(thread)}/files`, pdf, { 'Content-Type': 'application/octet-stream' })).status).toBe(400)
+      const big = await browser.upload(thread, Buffer.alloc(MAX_TEST_FILE_BYTES + 1), { name: 'big.bin', type: 'application/octet-stream' })
+      expect(big.status).toBe(413)
+      expect(big.json.error).toMatch(/Files up to/)
+      const stranger = await newUser('files-wa-send-stranger@example.com')
+      expect((await stranger.upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(404)
+      expect((await new Browser(server.url).upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(401)
+      expect(socket.files).toHaveLength(5)
+    })
+
+    it('Telegram: opens photos and files from Telegram, and sends them', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('files-tg@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00009' })
+      expect((await browser.post('/api/link/telegram/verify', { code: '12345' })).json).toEqual({ status: 'connected' })
+
+      const photo = await waitFor(async () => {
+        const found = (await browser.get('/api/inbox')).json.messages.find((m: { id: string }) => m.id === 'tga:-100777:7')
+        if (!found) throw new Error('Not synced yet')
+        return found
+      })
+      expect(photo.attachments).toEqual([{ kind: 'image', name: 'Photo', mime: 'image/jpeg', url: expect.stringMatching(FILE_LINK) }])
+      const shown = await browser.raw('GET', photo.attachments[0].url)
+      expect(shown.body).toEqual(PIXEL)
+      expect(shown.headers.get('content-type')).toBe('image/jpeg')
+
+      const notes = Buffer.from('Trail notes: start at 6am, carry water')
+      const sent = await browser.upload('tga:5001', notes, { name: 'notes.txt', type: 'text/plain', caption: 'For Saturday', replyToId: 'tga:5001:12' })
+      expect(sent.status).toBe(200)
+      expect(sent.json.message).toMatchObject({
+        id: 'tga:5001:201',
+        body: 'For Saturday',
+        replyTo: { id: 'tga:5001:12' },
+        attachments: [{ kind: 'file', name: 'notes.txt', mime: 'text/plain', url: expect.stringMatching(FILE_LINK) }],
+      })
+      expect(tg.state.files[0]).toMatchObject({ chatId: '5001', name: 'notes.txt', mime: 'text/plain', caption: 'For Saturday', replyToId: 12 })
+      // Streamed back from Telegram in pieces, as a download.
+      const again = await browser.raw('GET', sent.json.message.attachments[0].url)
+      expect(again.body).toEqual(notes)
+      expect(again.headers.get('content-disposition')).toMatch(/^attachment; filename="notes.txt"/)
     })
   })
 

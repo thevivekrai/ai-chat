@@ -9,6 +9,7 @@ import { createSealer } from './crypto.ts'
 import { connectDatabase, copyDatabase, problemOf, withoutCredentials, type Database } from './db.ts'
 import { createHoldingApp } from './holding.ts'
 import { createAvatars } from './inbox/avatars.ts'
+import { createFileLinks } from './inbox/files.ts'
 import { createInboxStore } from './inbox/store.ts'
 import { createMedia } from './media.ts'
 import { createAccounts } from './networks/accounts.ts'
@@ -155,8 +156,9 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
   const avatars = createAvatars(col, sealer)
   const accounts = createAccounts(col, hub)
   const media = createMedia(config.cloudinary)
-  const whatsapp = createWhatsApp({ col, sealer, store, accounts, hub, media, avatars })
-  const telegram = createTelegram({ sealer, store, accounts, hub, media, avatars, api: config.telegram })
+  const files = createFileLinks(sealer)
+  const whatsapp = createWhatsApp({ col, sealer, store, accounts, hub, avatars, files })
+  const telegram = createTelegram({ sealer, store, accounts, hub, avatars, files, api: config.telegram })
 
   const app = createApp({
     col,
@@ -170,6 +172,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     hub,
     whatsapp,
     telegram,
+    files,
     secureCookies: config.production,
     staticDir,
     ...(temporaryProblem ? { temporaryStorage: { problem: temporaryProblem } } : {}),
@@ -178,7 +181,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
   const on = [
     config.googleClientId && 'Google sign-in',
     config.telegram && 'Telegram',
-    config.cloudinary && 'image uploads',
+    config.cloudinary && 'profile photo uploads',
     config.keepAwakeUrl && 'keep-awake',
   ]
   console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)

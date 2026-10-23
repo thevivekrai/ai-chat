@@ -8,7 +8,8 @@ import type { SessionTokens } from './auth/tokens.ts'
 import type { Collections } from './db.ts'
 import { errorHandler, HttpError, jsonOnly, securityHeaders } from './http.ts'
 import type { Avatars } from './inbox/avatars.ts'
-import { inboxRoutes } from './inbox/routes.ts'
+import type { FileLinks } from './inbox/files.ts'
+import { inboxRoutes, uploadRoutes } from './inbox/routes.ts'
 import type { InboxStore } from './inbox/store.ts'
 import type { Media } from './media.ts'
 import type { Accounts } from './networks/accounts.ts'
@@ -29,6 +30,10 @@ export interface AppDeps {
   hub: Hub
   whatsapp: WhatsApp
   telegram: Telegram
+  /** Links to photos and files in chats. */
+  files: FileLinks
+  /** Largest photo or file that can be sent (tests use a small one). */
+  maxFileBytes?: number
   /** Send the session cookie over HTTPS only (on in production). */
   secureCookies: boolean
   /** The built web app, served alongside the API. */
@@ -48,6 +53,8 @@ export function createApp(deps: AppDeps): Express {
   app.use(securityHeaders)
 
   const api = Router()
+  // Photos and files are sent as they are, not as JSON: before the JSON rules.
+  api.use(uploadRoutes(deps))
   api.use(express.json({ limit: '8mb' }))
   api.use(jsonOnly)
   api.get('/health', (_req, res) => {

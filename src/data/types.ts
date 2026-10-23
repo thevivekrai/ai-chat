@@ -59,7 +59,12 @@ export interface Attachment {
   kind: 'file' | 'image'
   name: string
   size?: string
-  /** Where the file can be viewed, once it has been copied off the network (images only). */
+  /** Its type, like "image/jpeg" or "application/pdf", where the network says. */
+  mime?: string
+  /**
+   * Where it can be viewed or downloaded. For linked chats it's a link on the Sytext server, which
+   * fetches it from the network when it's opened.
+   */
   url?: string
 }
 
@@ -103,9 +108,11 @@ export interface ChatCapabilities {
   typing: boolean
   /** Can fetch messages from before the ones loaded. */
   history: boolean
+  /** Can send photos and files. */
+  files: boolean
 }
 
-export const NO_CAPABILITIES: ChatCapabilities = { reply: false, react: false, typing: false, history: false }
+export const NO_CAPABILITIES: ChatCapabilities = { reply: false, react: false, typing: false, history: false, files: false }
 
 /** A reply written now and sent later ("Send later"). */
 export interface ScheduledMessage {

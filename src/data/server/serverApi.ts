@@ -108,6 +108,34 @@ export const serverApi = {
       emoji,
       ...(message ? { message } : {}),
     }),
+  /**
+   * Sends a photo or file, with `caption` as its text. The body is the file itself; headers say
+   * what it is (and require this site's own code to send it: other sites can't set them).
+   */
+  async sendFile(threadId: string, file: File, caption: string, replyToId?: string, replyTo?: MessageHint): Promise<{ message: Message }> {
+    let res: Response
+    try {
+      res = await fetch(`/api/threads/${segment(threadId)}/files`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/octet-stream',
+          'X-File-Name': encodeURIComponent(file.name || 'file'),
+          'X-File-Type': file.type || 'application/octet-stream',
+          ...(caption ? { 'X-Caption': encodeURIComponent(caption) } : {}),
+          ...(replyToId ? { 'X-Reply-To': encodeURIComponent(replyToId) } : {}),
+          ...(replyTo ? { 'X-Reply-Hint': encodeURIComponent(JSON.stringify(replyTo)) } : {}),
+        },
+        body: file,
+      })
+    } catch {
+      throw new ServerError(0, "Can't reach the server. Check your connection and try again.")
+    }
+    const data = (await res.json().catch(() => null)) as ({ message: Message } & { error?: string }) | null
+    if (!res.ok || data === null) throw new ServerError(res.status, data?.error ?? `The server answered with an error (${res.status}).`)
+    return data
+  },
   typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
   older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
     const query = new URLSearchParams({ before: before.id })

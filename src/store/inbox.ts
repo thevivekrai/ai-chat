@@ -14,6 +14,7 @@ import type {
   ThreadStatePatch,
 } from '@/data/types'
 import { ME_ID } from '@/data/types'
+import { previewOf } from '@/lib/files'
 import { toMs } from '@/lib/time'
 
 /**
@@ -63,6 +64,10 @@ interface InboxState {
 }
 
 const byId = <T extends { id: string }>(items: T[]) => Object.fromEntries(items.map((i) => [i.id, i]))
+
+/** Photos and files of messages not sent yet, so a failed one can be sent again. */
+const unsentFiles = new Map<string, File>()
+let pendingCount = 0
 
 /** Typing notices end by themselves after this long without a renewal, as on the networks. */
 const TYPING_LASTS_MS = 6000
@@ -207,9 +212,13 @@ export const useInbox = create<InboxState>()((set, get) => {
     },
 
     async sendMessage(threadId, body, options) {
-      // Optimistic: the message shows up (and the thread leaves "Needs reply") immediately.
-      const tempId = `pending-${Date.now()}`
+      // Optimistic: the message shows up (and the thread leaves "Needs reply") immediately. Several
+      // can start at once (a few photos), so each gets its own id.
+      const tempId = `pending-${Date.now()}-${++pendingCount}`
       const quoted = options?.replyToId ? get().messages[threadId]?.find((m) => m.id === options.replyToId) : undefined
+      // A photo shows from this device until the network has it.
+      const preview = options?.file ? previewOf(options.file) : undefined
+      if (options?.file) unsentFiles.set(tempId, options.file)
       putMessage({
         id: tempId,
         threadId,
@@ -217,10 +226,13 @@ export const useInbox = create<InboxState>()((set, get) => {
         body,
         sentAt: new Date().toISOString(),
         status: 'sending',
+        ...(preview ? { attachments: [preview] } : {}),
         ...(quoted ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
       })
       try {
         putMessage(await api.sendMessage(threadId, body, options), tempId)
+        unsentFiles.delete(tempId)
+        if (preview?.url) URL.revokeObjectURL(preview.url)
       } catch (error) {
         const failed = get().messages[threadId]?.find((m) => m.id === tempId)
         if (failed) {
@@ -233,7 +245,14 @@ export const useInbox = create<InboxState>()((set, get) => {
       const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
       if (!failed) return
       set((s) => ({ messages: { ...s.messages, [threadId]: s.messages[threadId].filter((m) => m.id !== messageId) } }))
-      await get().sendMessage(threadId, failed.body, failed.replyTo ? { replyToId: failed.replyTo.id } : undefined)
+      const file = unsentFiles.get(messageId)
+      unsentFiles.delete(messageId)
+      const preview = failed.attachments?.[0]?.url
+      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
+      await get().sendMessage(threadId, failed.body, {
+        ...(failed.replyTo ? { replyToId: failed.replyTo.id } : {}),
+        ...(file ? { file } : {}),
+      })
     },
 
     async react(threadId, messageId, emoji) {
