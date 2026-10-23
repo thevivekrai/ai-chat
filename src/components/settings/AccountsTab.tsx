@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react'
-import { ExternalLink, Loader2, RotateCcw, Zap } from 'lucide-react'
+import { useState, type FormEvent, type ReactNode } from 'react'
+import { ChevronDown, ExternalLink, Loader2, RotateCcw, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Switch } from '@/components/ui/Switch'
@@ -31,22 +31,56 @@ export function AccountsTab({ close }: { close(): void }) {
         {hasServer ? <LinkedAccounts /> : <ServerMissing />}
       </section>
 
-      <section className="space-y-3">
-        <SectionTitle>{hasServer ? 'More connections' : 'From this browser'}</SectionTitle>
-        <TelegramCard status={connections.telegram} />
-        <MatrixCard status={connections.matrix} />
-        <p className="text-xs leading-relaxed text-muted">
-          {hasServer ? 'These connect from this browser directly: their' : 'Messages travel directly between this browser and your accounts:'}{' '}
-          messages and tokens are kept in this browser's storage, and anyone with access to this browser profile could read
-          them.
-        </p>
-      </section>
+      {hasServer ? (
+        // Linking your own WhatsApp and Telegram is what most people want; a bot or a Matrix account
+        // is for the few who already run one. Shown open once one of them is connected.
+        <OtherConnections initiallyOpen={!!connections.telegram || !!connections.matrix}>
+          <TelegramCard status={connections.telegram} />
+          <MatrixCard status={connections.matrix} />
+          <p className="text-xs leading-relaxed text-muted">
+            These connect from this browser directly: their messages and tokens are kept in this browser's storage, and
+            anyone with access to this browser profile could read them.
+          </p>
+        </OtherConnections>
+      ) : (
+        <section className="space-y-3">
+          <SectionTitle>From this browser</SectionTitle>
+          <TelegramCard status={connections.telegram} />
+          <MatrixCard status={connections.matrix} />
+          <p className="text-xs leading-relaxed text-muted">
+            Messages travel directly between this browser and your accounts: messages and tokens are kept in this browser's
+            storage, and anyone with access to this browser profile could read them.
+          </p>
+        </section>
+      )}
 
       <section className="space-y-3">
         <SectionTitle>Demo</SectionTitle>
         <DemoCard shown={connections.demo} hasAccounts={hasRealAccount(connections)} close={close} />
       </section>
     </div>
+  )
+}
+
+/** The connections that run in this browser, folded away until wanted. */
+function OtherConnections({ initiallyOpen, children }: { initiallyOpen: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(initiallyOpen)
+  return (
+    <section className="space-y-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between gap-3 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span>
+          <span className="block text-[11px] font-semibold tracking-wider text-faint uppercase">Other ways to connect</span>
+          {!open && <span className="mt-1 block text-xs text-muted">A Telegram bot, or a Matrix account and its bridges.</span>}
+        </span>
+        <ChevronDown className={cn('size-4 shrink-0 text-faint transition-transform', open && 'rotate-180')} aria-hidden />
+      </button>
+      {open && children}
+    </section>
   )
 }
 
