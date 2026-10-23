@@ -17,7 +17,7 @@ import {
 } from '@/store/actions'
 import { hasRealAccount, useConnections } from '@/store/connections'
 import { useSession } from '@/store/session'
-import { LinkedAccounts } from './LinkedAccounts'
+import { LinkedAccounts, ServerMissing } from './LinkedAccounts'
 import { Card, CardHeader, ErrorText, Field, Input, SectionTitle, StatusPill } from './parts'
 
 export function AccountsTab({ close }: { close(): void }) {
@@ -26,15 +26,13 @@ export function AccountsTab({ close }: { close(): void }) {
   const hasServer = useSession((s) => s.status !== 'no-server')
   return (
     <div className="space-y-6">
-      {hasServer && (
-        <section className="space-y-3">
-          <SectionTitle>WhatsApp and Telegram</SectionTitle>
-          <LinkedAccounts />
-        </section>
-      )}
+      <section className="space-y-3">
+        <SectionTitle>WhatsApp and Telegram</SectionTitle>
+        {hasServer ? <LinkedAccounts /> : <ServerMissing />}
+      </section>
 
       <section className="space-y-3">
-        <SectionTitle>{hasServer ? 'More connections' : 'Your accounts'}</SectionTitle>
+        <SectionTitle>{hasServer ? 'More connections' : 'From this browser'}</SectionTitle>
         <TelegramCard status={connections.telegram} />
         <MatrixCard status={connections.matrix} />
         <p className="text-xs leading-relaxed text-muted">

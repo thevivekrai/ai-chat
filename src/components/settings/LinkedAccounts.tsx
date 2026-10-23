@@ -73,6 +73,54 @@ function WhereChatsAreKept() {
   )
 }
 
+/**
+ * Shown when the app can't find its server: it was published as a static site (only the app's
+ * files are online), or, in development, the API isn't running. Says what to change.
+ */
+export function ServerMissing() {
+  return (
+    <Card>
+      <CardHeader icon={<LinkIcons />} title="Needs the Sytext server">
+        Signing in and linking WhatsApp and Telegram run on the Sytext server, and this site was published without it.
+        Only the app's files are online, so the options don't appear.
+      </CardHeader>
+      <div className="mt-3 space-y-2 border-t border-line pt-3 text-xs leading-relaxed text-muted">
+        {import.meta.env.DEV ? (
+          <p>
+            Start it with <Code>npm run dev:server</Code> alongside <Code>npm run dev</Code>, then reload.
+          </p>
+        ) : (
+          <>
+            <p>
+              If this is your site: on Render, a <b className="font-medium text-fg">Static Site</b> can't run it. Create a{' '}
+              <b className="font-medium text-fg">Web Service</b> from the same repository and branch instead, with:
+            </p>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+              <dt>Build command</dt>
+              <dd>
+                <Code>npm ci --include=dev && npm run build</Code>
+              </dd>
+              <dt>Start command</dt>
+              <dd>
+                <Code>npm start</Code>
+              </dd>
+              <dt>Environment</dt>
+              <dd>
+                <Code>MONGODB_URI</Code> and <Code>JWT_SECRET</Code> at least
+              </dd>
+            </dl>
+            <p>Then open the Web Service's address. The README's "Deploy on Render" has the details.</p>
+          </>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function Code({ children }: { children: ReactNode }) {
+  return <code className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] break-all text-fg">{children}</code>
+}
+
 function LinkIcons() {
   return (
     <span className="flex -space-x-1">
