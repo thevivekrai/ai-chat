@@ -147,7 +147,13 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
     it('reports which features are switched on', async () => {
       const res = await new Browser(server.url).get('/api/config')
-      expect(res.json).toEqual({ googleClientId: 'test-client.apps.googleusercontent.com', whatsapp: true, telegram: true, uploads: false })
+      expect(res.json).toEqual({
+        googleClientId: 'test-client.apps.googleusercontent.com',
+        whatsapp: true,
+        telegram: true,
+        uploads: false,
+        database: true,
+      })
     })
   })
 

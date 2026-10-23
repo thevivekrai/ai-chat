@@ -54,6 +54,7 @@ export function createApp(deps: AppDeps): Express {
       whatsapp: true,
       telegram: deps.telegram.enabled,
       uploads: !!deps.media,
+      database: true,
     }
     res.json(features)
   })
@@ -64,16 +65,19 @@ export function createApp(deps: AppDeps): Express {
   api.use(errorHandler)
   app.use('/api', api)
 
-  const dir = deps.staticDir
-  if (dir && existsSync(join(dir, 'index.html'))) {
-    // File names under /assets carry a content hash, so they can be cached for good.
-    app.use('/assets', express.static(join(dir, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }))
-    app.use(express.static(dir, { index: false }))
-    // Everything else is a page of the app.
-    app.get('/{*path}', (_req, res) => {
-      res.setHeader('Cache-Control', 'no-cache')
-      res.sendFile(join(dir, 'index.html'))
-    })
-  }
+  serveApp(app, deps.staticDir)
   return app
+}
+
+/** Serves the built web app, if it was built. */
+export function serveApp(app: Express, dir: string | undefined) {
+  if (!dir || !existsSync(join(dir, 'index.html'))) return
+  // File names under /assets carry a content hash, so they can be cached for good.
+  app.use('/assets', express.static(join(dir, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }))
+  app.use(express.static(dir, { index: false }))
+  // Everything else is a page of the app.
+  app.get('/{*path}', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
+    res.sendFile(join(dir, 'index.html'))
+  })
 }

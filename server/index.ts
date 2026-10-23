@@ -1,10 +1,12 @@
+import { createServer, type RequestListener } from 'node:http'
 import { resolve } from 'node:path'
 import { createApp } from './app.ts'
 import { createGoogleVerifier } from './auth/google.ts'
 import { createSessionTokens } from './auth/tokens.ts'
-import { ConfigError, loadConfig, loadEnvFiles } from './config.ts'
+import { ConfigError, loadConfig, loadEnvFiles, type Config } from './config.ts'
 import { createSealer } from './crypto.ts'
-import { connectDatabase, withoutCredentials } from './db.ts'
+import { connectDatabase, withoutCredentials, type Database } from './db.ts'
+import { createHoldingApp } from './holding.ts'
 import { createAvatars } from './inbox/avatars.ts'
 import { createInboxStore } from './inbox/store.ts'
 import { createMedia } from './media.ts'
@@ -18,16 +20,52 @@ import { createHub } from './realtime.ts'
 const RESUME_EVERY_MS = 5 * 60_000
 /** How often chats that got new messages are trimmed to what the server keeps. */
 const TRIM_EVERY_MS = 60_000
+/** How often to try the database again while it can't be reached. */
+const DATABASE_RETRY_MS = 30_000
 
 async function main() {
   // Settings come from the environment, or a .env file (locally, or as a host's secret file).
   const files = loadEnvFiles()
   if (files.length) console.log(`Read settings from ${files.join(' and ')}`)
   const config = loadConfig()
+  const staticDir = resolve('dist')
+
+  // The site is served by whichever app is current: while there's no database, one that says so.
+  let handler: RequestListener = createHoldingApp({
+    staticDir,
+    reason: "Sytext can't reach its database, so accounts are unavailable. It's trying again.",
+  })
+  const server = createServer((req, res) => handler(req, res))
+  const closers: (() => Promise<void> | void)[] = []
+
+  let closing = false
+  async function shutdown(signal: string) {
+    if (closing) return
+    closing = true
+    console.log(`${signal}: shutting down`)
+    server.close()
+    for (const close of closers) await Promise.resolve(close()).catch(() => undefined)
+    process.exit(0)
+  }
+  process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  process.on('SIGINT', () => void shutdown('SIGINT'))
+
+  await new Promise<void>((ready) => server.listen(config.port, ready))
+  console.log(`Sytext is listening on port ${config.port}`)
 
   console.log(`Connecting to ${withoutCredentials(config.mongoUri)}`)
-  const database = await connectDatabase(config.mongoUri)
+  const database = await connectWhenPossible(config, () => closing)
+  if (!database) return
   console.log(`Using the database "${database.db.databaseName}"`)
+
+  handler = start(config, database, staticDir, closers)
+}
+
+/**
+ * The real app, once there's a database: linked accounts reconnect, old messages are trimmed, and
+ * everything that has to be stopped on shutdown is added to `closers`.
+ */
+function start(config: Config, database: Database, staticDir: string, closers: (() => Promise<void> | void)[]): RequestListener {
   const { col } = database
   const sealer = createSealer(config.dataKey)
   const hub = createHub()
@@ -51,19 +89,16 @@ async function main() {
     whatsapp,
     telegram,
     secureCookies: config.production,
-    staticDir: resolve('dist'),
+    staticDir,
   })
 
-  const server = app.listen(config.port, () => {
-    console.log(`Sytext is listening on port ${config.port}`)
-    const on = [
-      config.googleClientId && 'Google sign-in',
-      config.telegram && 'Telegram',
-      config.cloudinary && 'image uploads',
-      config.keepAwakeUrl && 'keep-awake',
-    ]
-    console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)
-  })
+  const on = [
+    config.googleClientId && 'Google sign-in',
+    config.telegram && 'Telegram',
+    config.cloudinary && 'image uploads',
+    config.keepAwakeUrl && 'keep-awake',
+  ]
+  console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)
 
   // Reconnect linked accounts in the background; the site is usable meanwhile. They're checked
   // again every few minutes, so a link that stopped for any reason picks up again by itself.
@@ -85,23 +120,39 @@ async function main() {
 
   const stopKeepingAwake = config.keepAwakeUrl ? keepAwake({ url: config.keepAwakeUrl, wanted: () => accounts.anyLinked() }) : null
 
-  let closing = false
-  async function shutdown(signal: string) {
-    if (closing) return
-    closing = true
-    console.log(`${signal}: shutting down`)
+  closers.push(() => {
     for (const timer of timers) clearInterval(timer)
     stopKeepingAwake?.()
     // Open event streams would keep the server from closing.
     hub.closeAll()
-    server.close()
-    // Disconnect without logging out, so the links carry on after the restart.
-    await Promise.allSettled([whatsapp.stopAll(), telegram.stopAll()])
-    await database.close()
-    process.exit(0)
+  })
+  // Disconnect without logging out, so the links carry on after the restart.
+  closers.push(async () => void (await Promise.allSettled([whatsapp.stopAll(), telegram.stopAll()])))
+  closers.push(() => database.close())
+
+  return app
+}
+
+/**
+ * Connects, waiting as long as it takes: the database can be unreachable for a while (its access
+ * list, a paused cluster) and that is something the user fixes elsewhere, without redeploying.
+ * Null when the server is shutting down.
+ */
+async function connectWhenPossible(config: Config, stopped: () => boolean): Promise<Database | null> {
+  for (let attempt = 1; !stopped(); attempt++) {
+    try {
+      return await connectDatabase(config.mongoUri)
+    } catch (error) {
+      if (attempt === 1) {
+        console.error(error instanceof ConfigError ? error.message : error)
+        console.log('The site is being served meanwhile; signing in and linked accounts need the database.')
+      } else if (attempt % 10 === 0) {
+        console.error(`Still no database after ${attempt} tries.`)
+      }
+      await new Promise((wait) => setTimeout(wait, DATABASE_RETRY_MS))
+    }
   }
-  process.on('SIGTERM', () => void shutdown('SIGTERM'))
-  process.on('SIGINT', () => void shutdown('SIGINT'))
+  return null
 }
 
 main().catch((error) => {

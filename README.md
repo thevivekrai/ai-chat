@@ -84,6 +84,13 @@ a new database user password (and `MONGODB_URI`), a new Cloudinary API secret, a
 
 Things to know about hosting:
 
+- **A database it can't reach doesn't take the site down.** The server starts anyway, serves the
+  app (the demo and the browser connections still work), and keeps trying every 30 seconds; once
+  the database answers it takes over without a restart. Signing in and linked accounts are
+  unavailable meanwhile, and Settings → Accounts says so. The log says why — with MongoDB Atlas
+  it's usually its Network Access list (allow `0.0.0.0/0`, since a host like Render has no fixed
+  address) or a paused cluster.
+
 - **Run one instance.** Each WhatsApp and Telegram link lives in the server process, and WhatsApp
   allows one connection per linked device.
 - **Free instances sleep** after 15 minutes without visits, and a sleeping server can't hold the
@@ -326,7 +333,8 @@ production):
 
 ```
 server/
-  index.ts            ← reads the environment, connects, starts, reconnects linked accounts
+  index.ts            ← reads the environment, serves, connects (waiting as long as it takes)
+  holding.ts          ← what's served while there's no database: the app, and why accounts are off
   app.ts              ← the HTTP app: security headers, JSON-only API, the built web app
   config.ts           ← environment variables; what's required, what turns features on
   auth/               ← sign-up, sign-in, Google ID tokens, scrypt passwords, session tokens

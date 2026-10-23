@@ -46,6 +46,11 @@ export interface ServerFeatures {
   whatsapp: boolean
   telegram: boolean
   uploads: boolean
+  /**
+   * False while the server can't reach its database: the site works, but signing in and linked
+   * accounts don't. It keeps trying, so this turns true by itself once the database answers.
+   */
+  database: boolean
 }
 
 /**
