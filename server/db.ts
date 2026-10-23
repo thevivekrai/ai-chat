@@ -132,6 +132,13 @@ export function databaseName(uri: string): string {
   return name ? decodeURIComponent(name) : 'sytext'
 }
 
+/** The connection string with its password (and any secret option) taken out, for the log. */
+export function withoutCredentials(uri: string): string {
+  return uri
+    .replace(/\/\/[^@/]*@/, '//')
+    .replace(/([?&][^=&]*(?:password|secret|key)[^=&]*=)[^&]*/gi, '$1…')
+}
+
 export async function connectDatabase(uri: string, dbName = databaseName(uri)): Promise<Database> {
   const client = new MongoClient(uri, { appName: 'sytext' })
   try {
@@ -168,6 +175,14 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
 function cannotConnect(error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error)
   const name = error instanceof Error ? error.name : ''
+  // The cluster's name doesn't resolve: a typo, or a cluster that was deleted.
+  if (/ENOTFOUND|EAI_AGAIN|querySrv|getaddrinfo/i.test(detail)) {
+    return new ConfigError(
+      "The cluster in MONGODB_URI doesn't exist, as far as DNS is concerned. Copy the connection string again from " +
+        'Atlas (Clusters → Connect → Drivers) and check the host matches. ' +
+        `(MongoDB said: ${detail})`,
+    )
+  }
   const refused = name === 'MongoServerSelectionError' || name === 'MongoNetworkError'
   // A rejected TLS handshake, a timeout, or no route: the database never let us in.
   if (refused) {

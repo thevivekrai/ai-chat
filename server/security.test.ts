@@ -6,7 +6,7 @@ import { hashPassword, verifyPassword } from './auth/passwords.ts'
 import { createSessionTokens } from './auth/tokens.ts'
 import { loadConfig, loadEnvFiles } from './config.ts'
 import { createSealer } from './crypto.ts'
-import { connectDatabase, databaseName } from './db.ts'
+import { connectDatabase, databaseName, withoutCredentials } from './db.ts'
 import { parseCookies } from './http.ts'
 import { fakeGoogle, GOOGLE_CLIENT_ID } from './testing/helpers.ts'
 
@@ -125,11 +125,31 @@ describe('database name', () => {
   })
 })
 
+describe('the connection string in the log', () => {
+  it('keeps the host and database, and drops anything secret', () => {
+    expect(withoutCredentials('mongodb+srv://sytext:s3cr3t@cluster0.pk5go.mongodb.net/sytext?retryWrites=true')).toBe(
+      'mongodb+srv://cluster0.pk5go.mongodb.net/sytext?retryWrites=true',
+    )
+    expect(withoutCredentials('mongodb://127.0.0.1:27017/sytext')).toBe('mongodb://127.0.0.1:27017/sytext')
+    expect(withoutCredentials('mongodb://u:p@h/db?tlsCertificateKeyFilePassword=abc&w=majority')).toBe(
+      'mongodb://h/db?tlsCertificateKeyFilePassword=…&w=majority',
+    )
+  })
+})
+
 describe('a database that will not talk to us', () => {
   it('is explained, rather than failing with a stack trace', async () => {
     // Nothing is listening: the same shape of failure as a blocked or paused Atlas cluster.
     await expect(connectDatabase('mongodb://127.0.0.1:1/sytext?serverSelectionTimeoutMS=300')).rejects.toThrow(
       /Couldn't reach the database in MONGODB_URI.*IP access list.*paused cluster/s,
+    )
+  })
+})
+
+describe('a cluster name that does not resolve', () => {
+  it('is explained, rather than failing with a DNS error', async () => {
+    await expect(connectDatabase('mongodb+srv://u:p@no-such-cluster.invalid/sytext')).rejects.toThrow(
+      /The cluster in MONGODB_URI doesn't exist, as far as DNS is concerned/,
     )
   })
 })
