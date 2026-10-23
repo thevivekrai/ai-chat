@@ -128,6 +128,14 @@ account.
   valid for 30 days. Every change to the server must be sent as JSON, which a page on another site
   can't do without the server's permission, so the cookie can't be used from elsewhere (CSRF).
 - **Passwords** are hashed with scrypt. Sign-in attempts are rate-limited per IP address.
+- **Recovery keys** stand in for a reset email, which Sytext doesn't send. Creating an account
+  shows a key once, like `7K2QP-M9XHD-4T8RW-CZ6NB-J3VFA` (125 random bits), to copy or download.
+  If the password is forgotten, **Forgot password?** on the sign-in screen takes the email, the
+  key and a new password. The key then stops working and a new one is shown, and the account's
+  other sessions end. Only a SHA-256 hash of the key is stored. Resets are rate-limited more tightly
+  than sign-ins. **Settings → Profile** makes a new key with the current password, for accounts
+  made before keys existed or a lost key. Linking Google to an account with the same email removes
+  its key, for the same reason it turns the password off.
 - **Google**: the ID token from Google's button is verified on the server (signature, issuer,
   audience, expiry, verified email). Signing in with Google to an existing account with the same
   email links the two, and turns that account's password off and ends its sessions, since email
@@ -138,7 +146,8 @@ To turn on Google sign-in, create an OAuth client id of type *Web application* i
 [Google Cloud console](https://console.cloud.google.com/apis/credentials), add your site's address
 (and `http://localhost:5173`) under *Authorized JavaScript origins*, and set `GOOGLE_CLIENT_ID`.
 
-**Settings → Profile** changes your name, photo (with Cloudinary set up) and password, and signs out.
+**Settings → Profile** changes your name, photo (with Cloudinary set up), password and recovery key,
+and signs out.
 
 ## Link WhatsApp and Telegram
 

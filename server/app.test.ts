@@ -147,6 +147,71 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(login.status).toBe(200)
     })
 
+    it('gives a recovery key on sign-up that resets a forgotten password, once', async () => {
+      const first = new Browser(server.url)
+      const signUp = await first.post('/api/auth/register', { name: 'Kabir', email: 'kabir@example.com', password: 'long enough' })
+      const key: string = signUp.json.recoveryKey
+      expect(key).toMatch(/^([0-9A-Z]{5}-){4}[0-9A-Z]{5}$/)
+      expect(signUp.json.user.recoveryKeyCreatedAt).toEqual(expect.any(String))
+      // It's shown once: never again.
+      expect(JSON.stringify((await first.get('/api/auth/me')).json)).not.toContain(key)
+
+      const recover = (body: Record<string, string>) => new Browser(server.url).post('/api/auth/recover', body)
+      expect((await recover({ email: 'kabir@example.com', recoveryKey: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE', password: 'new password' })).status).toBe(401)
+      const otherEmail = await recover({ email: 'nobody@example.com', recoveryKey: key, password: 'new password' })
+      expect(otherEmail.status).toBe(401)
+      expect(otherEmail.json.error).toMatch(/don't match/)
+      expect((await recover({ email: 'kabir@example.com', recoveryKey: key, password: 'short' })).status).toBe(400)
+
+      await new Promise((r) => setTimeout(r, 1100)) // Session times are in whole seconds.
+      const second = new Browser(server.url)
+      // Typed loosely: lower case, spaces instead of dashes.
+      const reset = await second.post('/api/auth/recover', {
+        email: 'Kabir@Example.com',
+        recoveryKey: key.toLowerCase().replace(/-/g, ' '),
+        password: 'new password',
+      })
+      expect(reset.status).toBe(200)
+      expect(reset.json.recoveryKey).toMatch(/^([0-9A-Z]{5}-){4}[0-9A-Z]{5}$/)
+      expect(reset.json.recoveryKey).not.toBe(key)
+      expect((await second.get('/api/auth/me')).json.user.email).toBe('kabir@example.com')
+
+      // The old password, the old key and the other sessions all stop working.
+      expect((await first.get('/api/auth/me')).status).toBe(401)
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'kabir@example.com', password: 'long enough' })).status).toBe(401)
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'kabir@example.com', password: 'new password' })).status).toBe(200)
+      expect((await recover({ email: 'kabir@example.com', recoveryKey: key, password: 'another one' })).status).toBe(401)
+      expect((await recover({ email: 'kabir@example.com', recoveryKey: reset.json.recoveryKey, password: 'another one' })).status).toBe(200)
+    })
+
+    it('makes a new recovery key in Settings, with the current password', async () => {
+      const browser = new Browser(server.url)
+      const signUp = await browser.post('/api/auth/register', { name: 'Zoya', email: 'zoya@example.com', password: 'long enough' })
+      expect((await browser.post('/api/me/recovery-key', { current: 'wrong password' })).status).toBe(400)
+      const fresh = await browser.post('/api/me/recovery-key', { current: 'long enough' })
+      expect(fresh.status).toBe(200)
+      expect(fresh.json.recoveryKey).not.toBe(signUp.json.recoveryKey)
+
+      const recover = (recoveryKey: string) =>
+        new Browser(server.url).post('/api/auth/recover', { email: 'zoya@example.com', recoveryKey, password: 'new password' })
+      expect((await recover(signUp.json.recoveryKey)).status).toBe(401)
+      expect((await recover(fresh.json.recoveryKey)).status).toBe(200)
+    })
+
+    it('drops the recovery key when Google takes over an account made with the same email', async () => {
+      const squatter = new Browser(server.url)
+      const signUp = await squatter.post('/api/auth/register', { name: 'X', email: 'real-owner@example.com', password: 'long enough' })
+      const credential = await server.google.idToken({ sub: 'google-4', email: 'real-owner@example.com' })
+      const owner = await new Browser(server.url).post('/api/auth/google', { credential })
+      expect(owner.json.user.recoveryKeyCreatedAt).toBeUndefined()
+      const recover = await new Browser(server.url).post('/api/auth/recover', {
+        email: 'real-owner@example.com',
+        recoveryKey: signUp.json.recoveryKey,
+        password: 'taken back',
+      })
+      expect(recover.status).toBe(401)
+    })
+
     it('reports which features are switched on', async () => {
       const res = await new Browser(server.url).get('/api/config')
       expect(res.json).toEqual({

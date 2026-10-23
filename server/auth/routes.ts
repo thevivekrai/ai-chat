@@ -6,6 +6,7 @@ import { field, HttpError, rateLimit, requireUser, userIdOf } from '../http.ts'
 import type { Media } from '../media.ts'
 import type { GoogleVerifier } from './google.ts'
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from './passwords.ts'
+import { hashRecoveryKey, matchesRecoveryKey, newRecoveryKey } from './recoveryKeys.ts'
 import { SESSION_COOKIE, SESSION_DAYS, type SessionTokens } from './tokens.ts'
 
 export const toPublicUser = (u: UserDoc): PublicUser => ({
@@ -15,7 +16,14 @@ export const toPublicUser = (u: UserDoc): PublicUser => ({
   ...(u.avatarUrl ? { avatarUrl: u.avatarUrl } : {}),
   hasPassword: !!u.passwordHash,
   google: !!u.googleSub,
+  ...(u.recoveryKeyHash && u.recoveryKeyCreatedAt ? { recoveryKeyCreatedAt: u.recoveryKeyCreatedAt.toISOString() } : {}),
 })
+
+/** A new recovery key, and what to store for it. */
+function recoveryKeyFields(now: Date) {
+  const recoveryKey = newRecoveryKey()
+  return { recoveryKey, fields: { recoveryKeyHash: hashRecoveryKey(recoveryKey), recoveryKeyCreatedAt: now } }
+}
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // Verifying against a throwaway hash keeps "no such user" as slow as "wrong password".
@@ -32,6 +40,8 @@ interface AuthDeps {
 export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDeps): Router {
   const router = Router()
   const limited = rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 30 })
+  // Resetting a password is rarer still, and a guess at a recovery key is worth slowing down.
+  const recovering = rateLimit({ name: 'recover', windowMs: 15 * 60_000, max: 10 })
 
   async function startSession(res: Response, user: UserDoc, extra: Record<string, unknown> = {}) {
     res.cookie(SESSION_COOKIE, await tokens.sign(user._id.toHexString()), {
@@ -62,14 +72,50 @@ export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDe
       )
     }
     const now = new Date()
-    const user: UserDoc = { _id: new ObjectId(), email, name, passwordHash: await hashPassword(password), createdAt: now, updatedAt: now }
+    // Sytext sends no email, so a forgotten password is reset with this key instead: shown once, now.
+    const { recoveryKey, fields } = recoveryKeyFields(now)
+    const user: UserDoc = {
+      _id: new ObjectId(),
+      email,
+      name,
+      passwordHash: await hashPassword(password),
+      ...fields,
+      createdAt: now,
+      updatedAt: now,
+    }
     try {
       await col.users.insertOne(user)
     } catch (error) {
       if ((error as MongoServerError).code === 11000) throw new HttpError(409, 'An account with this email already exists.')
       throw error
     }
-    await startSession(res, user)
+    await startSession(res, user, { recoveryKey })
+  })
+
+  /**
+   * A forgotten password: the email address and the recovery key set a new one. The key is used up
+   * (a new one is given instead), and the account's other sessions end.
+   */
+  router.post('/auth/recover', recovering, async (req, res) => {
+    const email = field(req.body, 'email', { max: 254 }).toLowerCase()
+    const key = field(req.body, 'recoveryKey', { max: 100 })
+    const password = field(req.body, 'password', { max: 200, trim: false })
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      throw new HttpError(400, `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`)
+    }
+    const mismatch = new HttpError(401, "That email and recovery key don't match. Use the key you saved when you made your account.")
+    const user = await col.users.findOne({ email })
+    if (!matchesRecoveryKey(key, user?.recoveryKeyHash) || !user) throw mismatch
+    const now = new Date()
+    const { recoveryKey, fields } = recoveryKeyFields(now)
+    // Only while the key is still the one just checked, so it can't be used twice at once.
+    const updated = await col.users.findOneAndUpdate(
+      { _id: user._id, recoveryKeyHash: user.recoveryKeyHash },
+      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now } },
+      { returnDocument: 'after' },
+    )
+    if (!updated) throw mismatch
+    await startSession(res, updated, { recoveryKey })
   })
 
   router.post('/auth/login', limited, async (req, res) => {
@@ -107,7 +153,8 @@ export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDe
           { _id: existing._id },
           {
             $set: { googleSub: profile.sub, updatedAt: now, ...(passwordRemoved ? { sessionsValidAfter: now } : {}) },
-            ...(passwordRemoved ? { $unset: { passwordHash: '' } } : {}),
+            // The recovery key goes too, for the same reason: it would set a new password.
+            $unset: { recoveryKeyHash: '', recoveryKeyCreatedAt: '', ...(passwordRemoved ? { passwordHash: '' } : {}) },
           },
           { returnDocument: 'after' },
         )
@@ -172,6 +219,24 @@ export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDe
       { returnDocument: 'after' },
     )
     await startSession(res, updated!)
+  })
+
+  /** A new recovery key, replacing the old one (which stops working). Needs the current password. */
+  router.post('/me/recovery-key', signedIn, limited, async (req, res) => {
+    const user = await col.users.findOne({ _id: userIdOf(res) })
+    if (!user) throw new HttpError(401, 'Sign in to continue.')
+    if (!user.passwordHash) throw new HttpError(400, 'Set a password first: a recovery key is for resetting it.')
+    const current = typeof req.body?.current === 'string' ? req.body.current : ''
+    if (!(await verifyPassword(current, user.passwordHash))) throw new HttpError(400, "Your current password isn't right.")
+    const now = new Date()
+    const { recoveryKey, fields } = recoveryKeyFields(now)
+    const updated = await col.users.findOneAndUpdate(
+      { _id: user._id },
+      { $set: { ...fields, updatedAt: now } },
+      { returnDocument: 'after' },
+    )
+    if (!updated) throw new HttpError(401, 'Sign in to continue.')
+    res.json({ user: toPublicUser(updated), recoveryKey })
   })
 
   router.post('/me/avatar', signedIn, async (req, res) => {

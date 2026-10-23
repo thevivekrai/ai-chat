@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import type { PublicUser } from '@/data/server/types'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
 import { squareThumbnail } from '@/lib/image'
-import { changeAvatar, changePassword, renameUser, signOut } from '@/store/actions'
+import { changeAvatar, changePassword, makeRecoveryKey, renameUser, signOut } from '@/store/actions'
 import { useSession } from '@/store/session'
 import { Card, ErrorText, Field, Input, SectionTitle } from './parts'
 
@@ -42,6 +42,7 @@ export function ProfileTab() {
             </p>
           )}
           <PasswordForm hasPassword={user.hasPassword} />
+          {user.hasPassword && <RecoveryKeyForm madeAt={user.recoveryKeyCreatedAt} />}
         </Card>
       </section>
 
@@ -160,6 +161,49 @@ function PasswordForm({ hasPassword }: { hasPassword: boolean }) {
       <Button type="submit" size="sm" variant="primary" disabled={save.busy || password.length < 8}>
         {save.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
         {hasPassword ? 'Change password' : 'Set password'}
+      </Button>
+    </form>
+  )
+}
+
+/** The recovery key resets a forgotten password; a new one replaces it (say, if it was lost). */
+function RecoveryKeyForm({ madeAt }: { madeAt: string | undefined }) {
+  const [current, setCurrent] = useState('')
+  const [visible, setVisible] = useState(false)
+  const make = useAsync()
+  const made = madeAt ? new Date(madeAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : null
+  return (
+    <form
+      className="space-y-3 border-t border-line pt-4"
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault()
+        void make.run(async () => {
+          await makeRecoveryKey(current)
+          setCurrent('')
+        })
+      }}
+    >
+      <div className="space-y-1">
+        <p className="text-sm font-medium">Recovery key</p>
+        <p className="text-xs leading-relaxed text-muted">
+          {made
+            ? `Resets your password if you forget it, together with your email. Yours was made on ${made}. Lost it? Make a new one: the old one stops working.`
+            : "You don't have one yet. It resets your password if you forget it, together with your email."}
+        </p>
+      </div>
+      <Field label="Current password">
+        <PasswordInput
+          value={current}
+          onChange={setCurrent}
+          visible={visible}
+          onToggle={() => setVisible(!visible)}
+          autoComplete="current-password"
+        />
+      </Field>
+      {make.error && <ErrorText>{make.error}</ErrorText>}
+      <Button type="submit" size="sm" disabled={make.busy || !current}>
+        {make.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+        {made ? 'Make a new recovery key' : 'Make a recovery key'}
       </Button>
     </form>
   )

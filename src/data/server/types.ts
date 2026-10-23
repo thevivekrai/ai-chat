@@ -32,12 +32,19 @@ export interface PublicUser {
   avatarUrl?: string
   hasPassword: boolean
   google: boolean
+  /** When the current recovery key was made, if there is one. */
+  recoveryKeyCreatedAt?: string
 }
 
 export interface AuthResult {
   user: PublicUser
   /** Google was linked to an existing account by email, and its password was turned off. */
   passwordRemoved?: boolean
+  /**
+   * A new recovery key, shown to the user this once (the server keeps only its hash): on sign-up,
+   * after a reset with the old one, or when they ask for a new one.
+   */
+  recoveryKey?: string
 }
 
 /**

@@ -276,8 +276,24 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function createAccount(name: string, email: string, password: string) {
-  const { user } = await serverApi.register({ name, email, password })
+  const { user, recoveryKey } = await serverApi.register({ name, email, password })
+  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey)
   await useSession.getState().signedIn(user)
+}
+
+/** A forgotten password, reset with the email and recovery key; the key is replaced by a new one. */
+export async function recoverAccount(email: string, recoveryKey: string, password: string) {
+  const { user, recoveryKey: next } = await serverApi.recover({ email, recoveryKey, password })
+  if (next) useSession.getState().showRecoveryKey(next)
+  await useSession.getState().signedIn(user)
+  toast({ title: 'Password reset', description: 'Other devices were signed out.', group: 'session' })
+}
+
+/** A new recovery key, replacing the old one. */
+export async function makeRecoveryKey(current: string) {
+  const { user, recoveryKey } = await serverApi.newRecoveryKey(current)
+  useSession.getState().setUser(user)
+  useSession.getState().showRecoveryKey(recoveryKey)
 }
 
 export async function signInWithGoogle(credential: string) {
