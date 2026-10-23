@@ -134,7 +134,14 @@ export function databaseName(uri: string): string {
 
 export async function connectDatabase(uri: string, dbName = databaseName(uri)): Promise<Database> {
   const client = new MongoClient(uri, { appName: 'sytext' })
-  await client.connect()
+  try {
+    await client.connect()
+    // connect() can return before a server has answered; this waits for one.
+    await client.db(dbName).command({ ping: 1 })
+  } catch (error) {
+    await client.close().catch(() => undefined)
+    throw cannotConnect(error)
+  }
   const db = client.db(dbName)
   const col: Collections = {
     users: db.collection('users'),
@@ -152,6 +159,35 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
     throw error
   }
   return { client, db, col, close: () => client.close() }
+}
+
+/**
+ * Why MongoDB wouldn't talk to us, in words for whoever deployed the server. The original error is
+ * kept at the end: these are the usual causes, not a diagnosis.
+ */
+function cannotConnect(error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error)
+  const name = error instanceof Error ? error.name : ''
+  const refused = name === 'MongoServerSelectionError' || name === 'MongoNetworkError'
+  // A rejected TLS handshake, a timeout, or no route: the database never let us in.
+  if (refused) {
+    return new ConfigError(
+      "Couldn't reach the database in MONGODB_URI. On MongoDB Atlas this is usually one of: " +
+        'its IP access list (Network Access → Add IP Address → "Allow access from anywhere", 0.0.0.0/0, ' +
+        'since a host like Render has no fixed address, and temporary entries expire); ' +
+        'a paused cluster (Clusters → Resume); or a cluster that no longer exists. ' +
+        `(MongoDB said: ${detail})`,
+    )
+  }
+  // The handshake worked, the user didn't.
+  if (/auth|credential/i.test(detail)) {
+    return new ConfigError(
+      'The database rejected the user or password in MONGODB_URI. Check them under Atlas → Database Access, ' +
+        'and URL-encode any punctuation in the password (or set one with only letters and digits). ' +
+        `(MongoDB said: ${detail})`,
+    )
+  }
+  return error instanceof Error ? error : new Error(detail)
 }
 
 /** MongoDB's codes for "an index like this exists, set up differently". */

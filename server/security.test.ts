@@ -6,7 +6,7 @@ import { hashPassword, verifyPassword } from './auth/passwords.ts'
 import { createSessionTokens } from './auth/tokens.ts'
 import { loadConfig, loadEnvFiles } from './config.ts'
 import { createSealer } from './crypto.ts'
-import { databaseName } from './db.ts'
+import { connectDatabase, databaseName } from './db.ts'
 import { parseCookies } from './http.ts'
 import { fakeGoogle, GOOGLE_CLIENT_ID } from './testing/helpers.ts'
 
@@ -122,6 +122,15 @@ describe('database name', () => {
     expect(databaseName('mongodb+srv://u:p@cluster0.abc.mongodb.net/inbox?retryWrites=true')).toBe('inbox')
     expect(databaseName('mongodb://h1:27017,h2:27017/prod')).toBe('prod')
     expect(databaseName('mongodb://localhost:27017')).toBe('sytext')
+  })
+})
+
+describe('a database that will not talk to us', () => {
+  it('is explained, rather than failing with a stack trace', async () => {
+    // Nothing is listening: the same shape of failure as a blocked or paused Atlas cluster.
+    await expect(connectDatabase('mongodb://127.0.0.1:1/sytext?serverSelectionTimeoutMS=300')).rejects.toThrow(
+      /Couldn't reach the database in MONGODB_URI.*IP access list.*paused cluster/s,
+    )
   })
 })
 
