@@ -20,6 +20,9 @@ export type SessionStatus = 'checking' | 'no-server' | 'signed-out' | 'guest' | 
 
 const GUEST_KEY = 'tidings.guest'
 
+/** While the server is waiting for its database, it's asked again this often (it keeps trying too). */
+export const DATABASE_RECHECK_MS = 30_000
+
 /** Why accounts aren't available: no server at all, or a server without its database. */
 export type ServerProblem = 'absent' | 'database'
 
@@ -55,6 +58,7 @@ export const useSession = create<SessionState>()((set, get) => ({
       set({ status: 'no-server', serverProblem: 'absent' })
       return
     }
+    if (!features.database || features.storage === 'temporary') watchDatabase()
     if (!features.database) {
       // The server is up but can't reach its database; it keeps trying, so reloading later works.
       set({ status: 'no-server', features, serverProblem: 'database' })
@@ -102,6 +106,42 @@ export const useSession = create<SessionState>()((set, get) => ({
     set({ status: 'signed-out', notice: null })
   },
 }))
+
+let recheck: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Asks the server again every so often while it can't use its database, so the page catches up by
+ * itself once it can: no reload needed. Accounts made in temporary storage move over with
+ * everything else, so whoever is signed in stays signed in.
+ */
+function watchDatabase() {
+  if (recheck) return
+  recheck = setInterval(() => void checkDatabase(), DATABASE_RECHECK_MS)
+}
+
+export function stopWatchingDatabase() {
+  if (recheck) clearInterval(recheck)
+  recheck = null
+}
+
+async function checkDatabase() {
+  const next = await serverApi.features()
+  if (!next) return // The server itself didn't answer this time.
+  const { status, features } = useSession.getState()
+  if (!next.database) {
+    // Still waiting, or busy for a moment moving temporary storage over. The reason may have changed.
+    if (status === 'no-server') useSession.setState({ features: next })
+    return
+  }
+  const waiting = next.storage === 'temporary'
+  if (!waiting) stopWatchingDatabase()
+  if (status === 'no-server') {
+    // Accounts work now (in the database, or in temporary storage meanwhile): show the sign-in.
+    await useSession.getState().init()
+  } else if (!waiting || next.databaseProblem !== features?.databaseProblem) {
+    useSession.setState({ features: next })
+  }
+}
 
 /** Whether the server can link WhatsApp and Telegram for this user right now. */
 export const canLink = (s: Pick<SessionState, 'status'>) => s.status === 'signed-in'
