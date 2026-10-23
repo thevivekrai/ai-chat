@@ -75,6 +75,7 @@ variable. The service's log says which file it read and which features are on:
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Profile photos, and pictures in linked chats. |
 | `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
+| `TEMPORARY_STORAGE` | `off` stops the server keeping accounts in temporary storage while the database can't be reached (see below). |
 
 `PORT` is optional: the server listens where Render tells it to.
 
@@ -84,12 +85,15 @@ a new database user password (and `MONGODB_URI`), a new Cloudinary API secret, a
 
 Things to know about hosting:
 
-- **A database it can't reach doesn't take the site down.** The server starts anyway, serves the
-  app (the demo and the browser connections still work), and keeps trying every 30 seconds; once
-  the database answers it takes over without a restart. Signing in and linked accounts are
-  unavailable meanwhile, and Settings → Accounts says so. The log says why — with MongoDB Atlas
-  it's usually its Network Access list (allow `0.0.0.0/0`, since a host like Render has no fixed
-  address) or a paused cluster.
+- **A database it can't reach doesn't stop anything.** The server starts a private MongoDB of its
+  own ("temporary storage") so signing in and linking work anyway, and keeps trying the real one
+  every 30 seconds. When it answers, everything made meanwhile moves over (same ids, so sign-ins
+  and links carry on) and the server switches without a restart. Until then, anything in
+  temporary storage is lost if the server restarts, and the sign-in screen and Settings → Accounts
+  say so, with what to fix. With MongoDB Atlas it's usually its IP Access List (allow `0.0.0.0/0`,
+  since a host like Render has no fixed address) or a paused cluster. Temporary storage downloads
+  MongoDB 7.0 on first use and takes about 150 MB of memory; `TEMPORARY_STORAGE=off` makes the
+  server wait for the database instead, serving the app without accounts meanwhile.
 
 - **Run one instance.** Each WhatsApp and Telegram link lives in the server process, and WhatsApp
   allows one connection per linked device.
@@ -334,7 +338,8 @@ production):
 ```
 server/
   index.ts            ← reads the environment, serves, connects (waiting as long as it takes)
-  holding.ts          ← what's served while there's no database: the app, and why accounts are off
+  temporaryDatabase.ts ← a private MongoDB for while MONGODB_URI can't be reached
+  holding.ts          ← what's served while there's no database at all: the app, and why accounts are off
   app.ts              ← the HTTP app: security headers, JSON-only API, the built web app
   config.ts           ← environment variables; what's required, what turns features on
   auth/               ← sign-up, sign-in, Google ID tokens, scrypt passwords, session tokens

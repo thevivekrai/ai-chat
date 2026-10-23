@@ -62,6 +62,13 @@ export function AuthScreen() {
           </p>
         )}
 
+        {features?.storage === 'temporary' && (
+          <p className="mt-5 rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+            <b className="font-semibold">Temporary storage.</b> This server's database isn't connected yet, so accounts made
+            now last until it restarts. They move to the database by themselves once it connects.
+          </p>
+        )}
+
         {features?.googleClientId && (
           <div className="mt-6 space-y-2">
             <GoogleButton clientId={features.googleClientId} onCredential={(credential) => void google.run(() => signInWithGoogle(credential))} />

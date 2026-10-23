@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import express, { Router, type Express } from 'express'
-import type { ServerFeatures } from '../src/data/server/types.ts'
+import type { DatabaseProblem, ServerFeatures } from '../src/data/server/types.ts'
 import { authRoutes } from './auth/routes.ts'
 import type { GoogleVerifier } from './auth/google.ts'
 import type { SessionTokens } from './auth/tokens.ts'
@@ -33,6 +33,11 @@ export interface AppDeps {
   secureCookies: boolean
   /** The built web app, served alongside the API. */
   staticDir?: string
+  /**
+   * Set while accounts are kept in temporary storage, because the database in MONGODB_URI can't
+   * be reached; `problem` says why, as it stands now.
+   */
+  temporaryStorage?: { problem(): DatabaseProblem | undefined }
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -55,8 +60,10 @@ export function createApp(deps: AppDeps): Express {
       telegram: deps.telegram.enabled,
       uploads: !!deps.media,
       database: true,
+      storage: deps.temporaryStorage ? 'temporary' : 'database',
     }
-    res.json(features)
+    const problem = deps.temporaryStorage?.problem()
+    res.json(problem ? { ...features, databaseProblem: problem } : features)
   })
   api.use(authRoutes({ col: deps.col, tokens: deps.tokens, google: deps.google, media: deps.media, secureCookies: deps.secureCookies }))
   api.use(linkRoutes(deps))

@@ -153,6 +153,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         telegram: true,
         uploads: false,
         database: true,
+        storage: 'database',
       })
     })
   })

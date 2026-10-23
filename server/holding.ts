@@ -1,5 +1,5 @@
 import express, { Router, type Express } from 'express'
-import type { ServerFeatures } from '../src/data/server/types.ts'
+import type { DatabaseProblem, ServerFeatures } from '../src/data/server/types.ts'
 import { serveApp } from './app.ts'
 import { jsonOnly, securityHeaders } from './http.ts'
 
@@ -11,7 +11,16 @@ import { jsonOnly, securityHeaders } from './http.ts'
  * can't work. Meanwhile the server keeps trying to connect; once it does, the real app takes over
  * without a restart.
  */
-export function createHoldingApp({ staticDir, reason }: { staticDir?: string; reason: string }): Express {
+export function createHoldingApp({
+  staticDir,
+  reason,
+  problem = () => undefined,
+}: {
+  staticDir?: string
+  reason: string
+  /** Why the database can't be used, as it stands now (unknown before the first try). */
+  problem?: () => DatabaseProblem | undefined
+}): Express {
   const app = express()
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
@@ -26,7 +35,8 @@ export function createHoldingApp({ staticDir, reason }: { staticDir?: string; re
   })
   api.get('/config', (_req, res) => {
     const features: ServerFeatures = { googleClientId: null, whatsapp: false, telegram: false, uploads: false, database: false }
-    res.json(features)
+    const current = problem()
+    res.json(current ? { ...features, databaseProblem: current } : features)
   })
   api.use((_req, res) => {
     res.status(503).json({ error: reason })

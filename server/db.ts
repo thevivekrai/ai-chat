@@ -1,5 +1,14 @@
-import { MongoClient, type Collection, type Db, type IndexSpecification, type MongoServerError, type ObjectId } from 'mongodb'
-import type { AccountStatus, LinkedNetwork } from '../src/data/server/types.ts'
+import {
+  MongoBulkWriteError,
+  MongoClient,
+  type Collection,
+  type Db,
+  type Document,
+  type IndexSpecification,
+  type MongoServerError,
+  type ObjectId,
+} from 'mongodb'
+import type { AccountStatus, DatabaseProblem, LinkedNetwork } from '../src/data/server/types.ts'
 import { ConfigError } from './config.ts'
 import type { Attachment, MessageStatus, NetworkId, QuotedMessage, Reaction, ThreadKind } from '../src/data/types.ts'
 
@@ -168,6 +177,19 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
   return { client, db, col, close: () => client.close() }
 }
 
+/** The database in MONGODB_URI can't be used, and which kind of problem that is. */
+export class DatabaseError extends ConfigError {
+  readonly problem: DatabaseProblem
+
+  constructor(problem: DatabaseProblem, message: string) {
+    super(message)
+    this.problem = problem
+  }
+}
+
+/** Which kind of problem an error from connecting is. */
+export const problemOf = (error: unknown): DatabaseProblem => (error instanceof DatabaseError ? error.problem : 'other')
+
 /**
  * Why MongoDB wouldn't talk to us, in words for whoever deployed the server. The original error is
  * kept at the end: these are the usual causes, not a diagnosis.
@@ -177,7 +199,8 @@ function cannotConnect(error: unknown): Error {
   const name = error instanceof Error ? error.name : ''
   // The cluster's name doesn't resolve: a typo, or a cluster that was deleted.
   if (/ENOTFOUND|EAI_AGAIN|querySrv|getaddrinfo/i.test(detail)) {
-    return new ConfigError(
+    return new DatabaseError(
+      'not-found',
       "The cluster in MONGODB_URI doesn't exist, as far as DNS is concerned. Copy the connection string again from " +
         'Atlas (Clusters → Connect → Drivers) and check the host matches. ' +
         `(MongoDB said: ${detail})`,
@@ -186,7 +209,8 @@ function cannotConnect(error: unknown): Error {
   const refused = name === 'MongoServerSelectionError' || name === 'MongoNetworkError'
   // A rejected TLS handshake, a timeout, or no route: the database never let us in.
   if (refused) {
-    return new ConfigError(
+    return new DatabaseError(
+      'unreachable',
       "Couldn't reach the database in MONGODB_URI. On MongoDB Atlas this is usually one of: " +
         'its IP access list (Network Access → Add IP Address → "Allow access from anywhere", 0.0.0.0/0, ' +
         'since a host like Render has no fixed address, and temporary entries expire); ' +
@@ -196,7 +220,8 @@ function cannotConnect(error: unknown): Error {
   }
   // The handshake worked, the user didn't.
   if (/auth|credential/i.test(detail)) {
-    return new ConfigError(
+    return new DatabaseError(
+      'auth',
       'The database rejected the user or password in MONGODB_URI. Check them under Atlas → Database Access, ' +
         'and URL-encode any punctuation in the password (or set one with only letters and digits). ' +
         `(MongoDB said: ${detail})`,
@@ -216,7 +241,8 @@ async function ensureIndexes(col: Collections) {
       await collection.createIndex(keys, options)
     } catch (error) {
       if (!INDEX_CONFLICTS.has(Number((error as MongoServerError).code))) throw error
-      throw new ConfigError(
+      throw new DatabaseError(
+        'shared',
         `The database "${collection.dbName}" already has a "${collection.collectionName}" collection, set up by another app. ` +
           'Give Sytext a database of its own: put a name for it in MONGODB_URI, after the host and before any "?", ' +
           'like mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/sytext?retryWrites=true. ' +
@@ -237,4 +263,29 @@ async function ensureIndexes(col: Collections) {
     index(col.messages, { userId: 1, threadId: 1, sentAt: -1 }),
     index(col.avatars, { userId: 1, id: 1 }, { unique: true }),
   ])
+}
+
+/** MongoDB's code for "a document with that unique key is already there". */
+const DUPLICATE_KEY = 11000
+
+/**
+ * Copies every document of Sytext's collections from one database to another, keeping their ids
+ * (so sessions and links carry on), and leaving alone any the target already has. Returns how many
+ * were copied.
+ */
+export async function copyDatabase(from: Database, to: Database): Promise<number> {
+  let copied = 0
+  for (const name of Object.values(from.col).map((c: Collection<never>) => c.collectionName)) {
+    const docs = await from.db.collection<Document>(name).find({}).toArray()
+    if (!docs.length) continue
+    try {
+      copied += (await to.db.collection<Document>(name).insertMany(docs, { ordered: false })).insertedCount
+    } catch (error) {
+      if (!(error instanceof MongoBulkWriteError)) throw error
+      const failures = Array.isArray(error.writeErrors) ? error.writeErrors : [error.writeErrors]
+      if (failures.some((failure) => failure.code !== DUPLICATE_KEY)) throw error
+      copied += error.insertedCount
+    }
+  }
+  return copied
 }

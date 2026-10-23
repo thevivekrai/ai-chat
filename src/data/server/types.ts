@@ -40,6 +40,15 @@ export interface AuthResult {
   passwordRemoved?: boolean
 }
 
+/**
+ * Why the database in MONGODB_URI can't be used:
+ * - unreachable: it refused the connection (with MongoDB Atlas: its IP Access List, or a paused cluster)
+ * - auth: the username or password was rejected
+ * - not-found: the cluster's name doesn't exist
+ * - shared: the database belongs to another app
+ */
+export type DatabaseProblem = 'unreachable' | 'auth' | 'not-found' | 'shared' | 'other'
+
 /** What this server has switched on. */
 export interface ServerFeatures {
   googleClientId: string | null
@@ -47,10 +56,18 @@ export interface ServerFeatures {
   telegram: boolean
   uploads: boolean
   /**
-   * False while the server can't reach its database: the site works, but signing in and linked
-   * accounts don't. It keeps trying, so this turns true by itself once the database answers.
+   * False while the server has no database at all: the site works, but signing in and linked
+   * accounts don't. It keeps trying, so this turns true by itself once there is one.
    */
   database: boolean
+  /**
+   * "temporary" while the database in MONGODB_URI can't be reached and the server keeps accounts
+   * in a private database of its own instead: everything works, but only until it restarts. Once
+   * the real database answers, everything moves over to it by itself.
+   */
+  storage?: 'database' | 'temporary'
+  /** Why the database in MONGODB_URI isn't in use, while it isn't. */
+  databaseProblem?: DatabaseProblem
 }
 
 /**

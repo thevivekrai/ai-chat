@@ -24,6 +24,12 @@ export interface Config {
    * Render provides; KEEP_AWAKE=off turns it off.
    */
   keepAwakeUrl?: string
+  /**
+   * While MONGODB_URI can't be reached, keep accounts in a private database run by the server
+   * itself, so signing in and linking work anyway (until a restart). TEMPORARY_STORAGE=off waits
+   * for the database instead.
+   */
+  temporaryStorage: boolean
 }
 
 export class ConfigError extends Error {}
@@ -67,11 +73,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || undefined,
     telegram: apiId && env.TELEGRAM_API_HASH?.trim() ? { apiId, apiHash: env.TELEGRAM_API_HASH.trim() } : undefined,
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
-    keepAwakeUrl: /^(off|false|no|0)$/i.test(env.KEEP_AWAKE?.trim() ?? '')
-      ? undefined
-      : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
+    keepAwakeUrl: isOff(env.KEEP_AWAKE) ? undefined : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
+    temporaryStorage: !isOff(env.TEMPORARY_STORAGE),
   }
 }
+
+const isOff = (value: string | undefined) => /^(off|false|no|0)$/i.test(value?.trim() ?? '')
 
 /**
  * DATA_ENCRYPTION_KEY (32 random bytes, base64) if set; otherwise derived from JWT_SECRET. Either
