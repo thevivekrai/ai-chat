@@ -67,7 +67,11 @@ export const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAA
 export const waMedia = new Map<string, Buffer>()
 
 /** A photo, video or file message's media fields, as WhatsApp sends them, for data now in `waMedia`. */
-export function mediaMessage(type: 'imageMessage' | 'videoMessage' | 'documentMessage', data: Buffer, extra: Record<string, unknown> = {}) {
+export function mediaMessage(
+  type: 'imageMessage' | 'videoMessage' | 'documentMessage' | 'stickerMessage',
+  data: Buffer,
+  extra: Record<string, unknown> = {},
+) {
   const url = `https://mmg.whatsapp.test/${createHash('sha256').update(data).digest('hex').slice(0, 16)}-${waMedia.size}`
   waMedia.set(url, data)
   return {

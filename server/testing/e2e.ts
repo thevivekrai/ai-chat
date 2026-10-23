@@ -11,6 +11,7 @@
  *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once
  *   POST /whatsapp/photo {"caption"}  Ravi sends a photo
  *   POST /whatsapp/file               Ravi sends a PDF
+ *   POST /whatsapp/sticker {"webp"}   Ravi sends a sticker (base64 WebP)
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /trim                        the server trims chats to what it keeps, now
@@ -26,6 +27,7 @@ if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
 const server = await startTestServer({ port: 5180, staticDir: resolve('dist') })
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'
+const KIRAN = '919800011122@s.whatsapp.net'
 
 async function whatsappLinked() {
   const socket = server.sockets.at(-1)!
@@ -38,9 +40,11 @@ async function whatsappLinked() {
   linked.emit('connection.update', { connection: 'open' })
   const ts = now()
   linked.emit('messaging-history.set', {
-    chats: [{ id: RAVI, unreadCount: 1 }, { id: '120363000000@g.us', name: 'Mehta family', unreadCount: 2 }],
-    contacts: [{ id: RAVI, name: 'Ravi Kumar' }],
+    chats: [{ id: RAVI, unreadCount: 1 }, { id: '120363000000@g.us', name: 'Mehta family', unreadCount: 2 }, { id: KIRAN }],
+    contacts: [{ id: RAVI, name: 'Ravi Kumar' }, { id: KIRAN, name: 'Kiran Rao' }],
     messages: [
+      // A question nobody answered, ten days ago: by now it's history, not a to-do.
+      { key: { remoteJid: KIRAN, fromMe: false, id: 'K1' }, message: { conversation: 'Can you send the catalogue?' }, messageTimestamp: ts - 10 * 86400 },
       { key: { remoteJid: RAVI, fromMe: true, id: 'M0' }, message: { conversation: 'Sent the parcel on Monday 📦' }, messageTimestamp: ts - 7200, status: 4 },
       {
         key: { remoteJid: RAVI, fromMe: false, id: 'M1' },
@@ -143,6 +147,17 @@ createServer(async (req, res) => {
           {
             key: { remoteJid: RAVI, fromMe: false, id: `F${Date.now()}` },
             message: mediaMessage('documentMessage', pdf, { mimetype: 'application/pdf', fileName: 'Invoice INV-2041.pdf', caption: 'Invoice for the planters' }),
+            messageTimestamp: now(),
+          },
+        ],
+      } as never)
+    } else if (req.url === '/whatsapp/sticker') {
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: `S${Date.now()}` },
+            message: mediaMessage('stickerMessage', Buffer.from(String(input.webp), 'base64'), { mimetype: 'image/webp' }),
             messageTimestamp: now(),
           },
         ],

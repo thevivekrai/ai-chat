@@ -38,6 +38,23 @@ describe('Needs reply (without AI)', () => {
     for (const id of ['landlord', 'clinic', 'potters', 'arjun', 'studio-ops']) expect(ids).not.toContain(id)
   })
 
+  it('lets a chat go after a week without a reply, until they write again', () => {
+    const input = viewInput()
+    // Six days on, the café lead (asked 3 days ago) is still waiting…
+    expect(needsReplyIds({ ...input, now: NOW + 3 * DAY })).toContain('brewbay')
+    // …but once their last message is a week old, it's no longer a to-do, and has no badge to show.
+    const later = { ...input, now: NOW + 4 * DAY + HOUR }
+    expect(needsReplyIds(later)).not.toContain('brewbay')
+    const views = Object.fromEntries(buildThreadViews(later).map((v) => [v.id, v]))
+    expect(views.brewbay.needsReply).toBe(false)
+    expect(selectViewThreads(buildThreadViews(later), 'all', opts).map((v) => v.id)).toContain('brewbay')
+
+    // They write again: back in the queue.
+    const nudge: Message = { id: 'z', threadId: 'brewbay', senderId: input.threads.brewbay.participantIds[0], body: 'Any update on the pricing?', sentAt: new Date(NOW + 4 * DAY).toISOString() }
+    const messages = { ...input.messages, brewbay: [...input.messages.brewbay, nudge] }
+    expect(needsReplyIds({ ...later, messages })).toContain('brewbay')
+  })
+
   it('drops a thread as soon as I reply', () => {
     const input = viewInput()
     const reply: Message = { id: 'x', threadId: 'priya', senderId: ME_ID, body: 'On it!', sentAt: new Date(NOW).toISOString(), status: 'sending' }

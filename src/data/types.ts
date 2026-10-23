@@ -56,7 +56,8 @@ export interface Thread {
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
 
 export interface Attachment {
-  kind: 'file' | 'image'
+  /** A sticker is a small picture shown on its own, without a bubble (a WebP image or WebM video). */
+  kind: 'file' | 'image' | 'sticker'
   name: string
   size?: string
   /** Its type, like "image/jpeg" or "application/pdf", where the network says. */

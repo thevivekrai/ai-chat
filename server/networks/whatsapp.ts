@@ -203,7 +203,7 @@ const STATUS: Record<number, MessageStatus> = { 0: 'failed', 1: 'sending', 2: 's
 
 /** A photo, video or file in a message, and what WhatsApp needs to fetch it again. */
 interface WaFile {
-  type: 'imageMessage' | 'videoMessage' | 'documentMessage'
+  type: 'imageMessage' | 'videoMessage' | 'documentMessage' | 'stickerMessage'
   media: Record<string, string | number>
 }
 
@@ -270,8 +270,12 @@ function describe(message: proto.IMessage | null | undefined): { body: string; a
       return describe(content.documentWithCaptionMessage?.message)
     case 'audioMessage':
       return { body: content.audioMessage?.ptt ? '🎤 Voice message' : '🎵 Audio' }
-    case 'stickerMessage':
-      return { body: 'Sticker' }
+    case 'stickerMessage': {
+      const m = content.stickerMessage
+      // Lottie stickers need WhatsApp's own player: those are named rather than shown.
+      if (m?.isLottie || (m?.mimetype && m.mimetype !== 'image/webp')) return { body: 'Sticker' }
+      return { body: '', attachments: [attachment('sticker', 'Sticker', m, 'image/webp')], file: fileOf('stickerMessage', m) }
+    }
     case 'locationMessage':
     case 'liveLocationMessage':
       return { body: '📍 Location' }

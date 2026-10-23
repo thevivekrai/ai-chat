@@ -831,6 +831,30 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect((await stranger.raw('GET', image.attachments[0].url)).status).toBe(404)
       expect((await browser.raw('GET', `${image.attachments[0].url.slice(0, -4)}AAAA`)).status).toBe(404)
 
+      // Stickers show as stickers, fetched the same way; Lottie ones (WhatsApp's own player) are named.
+      const webp = Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 sticker')
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          { key: { remoteJid: RAVI, fromMe: false, id: 'STK1' }, message: mediaMessage('stickerMessage', webp, { mimetype: 'image/webp' }), messageTimestamp: ts + 2 },
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: 'STK2' },
+            message: mediaMessage('stickerMessage', Buffer.from('lottie'), { mimetype: 'application/was', isLottie: true }),
+            messageTimestamp: ts + 3,
+          },
+        ],
+      } as never)
+      const sticker = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:STK1`)).message
+      expect(sticker.body).toBe('')
+      expect(sticker.attachments).toEqual([{ kind: 'sticker', name: 'Sticker', mime: 'image/webp', size: '1 KB', url: expect.stringMatching(FILE_LINK) }])
+      const stickerFile = await browser.raw('GET', sticker.attachments[0].url)
+      expect(stickerFile.body).toEqual(webp)
+      expect(stickerFile.headers.get('content-type')).toBe('image/webp')
+      expect(stickerFile.headers.get('content-disposition')).toMatch(/^inline; filename="Sticker.webp"/)
+      const lottie = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:STK2`)).message
+      expect(lottie).toMatchObject({ body: 'Sticker' })
+      expect(lottie.attachments).toBeUndefined()
+
       // Gone from WhatsApp's servers (and the phone): said so, rather than failing.
       waMedia.delete(pageMedia.documentMessage!.url)
       const gone = await browser.raw('GET', doc.attachments[0].url)
