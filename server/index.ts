@@ -1,9 +1,8 @@
-import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createApp } from './app.ts'
 import { createGoogleVerifier } from './auth/google.ts'
 import { createSessionTokens } from './auth/tokens.ts'
-import { ConfigError, loadConfig } from './config.ts'
+import { ConfigError, loadConfig, loadEnvFiles } from './config.ts'
 import { createSealer } from './crypto.ts'
 import { connectDatabase } from './db.ts'
 import { createAvatars } from './inbox/avatars.ts'
@@ -21,8 +20,9 @@ const RESUME_EVERY_MS = 5 * 60_000
 const TRIM_EVERY_MS = 60_000
 
 async function main() {
-  // Locally, settings can live in a .env file; in production the host provides them.
-  if (process.env.NODE_ENV !== 'production' && existsSync('.env')) process.loadEnvFile('.env')
+  // Settings come from the environment, or a .env file (locally, or as a host's secret file).
+  const files = loadEnvFiles()
+  if (files.length) console.log(`Read settings from ${files.join(' and ')}`)
   const config = loadConfig()
 
   const database = await connectDatabase(config.mongoUri)

@@ -1,4 +1,5 @@
 import { hkdfSync } from 'node:crypto'
+import { existsSync } from 'node:fs'
 
 /**
  * Server settings, all from environment variables (set them in the host's dashboard, never in the
@@ -27,9 +28,29 @@ export interface Config {
 
 export class ConfigError extends Error {}
 
+/**
+ * Settings can also come from a `.env` file: in the app's folder (development, or a host that puts
+ * it there), or in Render's secret files folder (a Secret File named `.env`). Variables set in the
+ * environment itself win over the files, and the first file wins over the second.
+ */
+export const ENV_FILES = ['.env', '/etc/secrets/.env']
+
+/** Reads whichever of the files exist; returns their names (never their contents). */
+export function loadEnvFiles(files: string[] = ENV_FILES): string[] {
+  return files.filter((file) => {
+    if (!existsSync(file)) return false
+    process.loadEnvFile(file)
+    return true
+  })
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const missing = ['MONGODB_URI', 'JWT_SECRET'].filter((k) => !env[k]?.trim())
-  if (missing.length) throw new ConfigError(`Set ${missing.join(' and ')} in the environment.`)
+  if (missing.length) {
+    throw new ConfigError(
+      `Set ${missing.join(' and ')} in the environment (on Render: the service's Environment tab, or a Secret File named .env).`,
+    )
+  }
 
   const jwtSecret = env.JWT_SECRET!.trim()
   if (jwtSecret.length < 32) throw new ConfigError('JWT_SECRET must be at least 32 characters of random text.')

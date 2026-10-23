@@ -61,8 +61,10 @@ from the Blueprint, or make a Web Service by hand with:
 | Start command | `npm start` |
 | Health check path | `/api/health` |
 
-Then set the environment variables (**Environment** tab). `MONGODB_URI` and `JWT_SECRET` are
-required; `.env.example` explains every variable:
+Then set the environment variables (**Environment** tab), or put them in a Secret File named
+`.env` there (the server reads `.env` from its folder or from `/etc/secrets/`; variables set in the
+Environment tab win). `MONGODB_URI` and `JWT_SECRET` are required; `.env.example` explains every
+variable. The service's log says which file it read and which features are on:
 
 | Variable | What it does |
 | --- | --- |
