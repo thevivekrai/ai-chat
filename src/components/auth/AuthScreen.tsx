@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowRight, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { DatabaseHelp } from '@/components/settings/DatabaseHelp'
 import { Field, Input, ErrorText } from '@/components/settings/parts'
 import { Button } from '@/components/ui/Button'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
@@ -9,7 +10,7 @@ import { APP_NAME } from '@/config'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
 import { createAccount, signIn, signInWithGoogle } from '@/store/actions'
-import { useSession } from '@/store/session'
+import { DATABASE_RECHECK_MS, useSession } from '@/store/session'
 import { GoogleButton } from './GoogleButton'
 
 type Mode = 'sign-in' | 'create'
@@ -63,10 +64,19 @@ export function AuthScreen() {
         )}
 
         {features?.storage === 'temporary' && (
-          <p className="mt-5 rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-            <b className="font-semibold">Temporary storage.</b> This server's database isn't connected yet, so accounts made
-            now last until it restarts. They move to the database by themselves once it connects.
-          </p>
+          <div className="mt-5 rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+            <p>
+              <b className="font-semibold">Temporary storage.</b> This server's database isn't connected yet, so accounts made
+              now last until it restarts. They move to the database by themselves once it connects, and this note goes away
+              (it checks every {DATABASE_RECHECK_MS / 1000} seconds).
+            </p>
+            <details className="mt-1.5">
+              <summary className="cursor-pointer font-medium">Why, and how to fix it</summary>
+              <div className="mt-2 text-left">
+                <DatabaseHelp problem={features.databaseProblem} />
+              </div>
+            </details>
+          </div>
         )}
 
         {features?.googleClientId && (
