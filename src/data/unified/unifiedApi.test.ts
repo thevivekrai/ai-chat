@@ -126,6 +126,27 @@ describe('unified inbox', () => {
     expect(readJson(CONFIG_KEY)).toEqual({ demo: true })
   })
 
+  it('shows the demo chats only without an account: never while signed in', async () => {
+    writeJson(CONFIG_KEY, { demo: true })
+    const api = createUnifiedApi()
+    expect((await api.loadInbox()).threads.length).toBe(15)
+    expect(api.connections.get().demo).toBe(true)
+
+    await api.connections.setServerSession({ id: 'u1', name: 'Aarav Mehta' })
+    const signedIn = await api.loadInbox()
+    expect(signedIn.threads).toEqual([])
+    expect(signedIn.tasks).toEqual([]) // the demo's tasks go with its chats
+    expect(signedIn.me.name).toBe('Aarav Mehta')
+    expect(api.connections.get().demo).toBe(false)
+    expect(await api.searchMessages('planter')).toEqual([])
+    expect(await api.demo?.simulateIncoming()).toBeNull()
+    // The setting itself is kept, for using Sytext without an account again.
+    expect(readJson(CONFIG_KEY)).toMatchObject({ demo: true })
+
+    await api.connections.setServerSession(null)
+    expect((await api.loadInbox()).threads.length).toBe(15)
+  })
+
   it('checks a bot token before connecting', async () => {
     const { api } = start({ demo: true })
     await expect(api.connections.connectTelegram({ token: 'wrong' })).rejects.toThrow(/didn't accept that token/)

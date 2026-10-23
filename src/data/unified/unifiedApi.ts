@@ -59,6 +59,11 @@ export function createUnifiedApi(): InboxApi {
   const connectors = new Map<ConnectorId, { connector: Connector; detach: () => void }>()
   /** Accounts linked on the Sytext server, while signed in to it. */
   let server: { connector: ServerConnector; name: string; detach: () => void } | null = null
+  /**
+   * The demo chats are for trying Sytext without an account: once signed in, only your own chats
+   * show (the setting is kept for when you sign out, or use it without an account).
+   */
+  const demoShown = () => config.demo && !server
   const signedOutListeners = new Set<() => void>()
   /** Latest copy of every connector thread, for events that need the whole thread. */
   const threadCache = new Map<string, Thread>()
@@ -133,7 +138,7 @@ export function createUnifiedApi(): InboxApi {
   }
 
   async function snapshot(): Promise<InboxSnapshot> {
-    const demoSnapshot = config.demo ? await demoApi.loadInbox() : null
+    const demoSnapshot = demoShown() ? await demoApi.loadInbox() : null
     if (demoSnapshot && !local.importedDemoTasks) {
       local = { ...local, tasks: [...local.tasks, ...demoSnapshot.tasks], importedDemoTasks: true }
       persistLocal()
@@ -141,10 +146,9 @@ export function createUnifiedApi(): InboxApi {
     const parts = sources().map((connector) => connector.snapshot())
     const liveThreadIds = new Set(parts.flatMap((p) => p.threads.map((t) => t.id)))
     const demoThreadIds = new Set(demoSnapshot?.threads.map((t) => t.id))
-    // A regenerated demo can drop chats; tasks that pointed into them would have nowhere to go.
-    const tasks = local.tasks.filter(
-      (t) => !demoSnapshot || !t.source || sourceOf(t.source.threadId) !== 'demo' || demoThreadIds.has(t.source.threadId),
-    )
+    // Tasks from demo chats show with them: not while they're hidden, or after a regenerated demo
+    // dropped the chat they point into (they'd have nowhere to go).
+    const tasks = local.tasks.filter((t) => !t.source || sourceOf(t.source.threadId) !== 'demo' || demoThreadIds.has(t.source.threadId))
     return {
       me: {
         id: ME_ID,
@@ -229,7 +233,7 @@ export function createUnifiedApi(): InboxApi {
 
   function start() {
     running = true
-    let offDemo = config.demo ? demoApi.subscribe(onDemoEvent) : null
+    let offDemo = demoShown() ? demoApi.subscribe(onDemoEvent) : null
     for (const connector of sources()) connector.start()
     const timer = setInterval(() => void deliverDue(), SCHEDULER_INTERVAL_MS)
     void deliverDue()
@@ -269,7 +273,7 @@ export function createUnifiedApi(): InboxApi {
       detach(id)
       attach(id)
     }
-    if (previous.demo !== next.demo) showDemo?.(next.demo)
+    if (previous.demo !== next.demo) showDemo?.(demoShown())
     notifyConnections()
   }
 
@@ -278,7 +282,7 @@ export function createUnifiedApi(): InboxApi {
   function connectionsState(): ConnectionsState {
     const linked = server?.connector.accounts() ?? []
     return {
-      demo: config.demo,
+      demo: demoShown(),
       telegram: connectors.get('telegram')?.connector.status() ?? null,
       matrix: connectors.get('matrix')?.connector.status() ?? null,
       server: server && {
@@ -391,6 +395,7 @@ export function createUnifiedApi(): InboxApi {
         // its copy of them). The links themselves carry on, on the server.
         forgetLocal('server', { tasks: true })
       }
+      showDemo?.(demoShown())
       notifyConnections()
       await reloadAll()
     },
@@ -541,7 +546,7 @@ export function createUnifiedApi(): InboxApi {
 
     async searchMessages(query, options) {
       const limit = options?.limit ?? 20
-      const demoHits = config.demo ? await demoApi.searchMessages(query, { limit }) : []
+      const demoHits = demoShown() ? await demoApi.searchMessages(query, { limit }) : []
       const parts = sources().map((connector) => connector.snapshot())
       const connectorHits = searchMessages(
         {
@@ -589,7 +594,7 @@ export function createUnifiedApi(): InboxApi {
 
     demo: {
       async reset() {
-        if (!config.demo) return snapshot()
+        if (!demoShown()) return snapshot()
         await demoApi.demo.reset()
         // The demo chats are regenerated, so tasks that pointed into them go too.
         local = { ...local, tasks: local.tasks.filter((t) => !t.source || sourceOf(t.source.threadId) !== 'demo') }
@@ -597,7 +602,7 @@ export function createUnifiedApi(): InboxApi {
         return snapshot()
       },
       async simulateIncoming() {
-        return config.demo ? demoApi.demo.simulateIncoming() : null
+        return demoShown() ? demoApi.demo.simulateIncoming() : null
       },
     },
   }

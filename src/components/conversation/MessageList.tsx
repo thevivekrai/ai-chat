@@ -298,6 +298,7 @@ function MessageGroup({
         {messages.map((m, i) => {
           const flashing = flash?.messageId === m.id
           const settled = m.status !== 'sending' && m.status !== 'failed' && !m.id.startsWith('pending-')
+          const bare = isStickerOnly(m)
           const actions = settled && (capabilities.reply || capabilities.react)
           return (
             <Fragment key={m.id}>
@@ -312,9 +313,13 @@ function MessageGroup({
                     onActivate(activeId === m.id ? null : m.id)
                   }}
                   className={cn(
-                    'w-fit max-w-full min-w-0 rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap',
-                    fromMe ? 'accent-gloss shadow-bubble-out' : 'bg-bubble-in text-fg shadow-bubble',
-                    i === messages.length - 1 && (fromMe ? 'rounded-br-md' : 'rounded-bl-md'),
+                    bare
+                      ? 'w-fit max-w-full rounded-2xl'
+                      : cn(
+                          'w-fit max-w-full min-w-0 rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap',
+                          fromMe ? 'accent-gloss shadow-bubble-out' : 'bg-bubble-in text-fg shadow-bubble',
+                          i === messages.length - 1 && (fromMe ? 'rounded-br-md' : 'rounded-bl-md'),
+                        ),
                     m.status === 'sending' && 'opacity-70',
                     m.status === 'failed' && 'ring-2 ring-rose-500/60',
                     flashing && 'animate-flash',
@@ -394,6 +399,9 @@ function Quote({ quote, contacts, onAccent }: { quote: QuotedMessage; contacts: 
   )
 }
 
+/** A message that's only a sticker shows on its own, as in WhatsApp, rather than in a bubble. */
+const isStickerOnly = (m: Message) => !m.body && !m.replyTo && m.attachments?.length === 1 && m.attachments[0].kind === 'sticker'
+
 function Attachments({ message, fromMe }: { message: Message; fromMe: boolean }) {
   return message.attachments?.map((a, index) => (
     <AttachmentView key={`${a.name}-${index}`} attachment={a} fromMe={fromMe} sending={message.status === 'sending'} />
@@ -407,6 +415,22 @@ function Attachments({ message, fromMe }: { message: Message; fromMe: boolean })
  */
 function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attachment; fromMe: boolean; sending: boolean }) {
   const [broken, setBroken] = useState(false)
+  if (a.kind === 'sticker') {
+    // Animated WebM stickers (Telegram's video stickers) play on a loop; the rest are WebP images.
+    if (a.url && !broken) {
+      const look = 'block size-32 object-contain drop-shadow-sm'
+      return a.mime === 'video/webm' ? (
+        <video src={a.url} autoPlay loop muted playsInline aria-label={a.name} onError={() => setBroken(true)} className={look} />
+      ) : (
+        <img src={a.url} alt={a.name} loading="lazy" onError={() => setBroken(true)} className={look} />
+      )
+    }
+    return (
+      <span className={cn('inline-block rounded-2xl px-3.5 py-2 text-[14.5px]', fromMe ? 'accent-gloss' : 'bg-bubble-in text-fg shadow-bubble')}>
+        {a.name}
+      </span>
+    )
+  }
   if (a.kind === 'image' && a.url && !broken) {
     return (
       <div className="group/photo relative -mx-1.5 -mt-0.5 mb-1.5">

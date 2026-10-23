@@ -23,7 +23,25 @@ export async function answerQuestion(question: string, sources: AiSearchSource[]
 
   await simulateLatency('answer')
   const now = Date.now()
-  return cannedAnswer(question, sources, now) ?? genericAnswer(sources, now)
+  return taskAnswer(sources, now) ?? cannedAnswer(question, sources, now) ?? genericAnswer(sources, now)
+}
+
+/** Open tasks passed in (for a question about tasks): what's due today, or else what's open. */
+function taskAnswer(sources: AiSearchSource[], now: number): SearchAnswer | null {
+  const tasks = sources.filter((s) => s.task)
+  if (!tasks.length) return null
+  const endOfToday = new Date(now)
+  endOfToday.setHours(23, 59, 59, 999)
+  const today = tasks.filter((s) => s.task!.dueAt && toMs(s.task!.dueAt) <= endOfToday.getTime())
+  const listed = (today.length ? today : tasks).slice(0, 5)
+  const names = listed.map((s) => `**${s.task!.title}** (${s.threadTitle})`).join(', ')
+  const count = (n: number) => `${n} ${n === 1 ? 'task' : 'tasks'}`
+  return {
+    answer: today.length
+      ? `You have ${count(today.length)} due today or overdue: ${names}.`
+      : `Nothing is due today. Your open ${count(tasks.length)}: ${names}.`,
+    citedMessageIds: listed.map((s) => s.messageId),
+  }
 }
 
 function genericAnswer(sources: AiSearchSource[], now: number): SearchAnswer {

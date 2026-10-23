@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { Priority, PriorityResult } from '@/ai'
+import { NEEDS_REPLY_FOR } from '@/config'
 import type { Contact, Me, Message, NetworkId, ScheduledMessage, Task, Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
 import { expectsReply, firstOpenMessage, hasQuestion, hasRequest } from '@/lib/replyRules'
@@ -27,7 +28,10 @@ export interface ThreadView {
   waitingSince: number | null
   snoozed: boolean
   scheduledCount: number
-  /** Last message is theirs, expects a response, and isn't done, snoozed or scheduled. */
+  /**
+   * Last message is theirs, from the past week (NEEDS_REPLY_FOR), expects a response, and isn't
+   * done, snoozed or scheduled.
+   */
   needsReply: boolean
   /** I wrote last and asked something. */
   waitingOnThem: boolean
@@ -93,7 +97,14 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     waitingSince: waitingFrom ? toMs(waitingFrom.sentAt) : null,
     snoozed,
     scheduledCount,
-    needsReply: !fromMeLast && pending.length > 0 && expects && !snoozed && !doneSinceLast && scheduledCount === 0,
+    needsReply:
+      !fromMeLast &&
+      pending.length > 0 &&
+      input.now - lastAt < NEEDS_REPLY_FOR &&
+      expects &&
+      !snoozed &&
+      !doneSinceLast &&
+      scheduledCount === 0,
     waitingOnThem:
       fromMeLast &&
       last.status !== 'failed' &&

@@ -24,6 +24,8 @@ export function AccountsTab({ close }: { close(): void }) {
   const connections = useConnections()
   // Without a Sytext server (a static deploy) only the in-browser connections are available.
   const hasServer = useSession((s) => s.status !== 'no-server')
+  // The demo is for trying Sytext without an account; signed in, it's your own chats only.
+  const signedIn = useSession((s) => s.status === 'signed-in')
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -54,10 +56,12 @@ export function AccountsTab({ close }: { close(): void }) {
         </section>
       )}
 
-      <section className="space-y-3">
-        <SectionTitle>Demo</SectionTitle>
-        <DemoCard shown={connections.demo} hasAccounts={hasRealAccount(connections)} close={close} />
-      </section>
+      {!signedIn && (
+        <section className="space-y-3">
+          <SectionTitle>Demo</SectionTitle>
+          <DemoCard shown={connections.demo} hasAccounts={hasRealAccount(connections)} close={close} />
+        </section>
+      )}
     </div>
   )
 }

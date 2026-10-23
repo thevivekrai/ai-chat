@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildAnswerSources } from '@/store/aiInput'
+import { asksAboutTasks, buildAnswerSources, taskSources } from '@/store/aiInput'
 import { searchMessages } from '@/data/search'
 import { NOW, aiThread, seedState } from '@/test/fixtures'
 import {
@@ -149,6 +149,29 @@ describe('answerQuestion', () => {
     const { answer } = await answerQuestion(question, buildAnswerSources(hits, state, () => true))
     expect(answer).toContain('#MS-2041')
     expect(answer).toContain('Brew Bay Café')
+  })
+
+  it('answers "what are my tasks for today?" from the open tasks', async () => {
+    const state = seedState()
+    const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString()
+    const tasks = [
+      { id: 't1', title: 'Send the invoice', dueAt: at(2), done: false, createdAt: at(-5), source: { threadId: 'sharma', messageId: 'sharma-5' } },
+      { id: 't2', title: 'Ship the planters', dueAt: at(72), done: false, createdAt: at(-5), source: { threadId: 'priya', messageId: state.messages.priya[0].id } },
+      { id: 't3', title: 'Already done', dueAt: at(1), done: true, createdAt: at(-5), source: { threadId: 'sharma', messageId: 'sharma-5' } },
+      { id: 't4', title: 'Private chat', dueAt: at(1), done: false, createdAt: at(-5), source: { threadId: 'divya', messageId: state.messages.divya[0].id } },
+    ]
+    expect(asksAboutTasks('What are my tasks for today?')).toBe(true)
+    expect(asksAboutTasks('When is my flight?')).toBe(false)
+
+    // Open ones only, from chats AI may read, soonest first, each with its title and due date.
+    const sources = taskSources(tasks, state, (id) => id !== 'divya')
+    expect(sources.map((s) => s.task?.title)).toEqual(['Send the invoice', 'Ship the planters'])
+
+    const { answer, citedMessageIds } = await answerQuestion('What are my tasks for today?', sources)
+    expect(answer).toMatch(/1 task due today/)
+    expect(answer).toContain('**Send the invoice**')
+    expect(answer).not.toContain('Ship the planters')
+    expect(citedMessageIds).toEqual(['sharma-5'])
   })
 
   it('only uses what was retrieved', async () => {

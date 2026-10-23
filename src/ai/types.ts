@@ -76,6 +76,8 @@ export interface AiSearchSource {
   fromMe: boolean
   body: string
   sentAt: string
+  /** An open task found in this message, for questions about tasks ("what are my tasks today?"). */
+  task?: { title: string; dueAt: string | null }
 }
 
 export interface SearchAnswer {

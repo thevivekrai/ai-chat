@@ -46,6 +46,7 @@ export function ThreadListPane({ view }: { view: ListView }) {
   const now = useClock((s) => s.now)
   const views = useThreadViews()
   const { demoShown, connected } = useConnections(useShallow((s) => ({ demoShown: s.demo, connected: hasRealAccount(s) })))
+  const signedIn = useSession((s) => s.status === 'signed-in')
   const hintDismissed = useUi((s) => s.connectHintDismissed)
 
   const list = useMemo(
@@ -143,16 +144,18 @@ export function ThreadListPane({ view }: { view: ListView }) {
         ) : views.length === 0 ? (
           <EmptyState
             icon={<Link2 className="size-6" />}
-            title={connected ? 'No chats yet' : 'Connect an account'}
+            title={connected ? 'No chats yet' : signedIn ? 'Link WhatsApp or Telegram' : 'Connect an account'}
             actions={
               <Button variant="primary" size="sm" onClick={() => useUi.getState().openSettings('accounts')}>
-                {connected ? 'Check accounts' : 'Connect an account'}
+                {connected ? 'Check accounts' : signedIn ? 'Link an account' : 'Connect an account'}
               </Button>
             }
           >
             {connected
               ? 'Chats appear here as they arrive. A Telegram bot shows chats once someone messages it.'
-              : 'Bring in a Telegram bot or a Matrix account (with its WhatsApp, Instagram, Slack and SMS bridges), or turn the demo chats back on.'}
+              : signedIn
+                ? 'Your chats show up here once you link your WhatsApp or Telegram.'
+                : 'Bring in a Telegram bot or a Matrix account (with its WhatsApp, Instagram, Slack and SMS bridges), or turn the demo chats back on.'}
           </EmptyState>
         ) : list.length === 0 ? (
           query ? (

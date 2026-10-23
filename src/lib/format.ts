@@ -1,4 +1,4 @@
-import type { Contact, Message } from '@/data/types'
+import type { Attachment, Contact, Message } from '@/data/types'
 import { ME_ID } from '@/data/types'
 
 const EMOJI = /\p{Extended_Pictographic}/u
@@ -38,7 +38,7 @@ export function hashString(value: string): number {
 /** One-line preview for the thread list. */
 export function messagePreview(message: Message | undefined, contacts: Record<string, Contact>, isGroup: boolean) {
   if (!message) return 'No messages yet'
-  const text = message.body.replace(/\s+/g, ' ').trim() || (message.attachments?.[0] ? `📎 ${message.attachments[0].name}` : '')
+  const text = message.body.replace(/\s+/g, ' ').trim() || attachmentPreview(message.attachments?.[0])
   if (message.senderId === ME_ID) return `You: ${text}`
   if (isGroup) return `${contacts[message.senderId]?.name.split(' ')[0] ?? 'Someone'}: ${text}`
   return text
@@ -58,4 +58,11 @@ export function typingLabel(names: string[], group: boolean): string {
   if (!group) return 'typing…'
   if (names.length === 1) return `${shortName(names[0])} is typing…`
   return `${names.length} people are typing…`
+}
+
+/** "📷 Photo", "Sticker", "📎 Invoice.pdf": a message that's only an attachment, in one line. */
+function attachmentPreview(attachment: Attachment | undefined): string {
+  if (!attachment) return ''
+  if (attachment.kind === 'sticker') return attachment.name
+  return `${attachment.kind === 'image' ? '📷' : '📎'} ${attachment.name}`
 }

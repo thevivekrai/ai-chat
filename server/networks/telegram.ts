@@ -167,7 +167,13 @@ export function mediaOf(m: Api.Message): TgMessage['media'] {
     return { attachment: { kind, name, ...(size ? { size } : {}), ...(mime ? { mime } : {}) }, file: true }
   }
   if (m.photo) return { attachment: { kind: 'image', name: 'Photo', mime: 'image/jpeg' }, file: true }
-  if (m.sticker) return { body: `${m.file?.emoji ?? ''} Sticker`.trim() }
+  if (m.sticker) {
+    const name = `${m.file?.emoji ?? ''} Sticker`.trim()
+    const mime = m.file?.mimeType
+    // Animated .tgs stickers (Lottie) need Telegram's own player: those are named rather than shown.
+    if (mime !== 'image/webp' && mime !== 'video/webm') return { body: name }
+    return { attachment: { kind: 'sticker', name, mime }, file: true }
+  }
   if (m.voice) return { body: '🎤 Voice message' }
   if (m.videoNote) return { body: '📹 Video message' }
   if (m.gif) return { body: 'GIF' }

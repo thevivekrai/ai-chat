@@ -108,8 +108,10 @@ Things to know about hosting:
   checks Telegram for messages it missed while the connection was down.
 
 **Try this:** click **Turn on AI** · press `J`/`K` to move through the queue · `R` for drafts,
-`1`–`3` to pick one, edit, `Enter` to send · `E` to mark done · `⌘K`/`Ctrl+K` and ask *"what did
-the supplier quote me?"* · then open **Settings** to connect your own accounts and a Claude key.
+`1`–`3` to pick one, edit, `Enter` to send · `E` to mark done · `⌘K`/`Ctrl+K` and ask *"what are
+my tasks for today?"*, *"have I ordered anything?"* or *"when is my flight?"* · then open
+**Settings** to connect your own accounts and a Claude key. Questions about tasks are answered from
+your open tasks (with their due dates) as well as your chats.
 
 | Key | Action | Key | Action |
 | --- | --- | --- | --- |
@@ -165,7 +167,8 @@ like WhatsApp Web; your phone doesn't have to stay online.
 - It brings in your recent chats (up to 40 messages each) and every new message after that, with
   delivery and read ticks for yours, edits and deletions.
 - **Photos and files** both ways: photos show in the chat, videos and documents as cards, and
-  each one downloads (see *Photos and files* below). The paperclip, pasting, or dropping files on
+  each one downloads (see *Photos and files* below). Stickers show as stickers (Lottie ones,
+  which need WhatsApp's own player, are named instead). The paperclip, pasting, or dropping files on
   the message box sends them; JPEG and PNG go as photos, MP4 as video, anything else as a document.
 - Quoted replies and reactions come in and go out. You see when someone is typing, and they see
   when you are. Profile and group pictures show too.
@@ -277,8 +280,10 @@ that, and it keeps your chats on infrastructure you control.
 
 ### The demo inbox
 
-**Settings → Accounts → Demo chats** shows or hides the sample conversations. While they're shown,
-you can simulate an incoming message or reset them.
+The sample conversations are for trying Sytext without an account. **Settings → Accounts → Demo
+chats** shows or hides them, and while they're shown you can simulate an incoming message or reset
+them. Once you're signed in they never show: your inbox is only your own chats (the setting is
+kept for when you sign out).
 
 ## AI with Claude
 
@@ -355,6 +360,8 @@ the events every source pushes.
 The "Needs reply" queue is derived (`store/selectors.ts`). A chat is in it when:
 - the other person wrote last;
 - it expects a response (AI decides when allowed, simple on-device rules otherwise);
+- their last message is from the past week: after 7 days without a reply it's let go, badge and
+  all (`NEEDS_REPLY_FOR` in `src/config.ts`), and comes back when they write again;
 - it isn't done, snoozed or scheduled.
 
 Ids carry their source (`wa:…` and `tga:…` from the server, `tg:…`, `mx:…`, none for demo chats),
