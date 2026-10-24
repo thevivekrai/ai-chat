@@ -29,7 +29,8 @@ function SearchBar({ search }: { search: ChatSearch }) {
   const close = () => useUi.getState().setChatSearch(null)
   // A new query starts at the latest match, as other chat apps do.
   const onQuery = (next: string) => set({ query: next, current: matchesInChat(messages, next).at(-1) ?? null })
-  const older = () => index > 0 && set({ current: matches[index - 1] })
+  // With no current match (it was deleted, or matches came in later), Older starts at the latest.
+  const older = () => (index > 0 ? set({ current: matches[index - 1] }) : index < 0 && matches.length && set({ current: matches.at(-1)! }))
   const newer = () => index >= 0 && index < matches.length - 1 && set({ current: matches[index + 1] })
 
   /** Loads earlier pages until something new matches (a few at most). */
@@ -37,15 +38,19 @@ function SearchBar({ search }: { search: ChatSearch }) {
     setBusy(true)
     try {
       for (let page = 0; page < 5; page++) {
-        const before = useInbox.getState().messages[threadId]?.length ?? 0
+        const before = useInbox.getState().messages[threadId] ?? NO_MESSAGES
         await useInbox.getState().loadOlder(threadId)
+        // The search as it is now: it may have been changed, or closed, while the page loaded.
+        const latest = useUi.getState().chatSearch
+        if (latest?.threadId !== threadId || !latest.query.trim()) return
         const now = useInbox.getState().messages[threadId] ?? NO_MESSAGES
-        const found = matchesInChat(now, query).filter((id) => !matches.includes(id))
+        const seen = new Set(matchesInChat(before, latest.query))
+        const found = matchesInChat(now, latest.query).filter((id) => !seen.has(id))
         if (found.length) {
-          set({ current: found.at(-1)! })
+          useUi.getState().setChatSearch({ ...latest, current: found.at(-1)! })
           return
         }
-        if (now.length === before || useInbox.getState().history[threadId]?.hasMore === false) return
+        if (now.length === before.length || useInbox.getState().history[threadId]?.hasMore === false) return
       }
     } finally {
       setBusy(false)
@@ -65,7 +70,13 @@ function SearchBar({ search }: { search: ChatSearch }) {
     }
   }
 
-  const count = !query.trim() ? '' : matches.length ? `${matches.length - index} of ${matches.length}` : 'No matches'
+  const count = !query.trim()
+    ? ''
+    : !matches.length
+      ? 'No matches'
+      : index < 0
+        ? `${matches.length} found`
+        : `${matches.length - index} of ${matches.length}`
   return (
     <div role="search" className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 animate-fade-in sm:px-4">
       <Search className="size-4 shrink-0 text-faint" aria-hidden />
@@ -88,7 +99,7 @@ function SearchBar({ search }: { search: ChatSearch }) {
           <span className="hidden sm:inline">Earlier</span>
         </Button>
       )}
-      <Button variant="ghost" size="icon-sm" aria-label="Older match (Enter)" title="Older match (Enter)" disabled={index <= 0} onClick={older}>
+      <Button variant="ghost" size="icon-sm" aria-label="Older match (Enter)" title="Older match (Enter)" disabled={index === 0 || !matches.length} onClick={older}>
         <ChevronUp className="size-4" />
       </Button>
       <Button

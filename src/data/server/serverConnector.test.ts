@@ -6,7 +6,7 @@ import type { InboxEvent, Message } from '../types'
 import { CONFIG_KEY, LOCAL_KEY, loadLocal } from '../unified/persisted'
 import { createUnifiedApi } from '../unified/unifiedApi'
 import { openDeviceStore, wipeDeviceStore } from './deviceStore'
-import { MESSAGES_KEPT_PER_CHAT, type ServerEvent, type ServerInbox, type ServerOlderMessages } from './types'
+import { MESSAGES_KEPT_PER_CHAT, type PublicUser, type ServerEvent, type ServerInbox, type ServerOlderMessages } from './types'
 
 /** Stands in for the browser's EventSource; the test pushes events through it. */
 class FakeEventSource {
@@ -68,6 +68,8 @@ let inbox: ServerInbox
 let olderPages: ServerOlderMessages[]
 /** The server no longer keeps the message reacted to. */
 let reactionUnknown: boolean
+/** Photos and files uploaded: in what order, and how many at once at most. */
+let uploads: { started: string[]; active: number; most: number }
 let inboxGate: Promise<void>
 
 function json(body: unknown, status = 200) {
@@ -79,6 +81,7 @@ beforeEach(async () => {
   inbox = serverInbox()
   olderPages = [{ messages: [{ id: `${RAVI}:M0`, threadId: RAVI, senderId: RAVI, body: 'Parcel booked?', sentAt: at(60 * 24) }], hasMore: false }]
   reactionUnknown = false
+  uploads = { started: [], active: 0, most: 0 }
   inboxGate = Promise.resolve()
   for (const key of [CONFIG_KEY, LOCAL_KEY, 'tidings.mockdb']) storage.remove(key)
   writeJson(CONFIG_KEY, { demo: false })
@@ -90,7 +93,7 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
     const url = new URL(input, 'http://tidings.test')
     const method = init?.method ?? 'GET'
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
     const query = Object.fromEntries(url.searchParams)
     requests.push({ method, path: decodeURIComponent(url.pathname), body, ...(url.search ? { query } : {}) })
     if (session === 'expired') return json({ error: 'Sign in to continue.' }, 401)
@@ -104,6 +107,17 @@ beforeEach(async () => {
       return json({ message })
     }
     if (url.pathname.endsWith('/read') || url.pathname.endsWith('/typing')) return json({ ok: true })
+    if (url.pathname.endsWith('/files')) {
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      const name = decodeURIComponent(headers['X-File-Name'] ?? '')
+      uploads.started.push(name)
+      uploads.active++
+      uploads.most = Math.max(uploads.most, uploads.active)
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      uploads.active--
+      const message: Message = { id: `${RAVI}:F-${name}`, threadId: RAVI, senderId: 'me', body: '', sentAt: at(0), status: 'sent' }
+      return json({ message })
+    }
     if (url.pathname.endsWith('/archive')) {
       const thread = inbox.threads.find((t) => url.pathname.includes(encodeURIComponent(t.id)) || url.pathname.includes(t.id))!
       return json({ thread: { ...thread, ...(body.archived ? { archived: true } : {}) } })
@@ -195,6 +209,19 @@ describe('chats linked on the server', () => {
     stop()
   })
 
+  it('passes account changes from other devices on (Incognito mode turned on there, say)', async () => {
+    const { api, stream, stop } = await signedIn()
+    const changed: PublicUser[] = []
+    const off = api.connections.onUserUpdated((user) => changed.push(user))
+    const user: PublicUser = { id: 'u1', email: 'aarav@example.com', name: 'Aarav Mehta', hasPassword: true, google: false, incognito: true }
+    stream.push({ type: 'user.updated', user })
+    // Someone else's account is never applied here.
+    stream.push({ type: 'user.updated', user: { ...user, id: 'u2' } })
+    expect(changed).toEqual([user])
+    off()
+    stop()
+  })
+
   it('reacts, pages back and passes typing on, for chats that support it', async () => {
     const { api, events, stream, stop } = await signedIn()
     expect(api.capabilities(RAVI)).toEqual({ reply: true, react: true, typing: true, history: true, files: true, edit: true, delete: true, pin: true, star: true })
@@ -265,6 +292,31 @@ describe('chats linked on the server', () => {
     await eventually(() => expect(second.api.connections.get().server?.status.state).toBe('online'))
     expect((await second.api.loadInbox()).messages.map((m) => m.body)).toEqual(expect.arrayContaining(['Message 2', 'Did the parcel arrive?']))
     second.stop()
+  })
+
+  it('sends photos and files one at a time, in the order they were sent', async () => {
+    const { api, stop } = await signedIn()
+    const files = ['first.jpg', 'second.pdf', 'third.png'].map((name) => new File(['x'], name, { type: 'application/octet-stream' }))
+    await Promise.all(files.map((file) => api.sendMessage(RAVI, '', { file })))
+    expect(uploads.started).toEqual(['first.jpg', 'second.pdf', 'third.png'])
+    expect(uploads.most).toBe(1)
+    stop()
+  })
+
+  it('removes what was deleted for me while this device was away', async () => {
+    const store = await openDeviceStore('u1')
+    const gone: Message = { id: `${RAVI}:GONE`, threadId: RAVI, senderId: RAVI, body: 'Deleted on the phone', sentAt: at(3) }
+    store.put({ threads: inbox.threads, messages: [gone, messageAt(7, 2)] })
+    await store.flush()
+    inbox.deleted = [gone.id]
+
+    const { api, stop } = await signedIn()
+    const bodies = (await api.loadInbox()).messages.map((m) => m.body)
+    expect(bodies).not.toContain('Deleted on the phone')
+    // What the server simply doesn't keep stays.
+    expect(bodies).toContain('Message 7')
+    await eventually(async () => expect((await deviceCopy()).messages.map((m) => m.id)).not.toContain(gone.id))
+    stop()
   })
 
   it("pages back through this device's copy before asking the server", async () => {

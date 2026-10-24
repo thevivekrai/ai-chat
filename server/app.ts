@@ -72,7 +72,9 @@ export function createApp(deps: AppDeps): Express {
     const problem = deps.temporaryStorage?.problem()
     res.json(problem ? { ...features, databaseProblem: problem } : features)
   })
-  api.use(authRoutes({ col: deps.col, tokens: deps.tokens, google: deps.google, media: deps.media, secureCookies: deps.secureCookies }))
+  api.use(
+    authRoutes({ col: deps.col, hub: deps.hub, tokens: deps.tokens, google: deps.google, media: deps.media, secureCookies: deps.secureCookies }),
+  )
   api.use(linkRoutes(deps))
   api.use(inboxRoutes(deps))
   api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')))

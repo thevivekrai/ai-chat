@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { Download, Loader2, Mic, Music, Pause, Play } from 'lucide-react'
 import type { Attachment } from '@/data/types'
 import { cn } from '@/lib/cn'
@@ -13,20 +13,23 @@ const RATES = [1, 1.5, 2]
 let current: HTMLAudioElement | null = null
 
 /**
- * A voice message or audio file, played in the chat. It's fetched whole the first time it's played
- * (voice messages are small), so it can be scrubbed straight away.
+ * A voice message or audio file, played in the chat. A voice message is fetched whole the first
+ * time it's played (they're small), so it can be scrubbed straight away; an audio file streams.
  */
 export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment; fromMe: boolean }) {
   const audio = useRef<HTMLAudioElement | null>(null)
+  const loading = useRef<Promise<HTMLAudioElement> | null>(null)
   const objectUrl = useRef<string | null>(null)
+  const gone = useRef(false)
   const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'paused' | 'error'>('idle')
   const [position, setPosition] = useState(0)
   const [duration, setDuration] = useState(a.duration ?? 0)
   const [rate, setRate] = useState(1)
-  const bars = waveBars(a.waveform, BARS, a.url ?? a.name)
+  const bars = useMemo(() => waveBars(a.waveform, BARS, a.url ?? a.name), [a.waveform, a.url, a.name])
 
   useEffect(
     () => () => {
+      gone.current = true
       audio.current?.pause()
       if (current === audio.current) current = null
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
@@ -46,14 +49,29 @@ export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment;
     return () => cancelAnimationFrame(frame)
   }, [state])
 
-  /** The audio element, with the file loaded into it. */
-  async function load(): Promise<HTMLAudioElement> {
-    if (audio.current) return audio.current
+  /** The audio element, with the file loaded into it: fetched once, however quickly it's tapped. */
+  function load(): Promise<HTMLAudioElement> {
+    loading.current ??= fetchAudio().catch((error: unknown) => {
+      loading.current = null
+      throw error
+    })
+    return loading.current
+  }
+
+  async function fetchAudio(): Promise<HTMLAudioElement> {
     setState('loading')
-    const res = await fetch(a.url!, { credentials: 'same-origin' })
-    if (!res.ok) throw new Error(`Couldn't fetch it (${res.status})`)
-    objectUrl.current = URL.createObjectURL(await res.blob())
-    const el = new Audio(objectUrl.current)
+    let src = a.url!
+    // Voice messages are small: fetched whole, so they can be scrubbed at once. Audio files (a
+    // song, a long recording) stream instead.
+    if (a.voice) {
+      const res = await fetch(a.url!, { credentials: 'same-origin' })
+      if (!res.ok) throw new Error(`Couldn't fetch it (${res.status})`)
+      const blob = await res.blob()
+      // Closed while it loaded: nothing to play it in.
+      if (gone.current) throw new DOMException('Closed', 'AbortError')
+      src = objectUrl.current = URL.createObjectURL(blob)
+    }
+    const el = new Audio(src)
     el.preload = 'auto'
     el.playbackRate = rate
     el.addEventListener('loadedmetadata', () => Number.isFinite(el.duration) && el.duration > 0 && setDuration(el.duration))
@@ -76,8 +94,13 @@ export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment;
       if (current && current !== el) current.pause()
       current = el
       await el.play()
-    } catch {
-      setState('error')
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : ''
+      // Paused again before it started, or closed: not a failure.
+      if (name === 'AbortError') return
+      // Loading took long enough that the browser wants another tap (iOS Safari): ready for it.
+      if (name === 'NotAllowedError') setState('paused')
+      else setState('error')
     }
   }
 
@@ -89,8 +112,8 @@ export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment;
       el.currentTime = Math.min(total, Math.max(0, fraction * total))
       setPosition(el.currentTime)
       if (state === 'loading' || state === 'idle') setState('paused')
-    } catch {
-      setState('error')
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setState('error')
     }
   }
 

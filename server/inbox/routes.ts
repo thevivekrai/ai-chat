@@ -1,7 +1,7 @@
 import express, { Router, type Request, type Response } from 'express'
 import type { ObjectId } from 'mongodb'
-import type { MessageHint } from '../../src/data/server/types.ts'
-import type { MessageAction } from '../../src/data/types.ts'
+import { MAX_CAPTION, type MessageHint } from '../../src/data/server/types.ts'
+import type { Attachment, MessageAction } from '../../src/data/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
 import { field, HttpError, requireUser, userIdOf } from '../http.ts'
@@ -34,10 +34,37 @@ const MAX_EMOJI_LENGTH = 16
  */
 export function hintOf(value: unknown, id: string | undefined): MessageHint | undefined {
   if (!value || typeof value !== 'object' || !id) return undefined
-  const { id: hintId, senderId, sentAt, body } = value as Record<string, unknown>
+  const { id: hintId, senderId, sentAt, body, attachments } = value as Record<string, unknown>
   if (hintId !== id || typeof senderId !== 'string' || senderId.length > 300) return undefined
   if (typeof sentAt !== 'string' || Number.isNaN(Date.parse(sentAt))) return undefined
-  return { id, senderId, sentAt, ...(typeof body === 'string' ? { body: body.slice(0, 4096) } : {}) }
+  const files = attachmentsOf(attachments)
+  return { id, senderId, sentAt, ...(typeof body === 'string' ? { body: body.slice(0, 4096) } : {}), ...(files ? { attachments: files } : {}) }
+}
+
+const ATTACHMENT_KINDS = new Set<Attachment['kind']>(['file', 'image', 'sticker', 'audio'])
+
+/** A message's attachments as the device describes them: only what's well formed, and only links to this server's files. */
+function attachmentsOf(value: unknown): Attachment[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const list = value.slice(0, 10).flatMap((item): Attachment[] => {
+    if (!item || typeof item !== 'object') return []
+    const { kind, name, size, mime, url, voice, duration, waveform } = item as Record<string, unknown>
+    if (!ATTACHMENT_KINDS.has(kind as Attachment['kind']) || typeof name !== 'string') return []
+    const levels = Array.isArray(waveform) ? waveform.slice(0, 100).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)) : []
+    return [
+      {
+        kind: kind as Attachment['kind'],
+        name: name.slice(0, 200),
+        ...(typeof size === 'string' ? { size: size.slice(0, 20) } : {}),
+        ...(typeof mime === 'string' ? { mime: mime.slice(0, 100) } : {}),
+        ...(typeof url === 'string' && url.startsWith('/api/files/') && url.length < 4000 ? { url } : {}),
+        ...(voice === true ? { voice: true } : {}),
+        ...(typeof duration === 'number' && duration > 0 && duration < 86_400 ? { duration } : {}),
+        ...(levels.length ? { waveform: levels.map((n) => Math.max(0, Math.min(100, Math.round(n)))) } : {}),
+      },
+    ]
+  })
+  return list.length ? list : undefined
 }
 
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
@@ -150,7 +177,9 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
 
   router.post('/threads/:id/typing', signedIn, async (req, res) => {
     const { userId, threadId, network } = await chatOf(req, res)
-    if (!(await incognito(userId))) await network.setTyping(userId, threadId, req.body?.typing === true)
+    const typing = req.body?.typing === true
+    // Stopping always goes through: typing may have started before Incognito mode was turned on.
+    if (!typing || !(await incognito(userId))) await network.setTyping(userId, threadId, typing)
     res.json({ ok: true })
   })
 
@@ -160,8 +189,10 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
    */
   router.post('/threads/:id/read', signedIn, async (req, res) => {
     const { userId, threadId, network } = await chatOf(req, res)
-    const receipt = req.body?.receipt === true || (req.body?.receipt !== false && !(await incognito(userId)))
-    await network.markRead(userId, threadId, { receipt })
+    const asked = req.body?.receipt === true
+    const receipt = asked || (req.body?.receipt !== false && !(await incognito(userId)))
+    // Asked for, a read receipt that can't go out is an error, not a quiet success.
+    await network.markRead(userId, threadId, { receipt, strict: asked })
     res.json({ ok: true, receipt })
   })
 
@@ -216,8 +247,16 @@ export function uploadRoutes({
   router.post(
     '/threads/:id/files',
     signedIn,
-    (req, res, next) => {
+    async (req, res, next) => {
       if (!req.headers['x-file-name']) return next(new HttpError(400, 'Missing the file name.'))
+      // Before reading up to 50 MB: is there such a chat, and can its network take the file now?
+      const threadId = String(req.params.id)
+      const network = threadId.startsWith('wa:') ? whatsapp : threadId.startsWith('tga:') ? telegram : null
+      if (!network || !(await store.thread(userIdOf(res), threadId))) return next(new HttpError(404, 'No such chat.'))
+      if (!network.isConnected(userIdOf(res))) {
+        const name = network === whatsapp ? 'WhatsApp' : 'Telegram'
+        return next(new HttpError(409, `${name} isn't connected right now, so the file can't be sent. Try again in a minute.`))
+      }
       readFile(req, res, (error?: { type?: string }) =>
         next(error?.type === 'entity.too.large' ? new HttpError(413, `Files up to ${limitText} can be sent through Sytext.`) : error),
       )
@@ -225,10 +264,9 @@ export function uploadRoutes({
     async (req, res) => {
       const userId = userIdOf(res)
       const threadId = String(req.params.id)
-      const network = threadId.startsWith('wa:') ? whatsapp : threadId.startsWith('tga:') ? telegram : null
-      if (!network || !(await store.thread(userId, threadId))) throw new HttpError(404, 'No such chat.')
+      const network = threadId.startsWith('wa:') ? whatsapp : telegram
       const upload = uploadOf(req.headers, req.body)
-      const caption = decodedHeader(req.headers, 'x-caption', 1024)?.trim() ?? ''
+      const caption = decodedHeader(req.headers, 'x-caption', MAX_CAPTION)?.trim() ?? ''
       const replyToId = decodedHeader(req.headers, 'x-reply-to', 300)
       let hint
       try {

@@ -7,6 +7,7 @@ import { createMockApi } from '../mock/mockApi'
 import { searchMessages } from '../search'
 import { serverApi } from '../server/serverApi'
 import { ServerConnector } from '../server/serverConnector'
+import type { PublicUser } from '../server/types'
 import type { InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
 import { ME_ID, NO_CAPABILITIES } from '../types'
 import {
@@ -65,6 +66,7 @@ export function createUnifiedApi(): InboxApi {
    */
   const demoShown = () => config.demo && !server
   const signedOutListeners = new Set<() => void>()
+  const userListeners = new Set<(user: PublicUser) => void>()
   /** Latest copy of every connector thread, for events that need the whole thread. */
   const threadCache = new Map<string, Thread>()
   const listeners = new Set<(event: InboxEvent) => void>()
@@ -388,6 +390,7 @@ export function createUnifiedApi(): InboxApi {
         const connector = new ServerConnector({
           owner: user.id,
           onSignedOut: () => signedOutListeners.forEach((listener) => listener()),
+          onUserUpdated: (changed) => userListeners.forEach((listener) => listener(changed)),
         })
         const offEvents = connector.subscribe((event) => onConnectorEvent(event))
         const offStatus = connector.onStatus(() => notifyConnections())
@@ -409,6 +412,11 @@ export function createUnifiedApi(): InboxApi {
     onSignedOut(listener) {
       signedOutListeners.add(listener)
       return () => signedOutListeners.delete(listener)
+    },
+
+    onUserUpdated(listener) {
+      userListeners.add(listener)
+      return () => userListeners.delete(listener)
     },
 
     async linkWhatsApp(request) {

@@ -74,6 +74,13 @@ export interface ThreadDoc {
   avatarUrl?: string
   /** Archived on WhatsApp or Telegram (here or on the phone). */
   archived?: boolean
+  /**
+   * Read in Sytext up to here without telling the network (Incognito mode). The network still
+   * counts those messages unread, so its counts are capped at what came in since.
+   */
+  readThrough?: Date
+  /** Messages deleted for me lately (the latest few hundred), for devices that were away then. */
+  deletedIds?: string[]
 }
 
 export interface ContactDoc {
@@ -115,6 +122,8 @@ export interface MessageDoc {
   ref?: Record<string, unknown>
   /** Pinned in the chat, or starred by the user: kept however old (the chat's latest are kept anyway). */
   pinned?: boolean
+  /** When the pin ends by itself (WhatsApp's do); then it can go like any other message. */
+  pinnedUntil?: Date
   starred?: boolean
 }
 

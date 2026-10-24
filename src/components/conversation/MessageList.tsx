@@ -17,6 +17,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  RotateCw,
   SmilePlus,
   Star,
   StarOff,
@@ -28,7 +29,7 @@ import { Button } from '@/components/ui/Button'
 import { Menu, type MenuItem } from '@/components/ui/Popover'
 import { api } from '@/data/api'
 import type { Attachment, ChatCapabilities, Contact, Message, MessageAction, MessageStatus, QuotedMessage, Reaction } from '@/data/types'
-import { ME_ID } from '@/data/types'
+import { isPinned, ME_ID } from '@/data/types'
 import { matchesInChat } from '@/data/search'
 import { cn } from '@/lib/cn'
 import { downloadUrl } from '@/lib/files'
@@ -473,6 +474,7 @@ function Attachments({ message, fromMe }: { message: Message; fromMe: boolean })
  */
 function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attachment; fromMe: boolean; sending: boolean }) {
   const [broken, setBroken] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   if (a.kind === 'sticker') {
     // WebP images; WebM videos (Telegram's video stickers) and Lottie animations play on a loop.
     if (a.url && !broken) {
@@ -496,7 +498,8 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
       <div className="group/photo relative -mx-1.5 -mt-0.5 mb-1.5">
         <a href={a.url} target="_blank" rel="noreferrer" className="block" aria-label="Open the photo">
           <img
-            src={a.url}
+            // A new address for each try, so the browser doesn't reuse the failed one.
+            src={attempt ? `${a.url}?try=${attempt}` : a.url}
             alt={a.name}
             loading="lazy"
             onError={() => setBroken(true)}
@@ -518,6 +521,35 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
     )
   }
   const link = a.url && !sending ? downloadUrl(a.url) : undefined
+  // A photo that couldn't be fetched (WhatsApp reconnecting, say) can be tried again.
+  if (a.kind === 'image' && broken && link) {
+    return (
+      <div className={cn('mb-1.5 flex min-w-48 items-center gap-2.5 rounded-xl px-2.5 py-2', fromMe ? 'bg-white/15' : 'bg-surface ring-1 ring-line')}>
+        <span className={cn('grid size-9 shrink-0 place-items-center rounded-lg', fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink')}>
+          <ImageIcon className="size-4" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium">{a.name}</span>
+          <span className={cn('block text-[11px]', fromMe ? 'text-white/70' : 'text-muted')}>Couldn't be shown right now</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setAttempt((n) => n + 1)
+            setBroken(false)
+          }}
+          aria-label="Try showing the photo again"
+          title="Try again"
+          className={cn('grid size-7 place-items-center rounded-full', fromMe ? 'hover:bg-white/20' : 'text-muted hover:bg-surface-2')}
+        >
+          <RotateCw className="size-4" aria-hidden />
+        </button>
+        <a href={link} download={a.name} aria-label={`Download ${a.name}`} title="Download" className={cn('grid size-7 place-items-center rounded-full', fromMe ? 'hover:bg-white/20' : 'text-muted hover:bg-surface-2')}>
+          <Download className="size-4" aria-hidden />
+        </a>
+      </div>
+    )
+  }
   const kindLabel =
     a.kind === 'image' ? 'Photo' : a.kind === 'audio' ? 'Audio' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'
   const body = (
@@ -552,7 +584,8 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
 /** Pinned, starred, edited: small marks at the end of a message. */
 function MessageMarks({ message: m, fromMe, bare }: { message: Message; fromMe: boolean; bare: boolean }) {
   const edited = !!m.editedAt && !m.deleted
-  if (!edited && !m.pinned && !m.starred) return null
+  const pinned = isPinned(m)
+  if (!edited && !pinned && !m.starred) return null
   return (
     <span
       className={cn(
@@ -560,7 +593,7 @@ function MessageMarks({ message: m, fromMe, bare }: { message: Message; fromMe: 
         bare ? 'mt-1 flex text-faint' : fromMe ? 'text-white/70' : 'text-faint',
       )}
     >
-      {m.pinned && <Pin className="size-3" aria-label="Pinned" />}
+      {pinned && <Pin className="size-3" aria-label="Pinned" />}
       {m.starred && <Star className="size-3 fill-current" aria-label="Starred" />}
       {edited && <span title={new Date(m.editedAt!).toLocaleString()}>edited</span>}
     </span>
@@ -654,7 +687,8 @@ function messageMenu(threadId: string, m: Message, fromMe: boolean, can: ChatCap
     items.push({ id: 'edit', label: 'Edit', icon: Pencil, onSelect: () => startEdit(threadId, m.id) })
   }
   if (can.pin && !m.deleted) {
-    items.push({ id: 'pin', label: m.pinned ? 'Unpin' : 'Pin', icon: m.pinned ? PinOff : Pin, onSelect: act({ type: 'pin', pinned: !m.pinned }) })
+    const pinned = isPinned(m)
+    items.push({ id: 'pin', label: pinned ? 'Unpin' : 'Pin', icon: pinned ? PinOff : Pin, onSelect: act({ type: 'pin', pinned: !pinned }) })
   }
   if (can.star && !m.deleted) {
     items.push({ id: 'star', label: m.starred ? 'Unstar' : 'Star', icon: m.starred ? StarOff : Star, onSelect: act({ type: 'star', starred: !m.starred }) })

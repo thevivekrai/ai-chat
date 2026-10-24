@@ -23,7 +23,8 @@ const STOPWORDS = new Set(
 const SYNONYM_GROUPS = [
   ['quote', 'quotation', 'price', 'pricing', 'rate', 'cost', 'estimate', 'kitna', 'kitne'],
   ['supplier', 'vendor', 'wholesale', 'packaging'],
-  ['order', 'delivery', 'deliver', 'shipping', 'ship', 'dispatch', 'tracking', 'parcel', 'courier', 'pickup'],
+  ['order', 'delivery', 'deliver', 'shipping', 'ship', 'dispatch', 'tracking', 'parcel', 'courier', 'pickup', 'purchase', 'bought'],
+  ['flight', 'fly', 'flying', 'airport', 'boarding', 'pnr', 'airline', 'departure', 'checkin'],
   ['invoice', 'bill', 'billing', 'gst', 'accountant'],
   ['trek', 'trip', 'hike', 'rajmachi'],
   ['meet', 'coffee', 'lunch', 'dinner', 'plan'],

@@ -4,6 +4,12 @@ import type { NetworkId } from '@/data/types'
 
 export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks' | 'starred' | 'archived'
 
+/** The reply being written when an edit started, set aside until the edit is done. */
+export interface EditDraft {
+  text: string
+  replyingTo?: string
+}
+
 /** Searching inside the open chat: what for, and which match is on screen. */
 export interface ChatSearch {
   threadId: string
@@ -35,6 +41,8 @@ interface UiState {
   replyingTo: Record<string, string>
   /** The message of mine being edited, per thread (the composer holds its new text). */
   editing: Record<string, string>
+  /** What was being written when an edit started, per thread: it comes back afterwards. */
+  editDrafts: Record<string, EditDraft>
   chatSearch: ChatSearch | null
   composerFocusTick: number
   searchFocusTick: number
@@ -59,6 +67,7 @@ interface UiState {
   setComposer(threadId: string, text: string): void
   setReplyingTo(threadId: string, messageId: string | null): void
   setEditing(threadId: string, messageId: string | null): void
+  setEditDraft(threadId: string, draft: EditDraft | null): void
   /** Opens the in-chat search (or changes it); null closes it. */
   setChatSearch(search: ChatSearch | null): void
   focusComposer(): void
@@ -94,6 +103,7 @@ export const useUi = create<UiState>()(
       composer: {},
       replyingTo: {},
       editing: {},
+      editDrafts: {},
       chatSearch: null,
       composerFocusTick: 0,
       searchFocusTick: 0,
@@ -167,6 +177,13 @@ export const useUi = create<UiState>()(
           else delete editing[threadId]
           return { editing }
         }),
+      setEditDraft: (threadId, draft) =>
+        set((s) => {
+          const editDrafts = { ...s.editDrafts }
+          if (draft) editDrafts[threadId] = draft
+          else delete editDrafts[threadId]
+          return { editDrafts }
+        }),
       setChatSearch: (chatSearch) => set({ chatSearch }),
       focusComposer: () => set((s) => ({ composerFocusTick: s.composerFocusTick + 1 })),
       focusSearch: () => set((s) => ({ searchFocusTick: s.searchFocusTick + 1 })),
@@ -198,6 +215,9 @@ export const useUi = create<UiState>()(
         selectedThreadId: s.selectedThreadId,
         aiPanelOpen: s.aiPanelOpen,
         composer: s.composer,
+        // An edit in progress survives a reload, rather than its text turning into a new message.
+        editing: s.editing,
+        editDrafts: s.editDrafts,
         connectHintDismissed: s.connectHintDismissed,
       }),
     },

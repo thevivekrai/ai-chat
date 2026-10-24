@@ -119,6 +119,8 @@ export interface Message {
   deleted?: boolean
   /** Pinned in the chat: for everyone in it, where the network has pins. */
   pinned?: boolean
+  /** When the pin ends by itself (WhatsApp pins last 24 hours, 7 days or 30 days). */
+  pinnedUntil?: string
   /** Starred by me, to find again under Starred. */
   starred?: boolean
 }
@@ -145,12 +147,19 @@ export function withAction(message: Message, action: MessageAction, now = new Da
       void reactions
       return { ...rest, body: '', deleted: true }
     }
-    case 'pin':
-      return { ...message, pinned: action.pinned || undefined }
+    case 'pin': {
+      const { pinnedUntil, ...rest } = message
+      void pinnedUntil
+      return { ...rest, pinned: action.pinned || undefined }
+    }
     case 'star':
       return { ...message, starred: action.starred || undefined }
   }
 }
+
+/** Pinned, and the pin hasn't run out. */
+export const isPinned = (message: Message, now = Date.now()) =>
+  !!message.pinned && !message.deleted && (!message.pinnedUntil || Date.parse(message.pinnedUntil) > now)
 
 /** What a chat's network lets Sytext do, so only working actions are offered. */
 export interface ChatCapabilities {

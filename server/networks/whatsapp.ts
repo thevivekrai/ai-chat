@@ -30,7 +30,7 @@ import makeWASocket, {
 import type { Readable } from 'node:stream'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
-import type { MessageHint, ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
+import { isPhotoType, type MessageHint, type ServerOlderMessages, type WhatsAppLinkResult } from '../../src/data/server/types.ts'
 import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
@@ -60,7 +60,7 @@ export interface WaSocket {
   requestPairingCode(phoneNumber: string): Promise<string>
   sendMessage(jid: string, content: WaContent, options?: { quoted?: WAMessage }): Promise<WAMessage | undefined>
   /** Changes kept in sync across the account's devices: deleting a message for me, starring it. */
-  chatModify?(
+  chatModify(
     change:
       | { deleteForMe: { deleteMedia: boolean; key: WAMessageKey; timestamp: number } }
       | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } }
@@ -348,6 +348,8 @@ const REPLACED_GRACE_MS = 10 * 60_000
  * ignore later requests, so they're refused here rather than shown as done when they aren't.
  */
 const EDIT_WINDOW_MS = 15 * 60_000
+/** Pins made here last 30 days, the longest WhatsApp offers. */
+const PIN_LASTS_S = 2_592_000 as const
 const UNSEND_WINDOW_MS = 2 * 24 * 3600_000
 
 /**
@@ -788,7 +790,10 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     const pin = content?.pinInChatMessage
     if (pin?.key?.id) {
       const pinned = pin.type === proto.PinInChat.Type.PIN_FOR_ALL
-      await updateAndPublish(s, `wa:${chatJid}:${pin.key.id}`, { pinned })
+      // WhatsApp pins run out (after 24 hours, 7 days or 30 days), with no message when they do.
+      const lasts = toNumber(msg.message?.messageContextInfo?.messageAddOnDurationInSecs ?? 0)
+      const pinnedUntil = pinned && lasts > 0 ? new Date(Date.parse(sentAtOf(msg)) + lasts * 1000).toISOString() : undefined
+      await updateAndPublish(s, `wa:${chatJid}:${pin.key.id}`, { pinned, ...(pinnedUntil ? { pinnedUntil } : {}) })
       return
     }
 
@@ -949,7 +954,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
   /** Deleted for me: gone from the server and, as they're told, from every device. */
   async function removeForMe(userId: ObjectId, threadId: string, messageId: string) {
-    await store.deleteMessage(userId, messageId)
+    await store.deleteMessage(userId, threadId, messageId)
     hub.publish(keyOf(userId), { type: 'message.deleted', threadId, messageId })
   }
 
@@ -1194,7 +1199,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       const socket = connected(userId)
       const { replyTo, options } = await quoteFor(userId, threadId, replyToId, quotedHint)
       const withCaption = caption ? { caption } : {}
-      const content: WaContent = /^image\/(jpeg|png)$/.test(upload.mime)
+      const content: WaContent = isPhotoType(upload.mime)
         ? { image: upload.data, mimetype: upload.mime, ...withCaption }
         : upload.mime === 'video/mp4'
           ? { video: upload.data, mimetype: upload.mime, ...withCaption }
@@ -1234,6 +1239,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       if (target?.deleted && action.type !== 'delete') throw new HttpError(409, 'That message was deleted.')
       const mine = !!key.fromMe
       const sentAt = Date.parse(target?.sentAt ?? hint?.sentAt ?? '') || Date.now()
+      if (!target && hint) await store.keepFlagged(userId, threadId, hint, action, { key })
       try {
         switch (action.type) {
           case 'edit':
@@ -1251,7 +1257,8 @@ export function createWhatsApp(deps: WhatsAppDeps) {
               return { message: await changeMessage(userId, messageId, { deleted: true }) }
             }
             // On the phone and other linked devices too, where WhatsApp syncs it.
-            await socket.chatModify?.({ deleteForMe: { deleteMedia: true, key, timestamp: sentAt } }, jid).catch(report)
+            // WhatsApp's message timestamps are in seconds.
+            await socket.chatModify({ deleteForMe: { deleteMedia: true, key, timestamp: Math.floor(sentAt / 1000) } }, jid).catch(report)
             await removeForMe(userId, threadId, messageId)
             return { message: null, removed: true }
           case 'pin':
@@ -1259,12 +1266,17 @@ export function createWhatsApp(deps: WhatsAppDeps) {
             await socket.sendMessage(jid, {
               pin: key,
               type: action.pinned ? proto.PinInChat.Type.PIN_FOR_ALL : proto.PinInChat.Type.UNPIN_FOR_ALL,
-              time: 2592000,
+              time: PIN_LASTS_S,
             })
-            return { message: await changeMessage(userId, messageId, { pinned: action.pinned }) }
+            return {
+              message: await changeMessage(userId, messageId, {
+                pinned: action.pinned,
+                ...(action.pinned ? { pinnedUntil: new Date(Date.now() + PIN_LASTS_S * 1000).toISOString() } : {}),
+              }),
+            }
           case 'star':
             // Starred on the phone too; kept in Sytext even if that sync doesn't go through.
-            await socket.chatModify?.({ star: { messages: [{ id: key.id, fromMe: mine }], star: action.starred } }, jid).catch(report)
+            await socket.chatModify({ star: { messages: [{ id: key.id, fromMe: mine }], star: action.starred } }, jid).catch(report)
             return { message: await changeMessage(userId, messageId, { starred: action.starred }) }
         }
       } catch (error) {
@@ -1278,12 +1290,12 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     async archive(userId: ObjectId, threadId: string, archived: boolean): Promise<Thread> {
       const socket = connected(userId)
       const jid = threadId.slice('wa:'.length)
-      // WhatsApp wants the chat's latest message along with it.
-      const latest = await store.latestRef(userId, threadId)
+      // WhatsApp wants the chat's latest message along with it (one it knows the key of).
+      const latest = await store.latestRef(userId, threadId, 'key')
       const key = (latest?.ref as { key?: WAMessageKey } | undefined)?.key
       const lastMessages = key && latest ? [{ key, messageTimestamp: Math.floor(latest.sentAt.getTime() / 1000) }] : []
       try {
-        await socket.chatModify?.({ archive: archived, lastMessages }, jid)
+        await socket.chatModify({ archive: archived, lastMessages }, jid)
       } catch (error) {
         report(error)
         throw new HttpError(502, "WhatsApp didn't accept that. Try again in a moment.")
@@ -1357,17 +1369,26 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     },
 
     /** Marks a chat read in Sytext and, with `receipt`, on WhatsApp: the blue ticks. */
-    async markRead(userId: ObjectId, threadId: string, { receipt = true }: { receipt?: boolean } = {}) {
-      await store.setUnread(userId, threadId, 0)
+    async markRead(userId: ObjectId, threadId: string, { receipt = true, strict = false }: { receipt?: boolean; strict?: boolean } = {}) {
+      await store.markReadHere(userId, threadId, { receipt })
       const s = sessions.get(keyOf(userId))
-      if (!s?.socket || !s.opened) return
+      if (!s?.socket || !s.opened) {
+        if (strict) throw new HttpError(409, "WhatsApp isn't connected right now, so it can't be told. Try again in a minute.")
+        return
+      }
       // Opening a chat is when its typing notices start to matter.
       void s.socket.presenceSubscribe(threadId.slice('wa:'.length)).catch(() => undefined)
       if (!receipt) return
       const keys = (await store.recentIncoming(userId, threadId))
         .map((m) => (m.ref as { key?: WAMessageKey } | undefined)?.key)
         .filter((k): k is WAMessageKey => !!k?.id)
-      if (keys.length) await s.socket.readMessages(keys).catch(report)
+      if (!keys.length) return
+      try {
+        await s.socket.readMessages(keys)
+      } catch (error) {
+        report(error)
+        if (strict) throw new HttpError(502, "WhatsApp didn't accept that. Try again in a moment.")
+      }
     },
 
     /**

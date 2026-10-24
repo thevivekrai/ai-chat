@@ -283,11 +283,12 @@ const CANNED: Record<string, CannedThread> = {
   },
 
   arjun: {
-    anchor: 'arjun-3',
+    anchor: 'arjun-4',
     priority: 'normal',
     expectsReply: false,
     reason: 'You replied last — waiting on Arjun about the villa payment.',
-    summary: 'You shared the Goa photos and asked whether your ₹2,300 villa payment reached Arjun — no reply yet.',
+    summary:
+      'Arjun booked your Bengaluru flight (IndiGo 6E 5341, 7:40 AM from T1). You shared the Goa photos and asked whether your ₹2,300 villa payment reached him — no reply yet.',
     drafts: {
       short: ['Bhai, villa payment mila kya? 🙏', 'Hey, did the ₹2,300 come through?'],
       friendly: [

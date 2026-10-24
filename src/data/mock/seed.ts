@@ -263,6 +263,11 @@ function buildThreads(now: number): SeedThread[] {
         msg('c-arjun', ago(3, 4), 'Bro Goa pics ka drive link bhej dena when you get time'),
         msg(me, ago(3, 3), 'Haan bhejta hoon'),
         msg(
+          'c-arjun',
+          ago(2, 20),
+          `Btw booked our Bengaluru flight for ${wd(5)} ✈️ IndiGo 6E 5341, departs 7:40 AM from T1. PNR K7XQ2M — web check-in opens 48 hours before`,
+        ),
+        msg(
           me,
           ago(1, 1),
           'Uploaded all the Goa pics to the shared album 📸 Also, did my ₹2,300 for the villa come through?',

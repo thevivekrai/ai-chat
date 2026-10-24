@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ME_ID, withAction, type Message } from './types'
+import { isPinned, ME_ID, withAction, type Message } from './types'
 
 const message: Message = {
   id: 'm1',
@@ -27,6 +27,16 @@ describe('message actions', () => {
     const starred = withAction(message, { type: 'star', starred: true })
     expect(starred.starred).toBe(true)
     expect(withAction(starred, { type: 'star', starred: false }).starred).toBeUndefined()
+  })
+
+  it("knows when a pin has run out, and a new pin or unpin forgets the old end", () => {
+    const now = Date.parse('2026-10-21T12:00:00.000Z')
+    expect(isPinned({ ...message, pinned: true }, now)).toBe(true)
+    expect(isPinned({ ...message, pinned: true, pinnedUntil: '2026-10-22T00:00:00.000Z' }, now)).toBe(true)
+    expect(isPinned({ ...message, pinned: true, pinnedUntil: '2026-10-21T00:00:00.000Z' }, now)).toBe(false)
+    expect(isPinned({ ...message, pinned: true, deleted: true }, now)).toBe(false)
+    const lapsed = { ...message, pinned: true, pinnedUntil: '2026-10-21T00:00:00.000Z' }
+    expect(withAction(lapsed, { type: 'pin', pinned: true }).pinnedUntil).toBeUndefined()
   })
 
   it('leaves nothing of a message deleted for everyone', () => {

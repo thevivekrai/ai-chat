@@ -135,6 +135,8 @@ export async function serveFile(res: Response, file: FileBody, { download = fals
       console.error('[files]', error instanceof Error ? error.message : error)
       if (!started && !res.headersSent) {
         res.removeHeader('Content-Disposition')
+        // A failure isn't the file: it mustn't be kept in place of it.
+        res.setHeader('Cache-Control', 'no-store')
         res.status(502).type('application/json').json({ error: "The file couldn't be fetched. Try again in a moment." })
       } else res.destroy(error)
       resolve()

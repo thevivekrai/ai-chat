@@ -12,7 +12,15 @@ import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Th
 import { ME_ID, withAction } from '../types'
 import { openDeviceStore, wipeDeviceStore, type DeviceStore } from './deviceStore'
 import { isSignedOut, serverApi } from './serverApi'
-import { MESSAGES_KEPT_PER_CHAT, type LinkedNetwork, type MessageHint, type PublicAccount, type ServerEvent, type ServerInbox } from './types'
+import {
+  MESSAGES_KEPT_PER_CHAT,
+  type LinkedNetwork,
+  type MessageHint,
+  type PublicAccount,
+  type PublicUser,
+  type ServerEvent,
+  type ServerInbox,
+} from './types'
 
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
 
@@ -29,6 +37,9 @@ const LINKED_CAPABILITIES: ChatCapabilities = {
   star: true,
 }
 
+/** How much of a quoted message goes along with a photo or file (in a header, which has a size limit). */
+const QUOTE_IN_HEADER = 300
+
 /** How many messages of each chat are read from the device on start; older ones as the user scrolls back. */
 const IN_MEMORY_PER_CHAT = 50
 /** One "Load earlier" from the device. */
@@ -44,6 +55,15 @@ const hintOf = (m: Message, withBody = false): MessageHint => ({
   senderId: m.senderId,
   sentAt: m.sentAt,
   ...(withBody ? { body: m.body || m.attachments?.[0]?.name || '' } : {}),
+})
+
+/** All the server needs to keep its own copy of a message it no longer has (to pin or star it). */
+const copyOf = (m: Message): MessageHint => ({
+  id: m.id,
+  senderId: m.senderId,
+  sentAt: m.sentAt,
+  body: m.body,
+  ...(m.attachments?.length ? { attachments: m.attachments.filter((a) => !a.url || a.url.startsWith('/api/files/')) } : {}),
 })
 
 /**
@@ -77,7 +97,10 @@ export class ServerConnector implements Connector {
    */
   private readonly inFlight = new Map<string, number>()
   private readonly held = new Map<string, MessageChange[]>()
+  /** Each chat's latest photo or file upload, which the next one waits for. */
+  private readonly uploads = new Map<string, Promise<unknown>>()
   private readonly onSignedOut: () => void
+  private readonly onUserUpdated: (user: PublicUser) => void
   private readonly owner: string
   private readonly openStore: (owner: string) => Promise<DeviceStore>
   /** This device's copy, once opened and read. */
@@ -87,15 +110,19 @@ export class ServerConnector implements Connector {
   constructor({
     owner,
     onSignedOut,
+    onUserUpdated = () => {},
     openStore = openDeviceStore,
   }: {
     /** The signed-in user's id: a copy left on this device by someone else is never shown. */
     owner: string
     onSignedOut(): void
+    /** The account changed, here or on another device (its name, Incognito mode…). */
+    onUserUpdated?(user: PublicUser): void
     openStore?: (owner: string) => Promise<DeviceStore>
   }) {
     this.owner = owner
     this.onSignedOut = onSignedOut
+    this.onUserUpdated = onUserUpdated
     this.openStore = openStore
   }
 
@@ -157,8 +184,12 @@ export class ServerConnector implements Connector {
     try {
       const quoted = options?.replyToId ? this.messages.get(options.replyToId) : undefined
       const hint = quoted && hintOf(quoted, true)
-      const { message } = options?.file
-        ? await serverApi.sendFile(threadId, options.file, body, options.replyToId, hint)
+      const file = options?.file
+      const { message } = file
+        ? // With a file, the quote travels in a header: its start is plenty to show it.
+          await this.oneAtATime(threadId, () =>
+            serverApi.sendFile(threadId, file, body, options.replyToId, hint && { ...hint, body: hint.body?.slice(0, QUOTE_IN_HEADER) }),
+          )
         : await serverApi.send(threadId, body, options?.replyToId, hint)
       this.keepMessages([message])
       return message
@@ -176,15 +207,37 @@ export class ServerConnector implements Connector {
     }
   }
 
+  /**
+   * Photos and files go to a chat one at a time, in the order they were sent: so they arrive in that
+   * order, and the server holds one upload at a time.
+   */
+  private oneAtATime<T>(threadId: string, send: () => Promise<T>): Promise<T> {
+    const turn = (this.uploads.get(threadId) ?? Promise.resolve()).catch(() => undefined).then(send)
+    this.uploads.set(threadId, turn)
+    turn
+      .finally(() => {
+        if (this.uploads.get(threadId) === turn) this.uploads.delete(threadId)
+      })
+      .catch(() => undefined)
+    return turn
+  }
+
   async actOnMessage(threadId: string, messageId: string, action: MessageAction): Promise<Message | null> {
     const mine = this.messages.get(messageId)
-    const { message, removed } = await this.signedIn(serverApi.messageAction(threadId, messageId, action, mine && hintOf(mine)))
+    // A pin or star keeps the message on the server however old, so it gets the whole message.
+    const keeps = action.type === 'pin' || action.type === 'star'
+    const { message, removed } = await this.signedIn(
+      serverApi.messageAction(threadId, messageId, action, mine && (keeps ? copyOf(mine) : hintOf(mine))),
+    )
     if (removed) {
       this.forgetMessage(messageId)
       return null
     }
-    // The server no longer keeps it: only this device's copy changes.
-    const updated = message ?? (mine && withAction(mine, action))
+    // The server no longer keeps it: only this device's copy changes. A copy it kept again lacks the
+    // quote this device knows of (a quote never changes, so it stays).
+    const updated = message
+      ? { ...(mine?.replyTo && !message.deleted ? { replyTo: mine.replyTo } : {}), ...message }
+      : mine && withAction(mine, action)
     if (!updated) throw new Error('That message is gone.')
     this.keepMessages([updated])
     return updated
@@ -390,6 +443,11 @@ export class ServerConnector implements Connector {
     for (const [id, m] of this.messages) if (gone(m.threadId)) this.messages.delete(id)
     if (goneThreads.length || goneContacts.length) store.remove({ threadIds: goneThreads, contactIds: goneContacts })
 
+    // Deleted for me while this device was away (on the phone, or another device).
+    const deleted = inbox.deleted ?? []
+    for (const id of deleted) this.messages.delete(id)
+    if (deleted.length) store.remove({ messageIds: deleted })
+
     const gaps = this.findGaps(inbox)
     for (const t of inbox.threads) this.threads.set(t.id, t)
     for (const c of inbox.contacts) this.contacts.set(c.id, c)
@@ -481,6 +539,9 @@ export class ServerConnector implements Connector {
         return
       case 'reloaded':
         void this.reload()
+        return
+      case 'user.updated':
+        if (event.user.id === this.owner) this.onUserUpdated(event.user)
     }
   }
 

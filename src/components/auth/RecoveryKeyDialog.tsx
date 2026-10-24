@@ -11,14 +11,26 @@ import { useSession } from '@/store/session'
  */
 export function RecoveryKeyDialog() {
   const key = useSession((s) => s.recoveryKey)
+  // A fresh dialog for each key: nothing ticked for one carries over to the next.
+  return <KeyDialog key={key ?? ''} recoveryKey={key} />
+}
+
+function KeyDialog({ recoveryKey: key }: { recoveryKey: string | null }) {
   const email = useSession((s) => s.user?.email)
   const [saved, setSaved] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null)
 
-  const done = () => {
-    setSaved(false)
-    setCopied(false)
-    useSession.getState().recoveryKeySaved()
+  const done = () => useSession.getState().recoveryKeySaved()
+
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error('No clipboard here')
+      await navigator.clipboard.writeText(key!)
+      setCopied('yes')
+      setSaved(true)
+    } catch {
+      setCopied('failed')
+    }
   }
 
   const download = () => {
@@ -36,9 +48,12 @@ export function RecoveryKeyDialog() {
     ].join('\n')
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
     const link = Object.assign(document.createElement('a'), { href: url, download: `${APP_NAME.toLowerCase()}-recovery-key.txt` })
+    // In the page while it's clicked, and the file released only later: some browsers otherwise drop
+    // the download without a word. Whether it was saved is for the user to say.
+    document.body.append(link)
     link.click()
-    URL.revokeObjectURL(url)
-    setSaved(true)
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   return (
@@ -66,22 +81,19 @@ export function RecoveryKeyDialog() {
           </output>
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={() => {
-                void navigator.clipboard?.writeText(key).then(() => {
-                  setCopied(true)
-                  setSaved(true)
-                })
-              }}
-            >
-              {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
-              {copied ? 'Copied' : 'Copy'}
+            <Button size="sm" onClick={() => void copy()}>
+              {copied === 'yes' ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+              {copied === 'yes' ? 'Copied' : 'Copy'}
             </Button>
             <Button size="sm" onClick={download}>
               <Download className="size-3.5" aria-hidden /> Download
             </Button>
           </div>
+          {copied === 'failed' && (
+            <p role="alert" className="text-xs text-amber-800 dark:text-amber-300">
+              Couldn't copy it here: select the key above and copy it yourself, or download it.
+            </p>
+          )}
 
           <label className="flex items-start gap-2.5 text-[13px] leading-relaxed">
             <input
@@ -97,7 +109,7 @@ export function RecoveryKeyDialog() {
             Done
           </Button>
           <p className="text-center text-[11px] leading-relaxed text-faint">
-            Lost it later? Make a new one in Settings → Profile while you're signed in.
+            Lost it later? Make a new one in Settings → Profile while you're signed in (it asks for your password).
           </p>
         </div>
       )}

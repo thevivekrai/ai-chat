@@ -1,3 +1,4 @@
+import { isPhotoType } from '@/data/server/types'
 import type { Attachment } from '@/data/types'
 
 /** "2.4 MB", "830 KB": how big a file is. */
@@ -7,7 +8,7 @@ export function fileSize(bytes: number): string {
 }
 
 /** Photos the networks send as photos (anything else goes as a file). */
-export const isPhoto = (file: Pick<File, 'type'>) => /^image\/(jpeg|png|webp)$/.test(file.type)
+export const isPhoto = (file: Pick<File, 'type'>) => isPhotoType(file.type)
 
 /** How a file being sent shows in the chat until the network has it: a local preview. */
 export function previewOf(file: File): Attachment {

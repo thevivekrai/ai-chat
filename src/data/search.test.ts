@@ -32,6 +32,13 @@ describe('searchMessages', () => {
     for (const id of threads) expect(hits.filter((h) => h.threadId === id).length).toBeLessThanOrEqual(3)
   })
 
+  it("answers the command bar's suggested questions from the demo chats", () => {
+    expect(search('When is my flight?')[0]).toMatchObject({ threadId: 'arjun' })
+    expect(search('Have I ordered anything?').length).toBeGreaterThan(0)
+    // Booking words count as the flight too.
+    expect(search('boarding pass').map((h) => h.threadId)).toContain('arjun')
+  })
+
   it('returns nothing for stop words only', () => {
     expect(search('what is it')).toEqual([])
   })

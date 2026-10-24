@@ -104,7 +104,9 @@ export const useSession = create<SessionState>()((set, get) => ({
     useInbox.getState().clear()
     // Signing back in starts at the inbox, not wherever the last person left off.
     useUi.getState().closeDialog()
-    set({ status: 'signed-out', user: null, notice: notice ?? null, recoveryKey: null })
+    // A recovery key being shown stays until it's saved: the server already has it in place of the
+    // old one, so losing it here would leave a working key nobody saw.
+    set({ status: 'signed-out', user: null, notice: notice ?? null })
     await api.connections.setServerSession(null)
   },
 

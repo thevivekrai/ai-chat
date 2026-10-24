@@ -62,6 +62,18 @@ describe('Needs reply (without AI)', () => {
     expect(needsReplyIds({ ...input, messages })).not.toContain('priya')
   })
 
+  it('counts a voice message or photo with no text as something to answer, but not a sticker', () => {
+    const input = viewInput()
+    const after = (body: string, attachments: Message['attachments']): Record<string, Message[]> => {
+      const reply: Message = { id: 'mine', threadId: 'priya', senderId: ME_ID, body: 'On it!', sentAt: new Date(NOW - 2 * HOUR).toISOString() }
+      const theirs: Message = { id: 'theirs', threadId: 'priya', senderId: 'c-priya', body, attachments, sentAt: new Date(NOW - HOUR).toISOString() }
+      return { ...input.messages, priya: [...input.messages.priya, reply, theirs] }
+    }
+    expect(needsReplyIds({ ...input, messages: after('', [{ kind: 'audio', name: 'Voice message', voice: true, duration: 9 }]) })).toContain('priya')
+    expect(needsReplyIds({ ...input, messages: after('', [{ kind: 'image', name: 'Photo' }]) })).toContain('priya')
+    expect(needsReplyIds({ ...input, messages: after('', [{ kind: 'sticker', name: '👍 Sticker' }]) })).not.toContain('priya')
+  })
+
   it('respects done until something new arrives', () => {
     const input = viewInput()
     const doneThreads: Record<string, Thread> = {
