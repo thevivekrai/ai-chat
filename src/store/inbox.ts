@@ -52,9 +52,12 @@ interface InboxState {
   actOnMessage(threadId: string, messageId: string, action: MessageAction): Promise<void>
   /** Loads the page of messages before the earliest one loaded. */
   loadOlder(threadId: string): Promise<void>
-  /** Sends a failed message again. */
+  /**
+   * Sends a failed message again. One the network kept (it said it failed) is replaced by the copy
+   * that goes: deleted for me, here and on the phone.
+   */
   retryMessage(threadId: string, messageId: string): Promise<void>
-  /** Gives up on a message that wasn't sent: it goes, with the file it held on to. */
+  /** Gives up on a message this device couldn't send: it goes, with the file it held on to. */
   discardMessage(threadId: string, messageId: string): void
   /** Clears the unread count; `receipt: false` (Incognito mode) tells nobody else. */
   markRead(threadId: string, options?: ReadOptions): void
@@ -77,6 +80,15 @@ const byId = <T extends { id: string }>(items: T[]) => Object.fromEntries(items.
 /** Photos and files of messages not sent yet, so a failed one can be sent again. */
 const unsentFiles = new Map<string, File>()
 let pendingCount = 0
+
+/** A message this device is sending, or couldn't send: no network has it. */
+export const isUnsentHere = (messageId: string) => messageId.startsWith('pending-')
+
+/**
+ * Whether a failed message can be sent again: this device still has what it held, or (one the
+ * network kept) it's only text.
+ */
+export const canRetry = (m: Message) => isUnsentHere(m.id) || (!m.attachments?.length && !!m.body.trim())
 
 /** Typing notices end by themselves after this long without a renewal, as on the networks. */
 const TYPING_LASTS_MS = 6000
@@ -262,18 +274,33 @@ export const useInbox = create<InboxState>()((set, get) => {
 
     async retryMessage(threadId, messageId) {
       const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
-      if (!failed) return
-      const file = unsentFiles.get(messageId)
-      get().discardMessage(threadId, messageId)
-      await get().sendMessage(threadId, failed.body, {
-        ...(failed.replyTo ? { replyToId: failed.replyTo.id } : {}),
-        ...(file ? { file } : {}),
-      })
+      if (!failed || !canRetry(failed)) return
+      const options = failed.replyTo ? { replyToId: failed.replyTo.id } : undefined
+      if (isUnsentHere(messageId)) {
+        const file = unsentFiles.get(messageId)
+        get().discardMessage(threadId, messageId)
+        await get().sendMessage(threadId, failed.body, { ...options, ...(file ? { file } : {}) })
+        return
+      }
+      // One the network kept: sending again in its place (once, however often it's tapped).
+      const { error, ...rest } = failed
+      void error
+      putMessage({ ...rest, status: 'sending' })
+      try {
+        putMessage(await api.sendMessage(threadId, failed.body, options))
+      } catch (error) {
+        putMessage({ ...failed, error: error instanceof Error ? error.message : 'Not sent' })
+        return
+      }
+      await get()
+        .actOnMessage(threadId, messageId, { type: 'delete', forEveryone: false })
+        // Still there on the network: shown as it is there.
+        .catch(() => putMessage(failed))
     },
 
     discardMessage(threadId, messageId) {
       const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
-      if (!failed) return
+      if (!failed || !isUnsentHere(messageId)) return
       removeMessage(threadId, messageId)
       unsentFiles.delete(messageId)
       const preview = failed.attachments?.[0]?.url

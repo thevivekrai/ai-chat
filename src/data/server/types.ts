@@ -1,4 +1,4 @@
-import type { Attachment, Contact, Message, Thread } from '../types'
+import type { Attachment, Contact, Message, MessageStatus, QuotedMessage, Reaction, Thread } from '../types'
 
 /**
  * What the Sytext server and the web app send each other. The server (../../../server) imports
@@ -115,6 +115,11 @@ export interface MessageHint {
   body?: string
   /** With a pin or star of a message the server no longer keeps: what it showed, to keep a copy. */
   attachments?: Attachment[]
+  replyTo?: QuotedMessage
+  reactions?: Reaction[]
+  editedAt?: string
+  /** Delivery state of my own message. */
+  status?: MessageStatus
 }
 
 /** Linked chats on load: every chat, and the latest messages of each (as many as the server keeps). */

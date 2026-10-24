@@ -55,6 +55,16 @@ describe('Needs reply (without AI)', () => {
     expect(needsReplyIds({ ...later, messages })).toContain('brewbay')
   })
 
+  it('brings a chat snoozed for longer than that back when the snooze ends', () => {
+    const input = viewInput()
+    const snoozedUntil = new Date(NOW + 10 * DAY).toISOString()
+    const threads = { ...input.threads, brewbay: { ...input.threads.brewbay, snoozedUntil } }
+    expect(needsReplyIds({ ...input, threads, now: NOW + 9 * DAY })).not.toContain('brewbay')
+    expect(needsReplyIds({ ...input, threads, now: NOW + 10 * DAY + HOUR })).toContain('brewbay')
+    // And a week after that, it goes like any other.
+    expect(needsReplyIds({ ...input, threads, now: NOW + 17 * DAY + HOUR })).not.toContain('brewbay')
+  })
+
   it('drops a thread as soon as I reply', () => {
     const input = viewInput()
     const reply: Message = { id: 'x', threadId: 'priya', senderId: ME_ID, body: 'On it!', sentAt: new Date(NOW).toISOString(), status: 'sending' }

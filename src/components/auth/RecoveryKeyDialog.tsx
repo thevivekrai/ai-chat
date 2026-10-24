@@ -10,13 +10,15 @@ import { useSession } from '@/store/session'
  * user says it's saved, since without it a forgotten password can't be reset.
  */
 export function RecoveryKeyDialog() {
-  const key = useSession((s) => s.recoveryKey)
+  const shown = useSession((s) => s.recoveryKey)
+  // Only ever to its owner: while they're signed in, or signed out before they saved it.
+  const forOwner = useSession((s) => !!shown && (!s.user || s.user.id === shown.userId))
+  const key = forOwner ? shown!.key : null
   // A fresh dialog for each key: nothing ticked for one carries over to the next.
-  return <KeyDialog key={key ?? ''} recoveryKey={key} />
+  return <KeyDialog key={key ?? ''} recoveryKey={key} email={shown?.email} />
 }
 
-function KeyDialog({ recoveryKey: key }: { recoveryKey: string | null }) {
-  const email = useSession((s) => s.user?.email)
+function KeyDialog({ recoveryKey: key, email }: { recoveryKey: string | null; email: string | undefined }) {
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState<'yes' | 'failed' | null>(null)
 

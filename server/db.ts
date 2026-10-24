@@ -79,8 +79,11 @@ export interface ThreadDoc {
    * counts those messages unread, so its counts are capped at what came in since.
    */
   readThrough?: Date
-  /** Messages deleted for me lately (the latest few hundred), for devices that were away then. */
-  deletedIds?: string[]
+  /**
+   * Messages deleted for me lately, and when, for devices that were away then. (Kept as bare ids
+   * at first: those have no date.)
+   */
+  deletedIds?: (string | { id: string; at: Date })[]
 }
 
 export interface ContactDoc {
@@ -125,6 +128,8 @@ export interface MessageDoc {
   /** When the pin ends by itself (WhatsApp's do); then it can go like any other message. */
   pinnedUntil?: Date
   starred?: boolean
+  /** When its sticker, photo or file (kept without a link) was last asked of the network again. */
+  fileAskedAt?: Date
 }
 
 export interface MessagePayload {

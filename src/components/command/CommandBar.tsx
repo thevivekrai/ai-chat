@@ -36,7 +36,7 @@ import { NETWORKS } from '@/lib/networks'
 import { formatAgo } from '@/lib/time'
 import { openThread, setIncognito, simulateIncoming, turnOnAi } from '@/store/actions'
 import { describeAiError } from '@/store/ai'
-import { asksAboutTasks, buildAnswerSources, taskSources } from '@/store/aiInput'
+import { asksAboutTasks, buildAnswerSources, openTasks } from '@/store/aiInput'
 import { useClock } from '@/store/clock'
 import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
@@ -123,15 +123,12 @@ function CommandBody({ close }: { close(): void }) {
       const canRead = (id: string) => canAiReadThread({ aiEnabled, aiThreadIds }, id)
       const inbox = useInbox.getState()
       // Questions about tasks get the open tasks (with their due dates) as well as what search found.
-      const tasks = asksAboutTasks(q) ? taskSources(inbox.tasks, inbox, canRead) : []
-      const sources = [
-        ...tasks,
-        ...buildAnswerSources(found, inbox, canRead).filter((s) => !tasks.some((t) => t.messageId === s.messageId)),
-      ]
+      const tasks = asksAboutTasks(q) ? openTasks(inbox.tasks, inbox.threads, canRead) : []
+      const sources = buildAnswerSources(found, inbox, canRead)
       const skipped = new Set(found.filter((h) => !canRead(h.threadId)).map((h) => h.threadId)).size
       setAnswer({ query: q, state: { status: 'loading' } })
       try {
-        const result = await answerQuestion(q, sources)
+        const result = await answerQuestion(q, sources, tasks)
         if (!cancelled) setAnswer({ query: q, state: { status: 'ready', result, skipped } })
       } catch (error) {
         if (!cancelled) setAnswer({ query: q, state: { status: 'error', message: describeAiError(error) } })

@@ -33,9 +33,12 @@ interface SessionState {
   user: PublicUser | null
   /** Shown on the sign-in screen, e.g. why the user was signed out. */
   notice: string | null
-  /** A new recovery key to show the user, this once (the server keeps only its hash). */
-  recoveryKey: string | null
-  showRecoveryKey(key: string): void
+  /**
+   * A new recovery key to show its owner, this once (the server keeps only its hash). It's theirs
+   * alone: someone else signing in on this browser never sees it.
+   */
+  recoveryKey: { key: string; userId: string; email: string } | null
+  showRecoveryKey(key: string, owner: PublicUser): void
   recoveryKeySaved(): void
   /** Works out where the user stands; call once on start. */
   init(): Promise<void>
@@ -57,8 +60,8 @@ export const useSession = create<SessionState>()((set, get) => ({
   notice: null,
   recoveryKey: null,
 
-  showRecoveryKey(key) {
-    set({ recoveryKey: key })
+  showRecoveryKey(key, owner) {
+    set({ recoveryKey: { key, userId: owner.id, email: owner.email } })
   },
 
   recoveryKeySaved() {
@@ -90,7 +93,9 @@ export const useSession = create<SessionState>()((set, get) => ({
 
   async signedIn(user) {
     storage.remove(GUEST_KEY)
-    set({ status: 'signed-in', user, notice: null })
+    // Someone else's unsaved key (they were signed out before saving it) isn't shown to this user.
+    const key = get().recoveryKey
+    set({ status: 'signed-in', user, notice: null, ...(key && key.userId !== user.id ? { recoveryKey: null } : {}) })
     await api.connections.setServerSession(user)
   },
 

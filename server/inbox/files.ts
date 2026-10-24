@@ -28,7 +28,15 @@ export interface FileBody {
   data: Buffer | Readable | AsyncIterable<Buffer>
   name: string
   mime?: string
+  /** Its exact size, where the network knows it (Telegram's documents). */
   size?: number
+  /**
+   * Its size as the network reported it when it was sent (WhatsApp's `fileLength`): given for saved
+   * downloads, where a progress bar matters, but not for what's shown in the page.
+   */
+  reportedSize?: number
+  /** Told when it turns out not to be the size it was said to be, so it's sent without one next time. */
+  sizeWrong?(): void
 }
 
 export { MAX_FILE_BYTES } from '../../src/data/server/types.ts'
@@ -119,10 +127,10 @@ export async function serveFile(res: Response, file: FileBody, { download = fals
     return
   }
   const stream = file.data instanceof Readable ? file.data : Readable.from(file.data)
-  // Its size, where the network knows it exactly (Telegram's documents), so the browser shows how
-  // far a download has got. One that turns out longer or shorter fails, rather than saving a
-  // broken file.
-  const declared = file.size && file.size > 0 ? file.size : undefined
+  // Its size, so the browser shows how far a download has got: where the network knows it exactly,
+  // or, for a saved download, as it was reported. One that turns out longer or shorter fails,
+  // rather than saving a broken file.
+  const declared = [file.size, download ? file.reportedSize : undefined].find((n): n is number => !!n && n > 0)
   if (declared) res.setHeader('Content-Length', declared)
   await new Promise<void>((resolve) => {
     let started = false
@@ -131,6 +139,8 @@ export async function serveFile(res: Response, file: FileBody, { download = fals
       started = true
       sent += chunk.length
       if (declared && sent > declared) {
+        console.error('[files]', `longer than the ${declared} bytes it was said to be`)
+        file.sizeWrong?.()
         stream.destroy()
         res.destroy()
         return resolve()
@@ -141,8 +151,11 @@ export async function serveFile(res: Response, file: FileBody, { download = fals
       }
     })
     stream.on('end', () => {
-      if (declared && sent !== declared) res.destroy()
-      else res.end()
+      if (declared && sent !== declared) {
+        console.error('[files]', `${sent} bytes, not the ${declared} it was said to be`)
+        file.sizeWrong?.()
+        res.destroy()
+      } else res.end()
       resolve()
     })
     stream.on('error', (error) => {

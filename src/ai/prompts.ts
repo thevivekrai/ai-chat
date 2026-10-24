@@ -4,7 +4,10 @@
  */
 import { NETWORKS } from '@/lib/networks'
 import type { LlmRequest } from './llm'
-import type { AiSearchSource, AiThread, Tone } from './types'
+import type { AiSearchSource, AiTask, AiThread, Tone } from './types'
+
+/** At most this many open tasks go with a question about tasks. */
+const TASKS_IN_ANSWER = 30
 
 export function formatTranscript(thread: AiThread, limit = 60): string {
   return thread.messages
@@ -91,22 +94,29 @@ export function buildTasksPrompt(thread: AiThread, now: Date, timeZone: string):
   }
 }
 
-export function buildAnswerPrompt(question: string, sources: AiSearchSource[], now: Date): LlmRequest<'answer'> {
+export function buildAnswerPrompt(question: string, sources: AiSearchSource[], now: Date, timeZone: string, tasks: AiTask[] = []): LlmRequest<'answer'> {
   const evidence = sources
-    .map((s) => {
-      const task = s.task ? ` [open task: ${s.task.title}${s.task.dueAt ? `, due ${s.task.dueAt}` : ', no due date'}]` : ''
-      return `[${s.messageId}] ${s.sentAt} · ${NETWORKS[s.network].name} · "${s.threadTitle}" · ${s.fromMe ? 'me' : s.senderName}: ${s.body}${task}`
+    .map((s) => `[${s.messageId}] ${s.sentAt} · ${NETWORKS[s.network].name} · "${s.threadTitle}" · ${s.fromMe ? 'me' : s.senderName}: ${s.body}`)
+    .join('\n')
+  const listed = tasks.slice(0, TASKS_IN_ANSWER)
+  const open = listed
+    .map((t) => {
+      const from = t.messageId ? `[${t.messageId}] from "${t.threadTitle}"` : 'added by hand'
+      return `- ${t.title} · ${t.dueAt ? `due ${t.dueAt}` : 'no due date'} · ${from}`
     })
     .join('\n')
+  const taskList = tasks.length
+    ? `\n\nOpen tasks (${tasks.length} in all${tasks.length > listed.length ? `; the ${listed.length} due soonest` : ''}):\n${open}`
+    : ''
   return {
     task: 'answer',
     system: [
-      'Answer the user\'s question using only the messages provided. If they do not contain the answer, say so.',
-      'Some messages carry an open task found in them, with its due date: use those for questions about tasks.',
+      'Answer the user\'s question using only the messages and tasks provided. If they do not contain the answer, say so.',
+      'For questions about tasks, use the open tasks and their due dates, judging "today" in the user\'s time zone.',
       'Keep the answer to two or three sentences, put key figures and dates in **bold**,',
       'and cite the ids of the messages you relied on.',
     ].join(' '),
-    user: `Current time: ${now.toISOString()}\nQuestion: ${question}\n\nMessages:\n${evidence}`,
+    user: `Current time: ${now.toISOString()} (the user's time zone: ${timeZone})\nQuestion: ${question}\n\nMessages:\n${evidence}${taskList}`,
     effort: 'medium',
   }
 }

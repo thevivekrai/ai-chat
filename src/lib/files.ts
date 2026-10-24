@@ -1,8 +1,6 @@
 import { fileSize, isPhotoType } from '@/data/server/types'
 import type { Attachment } from '@/data/types'
 
-export { fileSize }
-
 /** Photos the networks send as photos (anything else goes as a file). */
 export const isPhoto = (file: Pick<File, 'type'>) => isPhotoType(file.type)
 

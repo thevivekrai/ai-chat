@@ -63,3 +63,25 @@ describe('waiting for the database', () => {
     expect(useSession.getState()).toMatchObject({ status: 'signed-out', serverProblem: null, features: { storage: 'database' } })
   })
 })
+
+describe('a recovery key not saved yet', () => {
+  const owner = { id: 'u-a', email: 'a@example.com', name: 'A', hasPassword: true, google: false }
+  const someoneElse = { id: 'u-b', email: 'b@example.com', name: 'B', hasPassword: true, google: false }
+
+  it('stays for its owner through a sign-out, but never reaches whoever signs in next', async () => {
+    const { api } = await import('@/data/api')
+    const connect = vi.spyOn(api.connections, 'setServerSession').mockResolvedValue()
+    useSession.setState({ status: 'signed-in', user: owner, recoveryKey: null })
+    useSession.getState().showRecoveryKey('AAAAA-BBBBB-CCCCC-DDDDD-EEEEE', owner)
+    await useSession.getState().signedOut('Signed out elsewhere')
+    expect(useSession.getState().recoveryKey).toMatchObject({ key: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE', userId: 'u-a' })
+    // The owner signs back in: still theirs to save.
+    await useSession.getState().signedIn(owner)
+    expect(useSession.getState().recoveryKey?.key).toBe('AAAAA-BBBBB-CCCCC-DDDDD-EEEEE')
+    // Someone else signs in on this browser: it's gone.
+    await useSession.getState().signedOut()
+    await useSession.getState().signedIn(someoneElse)
+    expect(useSession.getState().recoveryKey).toBeNull()
+    connect.mockRestore()
+  })
+})

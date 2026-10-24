@@ -11,7 +11,7 @@ import { MAX_CAPTION } from '@/data/server/types'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
-import { useInbox } from './inbox'
+import { isUnsentHere, useInbox } from './inbox'
 import { incognitoOn } from './privacy'
 import { useSession } from './session'
 import { usesClaude, useSettings, type ClaudeSettings } from './settings'
@@ -76,6 +76,15 @@ export async function messageAction(threadId: string, messageId: string, action:
     toast({ title: "Couldn't do that", description: error instanceof Error ? error.message : undefined, group: 'message-action' })
     return false
   }
+}
+
+/**
+ * Removes a message that wasn't sent: this device's own copy, or (one the network kept, which it
+ * said failed) deleted for me, here and on the phone.
+ */
+export function removeUnsent(threadId: string, messageId: string) {
+  if (isUnsentHere(messageId)) useInbox.getState().discardMessage(threadId, messageId)
+  else void messageAction(threadId, messageId, { type: 'delete', forEveryone: false })
 }
 
 /** Puts one of my messages in the composer to edit; sending it saves the edit. */
@@ -414,14 +423,14 @@ export async function signIn(email: string, password: string) {
 
 export async function createAccount(name: string, email: string, password: string) {
   const { user, recoveryKey } = await serverApi.register({ name, email, password })
-  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey)
+  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey, user)
   await useSession.getState().signedIn(user)
 }
 
 /** A forgotten password, reset with the email and recovery key; the key is replaced by a new one. */
 export async function recoverAccount(email: string, recoveryKey: string, password: string) {
   const { user, recoveryKey: next } = await serverApi.recover({ email, recoveryKey, password })
-  if (next) useSession.getState().showRecoveryKey(next)
+  if (next) useSession.getState().showRecoveryKey(next, user)
   await useSession.getState().signedIn(user)
   toast({ title: 'Password reset', description: 'Other devices were signed out.', group: 'session' })
 }
@@ -430,7 +439,7 @@ export async function recoverAccount(email: string, recoveryKey: string, passwor
 export async function makeRecoveryKey(current: string) {
   const { user, recoveryKey } = await serverApi.newRecoveryKey(current)
   useSession.getState().setUser(user)
-  useSession.getState().showRecoveryKey(recoveryKey)
+  useSession.getState().showRecoveryKey(recoveryKey, user)
 }
 
 export async function signInWithGoogle(credential: string) {
@@ -503,7 +512,7 @@ export async function changePassword(password: string, current?: string) {
   useSession.getState().setUser(user)
   // A new password comes with a new recovery key: the old one could have been made by whoever knew
   // the old password.
-  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey)
+  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey, user)
   toast({ title: 'Password saved', description: 'Other devices were signed out.', group: 'session' })
 }
 

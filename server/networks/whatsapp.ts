@@ -342,8 +342,10 @@ function quoteOf(message: proto.IMessage | null | undefined): proto.IContextInfo
   return inner && typeof inner === 'object' && inner.contextInfo?.stanzaId ? inner.contextInfo : null
 }
 
-/** How many old stickers, photos and files without a link are asked for again per connection. */
+/** How many old stickers, photos and files without a link are asked for again per connection… */
 const FILES_TO_REPAIR = 40
+/** …at most this often (the connection may come and go). */
+const FILES_REPAIR_EVERY_MS = 3600_000
 
 /** How many older messages one "Load earlier" asks for. */
 const OLDER_PAGE = 30
@@ -358,6 +360,8 @@ const EDIT_WINDOW_MS = 15 * 60_000
 /** Pins made here last 30 days, the longest WhatsApp offers. */
 const PIN_LASTS_S = 2_592_000 as const
 const UNSEND_WINDOW_MS = 2 * 24 * 3600_000
+/** How long a new group's name is waited for before its chat is made without one. */
+const GROUP_TITLE_WAIT_MS = 5_000
 
 /**
  * The WhatsApp key of a message from what a device knows about it, for messages the server no
@@ -393,9 +397,11 @@ interface Session {
   historyAsked: Map<string, string>
   /** Chats archived or not on the phone, remembered for chats that have no messages here yet. */
   archived: Map<string, boolean>
+  /** What WhatsApp sent (new messages, and changes to them), handled in turn: each waits for the one before. */
+  incoming: Promise<void>
   repairTimer?: ReturnType<typeof setTimeout>
-  /** Old stickers, photos and files without a link were asked for again (once per connection). */
-  filesRepaired?: boolean
+  /** When old stickers, photos and files without a link were last asked for again. */
+  filesAskedAt?: number
 }
 
 type LinkResult = WhatsAppLinkResult
@@ -424,6 +430,8 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   const downloadMedia = deps.downloadMedia ?? downloadWithBaileys
   const filesRepairDelayMs = deps.filesRepairDelayMs ?? 20_000
   const sessions = new Map<string, Session>()
+  /** Files (by message id) that weren't the size WhatsApp said: sent without one. */
+  const wrongSizes = new Set<string>()
   /** Users whose session is being started, so two starts never overlap. */
   const starting = new Set<string>()
   /** When another copy of the server last took each user's link over. */
@@ -463,33 +471,38 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     })
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       const kind = type === 'notify' ? 'live' : 'history'
-      // A pin, edit, deletion or reaction can come in the same batch as the message it points at:
-      // those go once the batch's messages are stored. The messages themselves go chat by chat at
-      // once, in order within each chat (so a new chat is made once, and counts stay right).
-      const pointers = messages.filter(pointsAtAnother)
-      const byChat = new Map<string, WAMessage[]>()
-      for (const m of messages) if (!pointsAtAnother(m)) byChat.set(m.key.remoteJid ?? '', [...(byChat.get(m.key.remoteJid ?? '') ?? []), m])
-      void (async () => {
-        await Promise.all([...byChat.values()].map(async (chat) => {
-          for (const m of chat) await onMessage(s, m, kind).catch(report)
-        }))
-        for (const m of pointers) await onMessage(s, m, kind).catch(report)
-      })()
+      // One message at a time, batch after batch: a new chat is made once, and counts stay right.
+      // A pin, edit, deletion or reaction goes after the batch's messages, so it finds the one it
+      // points at whatever the order within the batch (or in an earlier batch).
+      const [added, pointers] = [[], []] as [WAMessage[], WAMessage[]]
+      for (const m of messages) (pointsAtAnother(m) ? pointers : added).push(m)
+      inOrder(s, async () => {
+        for (const m of [...added, ...pointers]) await onMessage(s, m, kind).catch(report)
+      })
     })
     socket.ev.on('presence.update', (update) => void onPresence(s, update).catch(report))
+    // Changes to messages and chats wait for the messages that came before them, too: a status,
+    // edit or deletion finds its message, and an unread count isn't overtaken by what it counted.
     socket.ev.on('messages.update', (updates) => {
-      for (const u of updates) void onMessageUpdate(s, u.key, u.update).catch(report)
+      inOrder(s, async () => {
+        for (const u of updates) await onMessageUpdate(s, u.key, u.update).catch(report)
+      })
     })
     socket.ev.on('messages.delete', (deleted) => {
-      if ('keys' in deleted) void onMessagesDeleted(s, deleted.keys).catch(report)
+      if ('keys' in deleted) inOrder(s, () => onMessagesDeleted(s, deleted.keys))
     })
     socket.ev.on('contacts.upsert', (contacts) => void onContacts(s, contacts).catch(report))
     socket.ev.on('contacts.update', (contacts) => void onContacts(s, contacts as WaContact[]).catch(report))
-    socket.ev.on('chats.upsert', (chats) => void onChats(s, chats).catch(report))
-    socket.ev.on('chats.update', (chats) => void onChats(s, chats as WaChat[]).catch(report))
+    socket.ev.on('chats.upsert', (chats) => inOrder(s, () => onChats(s, chats)))
+    socket.ev.on('chats.update', (chats) => inOrder(s, () => onChats(s, chats as WaChat[])))
     socket.ev.on('groups.update', (groups) => {
       for (const g of groups) if (g.id && g.subject) void setGroupTitle(s, g.id, g.subject).catch(report)
     })
+  }
+
+  /** Handled once everything WhatsApp sent before it is (see Session.incoming). */
+  function inOrder(s: Session, task: () => Promise<unknown>) {
+    s.incoming = s.incoming.then(task).then(() => undefined, report)
   }
 
   async function onConnection(s: Session, socket: WaSocket, update: BaileysEventMap['connection.update']) {
@@ -689,20 +702,23 @@ export function createWhatsApp(deps: WhatsAppDeps) {
 
   async function ensureThread(s: Session, chatJid: string, lastAt?: Date) {
     const group = isJidGroup(chatJid)
+    const existing = await store.thread(s.userId, `wa:${chatJid}`)
     let title: string | undefined
     if (group) {
       title = s.groupTitles.get(chatJid)
+      // A group already named here isn't asked about again (renames come as their own updates).
+      if (!title && existing && nameRank(existing.title) > 0) s.groupTitles.set(chatJid, (title = existing.title))
       if (!title && s.socket) {
-        title = await s.socket
-          .groupMetadata(chatJid)
-          .then((m) => m.subject)
-          .catch(() => undefined)
+        // Not for long: new messages wait on this one (the title comes with a later one otherwise).
+        title = await Promise.race([
+          s.socket.groupMetadata(chatJid).then((m) => m.subject),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), GROUP_TITLE_WAIT_MS).unref()),
+        ]).catch(() => undefined)
         if (title) s.groupTitles.set(chatJid, title)
       }
     } else {
       title = nameFor(s, chatJid)
     }
-    const existing = await store.thread(s.userId, `wa:${chatJid}`)
     if (!existing) fetchPicture(s, chatJid)
     return store.upsertThread(s.userId, {
       id: `wa:${chatJid}`,
@@ -877,23 +893,27 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   /** Gives a kept message the link to its sticker, photo or file, if it had none. */
   async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
     const stored = await store.message(s.userId, id)
-    if (!stored || stored.attachments?.some((a) => a.url)) return
-    await changeMessage(s.userId, id, { body, attachments })
+    // Deleted since, it stays deleted; edited since, it keeps the new text.
+    if (!stored || stored.deleted || stored.attachments?.some((a) => a.url)) return
+    await changeMessage(s.userId, id, { ...(stored.editedAt ? {} : { body }), attachments })
   }
 
   /**
    * Stickers, photos and files kept before they could be opened (a sticker was only named) are
    * asked of the phone again, newest first; each arrives as a message with the same key, and gains
-   * its link. Once per server run, on reconnecting: the phone answers while it's online.
+   * its link. On connecting (the phone answers while it's online), at most hourly, all at once.
    */
   async function repairFiles(s: Session, socket: WaSocket) {
-    if (s.filesRepaired || s.stopped || s.socket !== socket || !socket.requestPlaceholderResend) return
-    s.filesRepaired = true
-    for (const m of await store.missingFiles(s.userId, 'wa:', FILES_TO_REPAIR)) {
+    if (s.stopped || s.socket !== socket || !socket.requestPlaceholderResend) return
+    if (s.filesAskedAt && Date.now() - s.filesAskedAt < FILES_REPAIR_EVERY_MS) return
+    s.filesAskedAt = Date.now()
+    const missing = (await store.missingFiles(s.userId, 'wa:', FILES_TO_REPAIR)).flatMap((m) => {
       const key = (m.ref as { key?: WAMessageKey } | undefined)?.key
-      if (!key?.id || s.stopped || s.socket !== socket) continue
-      await socket.requestPlaceholderResend(key).catch(report)
-    }
+      return key?.id ? [{ id: m.id, key }] : []
+    })
+    if (s.stopped || s.socket !== socket) return
+    await Promise.all(missing.map(({ key }) => socket.requestPlaceholderResend!(key).catch(report)))
+    await store.markFilesAsked(s.userId, missing.map((m) => m.id))
   }
 
   /** The message's attachments, the photo or file among them linked so it can be opened. */
@@ -1105,6 +1125,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       aliases: new Map(),
       historyAsked: new Map(),
       archived: new Map(),
+      incoming: Promise.resolve(),
     }
     sessions.set(keyOf(userId), s)
     if (linking) await connect(s)
@@ -1238,7 +1259,10 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       if (target?.deleted && action.type !== 'delete') throw new HttpError(409, 'That message was deleted.')
       const mine = !!key.fromMe
       const sentAt = Date.parse(target?.sentAt ?? hint?.sentAt ?? '') || Date.now()
-      if (!target && hint) await store.keepFlagged(userId, threadId, hint, action, { key })
+      // A pin or star of a message the server no longer keeps keeps it again, once it's done.
+      const keepCopy = async () => {
+        if (!target && hint) await store.keepFlagged(userId, threadId, hint, action, { key })
+      }
       try {
         switch (action.type) {
           case 'edit':
@@ -1267,6 +1291,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
               type: action.pinned ? proto.PinInChat.Type.PIN_FOR_ALL : proto.PinInChat.Type.UNPIN_FOR_ALL,
               time: PIN_LASTS_S,
             })
+            await keepCopy()
             return {
               message: await changeMessage(userId, messageId, {
                 pinned: action.pinned,
@@ -1276,6 +1301,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
           case 'star':
             // Starred on the phone too; kept in Sytext even if that sync doesn't go through.
             await socket.chatModify({ star: { messages: [{ id: key.id, fromMe: mine }], star: action.starred } }, jid).catch(report)
+            await keepCopy()
             return { message: await changeMessage(userId, messageId, { starred: action.starred }) }
         }
       } catch (error) {
@@ -1315,7 +1341,14 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       }
       try {
         const data = await downloadMedia(messageForFile(ref), s.socket)
-        return { data, name: ref.name, ...(ref.mime ? { mime: ref.mime } : {}) }
+        // WhatsApp's fileLength is the file's own size, which is what decrypting it gives back; where
+        // it turns out not to be, the file goes without a size from then on.
+        const reportedSize = wrongSizes.has(ref.key.id) ? undefined : Number(ref.media.fileLength) || undefined
+        const sizeWrong = () => {
+          if (wrongSizes.size >= 1000) wrongSizes.clear()
+          wrongSizes.add(ref.key.id)
+        }
+        return { data, name: ref.name, ...(ref.mime ? { mime: ref.mime } : {}), ...(reportedSize ? { reportedSize, sizeWrong } : {}) }
       } catch (error) {
         report(error)
         throw new HttpError(410, 'This is no longer available on WhatsApp.')

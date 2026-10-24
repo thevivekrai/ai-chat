@@ -29,8 +29,8 @@ export interface ThreadView {
   snoozed: boolean
   scheduledCount: number
   /**
-   * Last message is theirs, from the past week (NEEDS_REPLY_FOR), expects a response, and isn't
-   * done, snoozed or scheduled.
+   * Last message is theirs, from the past week (NEEDS_REPLY_FOR, or a week since a snooze ended),
+   * expects a response, and isn't done, snoozed or scheduled.
    */
   needsReply: boolean
   /** I wrote last and asked something. */
@@ -81,6 +81,8 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     entry?.status === 'ready' && entry.key === settledLastMessageId(messages) ? (entry.result ?? null) : null
 
   const snoozed = !!thread.snoozedUntil && toMs(thread.snoozedUntil) > input.now
+  // A week to answer, from their last message, or from when a snooze put off until then ended.
+  const dueFrom = Math.max(lastAt, thread.snoozedUntil ? toMs(thread.snoozedUntil) : 0)
   const doneSinceLast = !!thread.doneAt && toMs(thread.doneAt) >= lastAt
   const scheduledCount = input.scheduled.filter((s) => s.threadId === thread.id).length
 
@@ -110,7 +112,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
       !thread.archived &&
       !fromMeLast &&
       pending.length > 0 &&
-      input.now - lastAt < NEEDS_REPLY_FOR &&
+      input.now - dueFrom < NEEDS_REPLY_FOR &&
       expects &&
       !snoozed &&
       !doneSinceLast &&

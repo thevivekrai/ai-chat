@@ -5,10 +5,30 @@ import type { Contact, Message, MessageAction, Reaction, Thread } from '../../sr
 import type { Sealer } from '../crypto.ts'
 import type { Collections, MessageDoc, MessagePayload, ThreadDoc } from '../db.ts'
 
+/**
+ * Reaction totals with one person's reaction changed: mine replaces the one I gave before; someone
+ * else's adds to them (theirs before, if any, isn't known, so a removal changes nothing).
+ */
+function withReaction(totals: Reaction[], mine: boolean, emoji: string | null): Reaction[] {
+  let next = mine ? totals.map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r)) : totals
+  if (emoji) {
+    next = next.some((r) => r.emoji === emoji)
+      ? next.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: r.mine || mine } : r))
+      : [...next, { emoji, count: 1, mine }]
+  }
+  return next.filter((r) => r.count > 0)
+}
+
 /** How many chats the browser gets on load (each with every message the server keeps of it). */
 const SNAPSHOT_THREADS = 200
-/** Messages deleted for me remembered per chat, for devices that were away when it happened. */
-const DELETIONS_KEPT = 200
+/**
+ * Messages deleted for me are remembered for devices that were away when it happened: the latest
+ * few per chat, for a month (a device away longer starts afresh from the server's copy anyway).
+ */
+const DELETIONS_KEPT = 50
+const DELETIONS_KEPT_MS = 30 * 86_400_000
+/** A sticker, photo or file the network didn't send again is asked for again after this long. */
+const FILE_ASKED_AGAIN_MS = 86_400_000
 
 export interface StoredMessage extends Message {
   /** Network-specific reference kept alongside (e.g. a WhatsApp message key). */
@@ -376,6 +396,10 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         body: hint.body ?? '',
         sentAt: hint.sentAt,
         ...(hint.attachments ? { attachments: hint.attachments } : {}),
+        ...(hint.replyTo ? { replyTo: hint.replyTo } : {}),
+        ...(hint.reactions ? { reactions: hint.reactions } : {}),
+        ...(hint.editedAt ? { editedAt: hint.editedAt } : {}),
+        ...(hint.status ? { status: hint.status } : {}),
         ...flags,
         ref,
       })
@@ -385,7 +409,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     async deleteMessage(userId: ObjectId, threadId: string, id: string): Promise<boolean> {
       const gone = (await col.messages.deleteOne({ userId, id })).deletedCount > 0
       // Remembered, kept or not: devices that were away remove it when they come back.
-      await col.threads.updateOne({ userId, id: threadId }, { $push: { deletedIds: { $each: [id], $slice: -DELETIONS_KEPT } } })
+      await col.threads.updateOne({ userId, id: threadId }, { $push: { deletedIds: { $each: [{ id, at: new Date() }], $slice: -DELETIONS_KEPT } } })
       return gone
     },
 
@@ -399,6 +423,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     /** One person's reaction (`senderId` "me" for the user) changed; null removes it. */
     async setReaction(userId: ObjectId, id: string, senderId: string, emoji: string | null): Promise<Message | null> {
       return updatePayload(userId, id, (payload) => {
+        // Kept again with only the totals a device showed (who gave them isn't known): this one
+        // change is made to them.
+        if (payload.reactionTotals?.length && !payload.reactionsBy) {
+          return { ...payload, reactionTotals: withReaction(payload.reactionTotals, senderId === 'me', emoji) }
+        }
         const by = { ...payload.reactionsBy }
         if (emoji) by[senderId] = emoji
         else delete by[senderId]
@@ -440,11 +469,17 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
 
     /**
      * Recent messages whose sticker, photo or file can't be opened: kept before files were fetched
-     * from the network (a sticker was only named then). Newest first, for asking the network again.
+     * from the network (a sticker was only named then). Newest first, for asking the network again;
+     * each is asked for at most once a day (see markFilesAsked; some never get one), so the next
+     * ones get their turn.
      */
     async missingFiles(userId: ObjectId, idPrefix: string, limit = 40): Promise<{ id: string; threadId: string; ref?: Record<string, unknown> }[]> {
       const docs = await col.messages
-        .find({ userId, id: { $regex: `^${escapeRegex(idPrefix)}` } })
+        .find({
+          userId,
+          id: { $regex: `^${escapeRegex(idPrefix)}` },
+          $or: [{ fileAskedAt: { $exists: false } }, { fileAskedAt: { $lt: new Date(Date.now() - FILE_ASKED_AGAIN_MS) } }],
+        })
         .sort({ sentAt: -1 })
         .limit(2000)
         .toArray()
@@ -458,6 +493,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         if (found.length >= limit) break
       }
       return found
+    },
+
+    /** Those just asked of the network again (see missingFiles). */
+    async markFilesAsked(userId: ObjectId, ids: string[]) {
+      if (ids.length) await col.messages.updateMany({ userId, id: { $in: ids } }, { $set: { fileAskedAt: new Date() } })
     },
 
     async message(userId: ObjectId, id: string): Promise<(Message & { ref?: Record<string, unknown> }) | null> {
@@ -524,7 +564,9 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         threads: threadDocs.map(toThread),
         contacts: contactDocs.map(toContact),
         messages: [...latest, ...flagged.filter((d) => !seen.has(d.id))].map(toMessage),
-        deleted: threadDocs.flatMap((t) => t.deletedIds ?? []),
+        deleted: threadDocs.flatMap((t) =>
+          (t.deletedIds ?? []).flatMap((d) => (typeof d === 'string' ? [d] : Date.now() - d.at.getTime() < DELETIONS_KEPT_MS ? [d.id] : [])),
+        ),
       }
     },
 

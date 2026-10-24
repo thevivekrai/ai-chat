@@ -5,9 +5,9 @@ import { Kbd } from '@/components/ui/Kbd'
 import { Menu } from '@/components/ui/Popover'
 import { useTickEffect } from '@/hooks/useTickEffect'
 import { api } from '@/data/api'
-import { MAX_FILE_BYTES } from '@/data/server/types'
+import { fileSize, MAX_FILE_BYTES } from '@/data/server/types'
 import { cn } from '@/lib/cn'
-import { fileSize, isPhoto } from '@/lib/files'
+import { isPhoto } from '@/lib/files'
 import { findPlaceholders, placeholderPattern, shortName } from '@/lib/format'
 import { NETWORKS } from '@/lib/networks'
 import { sendLaterOptions } from '@/lib/schedule'
@@ -81,10 +81,13 @@ export function Composer({ threadId }: { threadId: string }) {
   })
 
   // The message being edited was deleted (here, or on another device): there's nothing to save the
-  // edit to, so it's dropped, and what was being written before comes back.
-  // (Only once the chat has loaded: after a reload the edit is restored before its messages are.)
+  // edit to, so it's dropped, and what was being written before comes back. Missing from the chat
+  // only counts once it was there: after a reload, the edit is restored before its messages are,
+  // and an older message may not be loaded at all.
+  const [seenId, setSeenId] = useState<string | null>(null)
+  if (editing && seenId !== editingId) setSeenId(editingId)
   const loaded = useInbox((s) => s.status === 'ready' && !!s.messages[threadId])
-  const editGone = !!editingId && loaded && (!editing || !!editing.deleted)
+  const editGone = !!editingId && loaded && (editing ? !!editing.deleted : seenId === editingId)
   useEffect(() => {
     if (!editGone) return
     cancelEdit(threadId)
