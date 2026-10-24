@@ -9,7 +9,7 @@ import { StringSession } from 'telegram/sessions/index.js'
 import QRCode from 'qrcode'
 import type { MessageHint, ServerOlderMessages, TelegramCodeResult, TelegramVerifyResult } from '../../src/data/server/types.ts'
 import { withMyReaction } from '../../src/data/reactions.ts'
-import type { Attachment, Message, MessageAction, QuotedMessage, Reaction } from '../../src/data/types.ts'
+import type { Attachment, Message, MessageAction, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, type Avatars, type Picture } from '../inbox/avatars.ts'
@@ -69,6 +69,8 @@ export interface TgDialog {
   /** My messages up to this id have been read by the other side. */
   readOutboxMaxId: number
   date: number
+  /** In Telegram's Archive. */
+  archived?: boolean
 }
 
 export interface TgSelf {
@@ -89,6 +91,8 @@ export type TgUpdate =
   /** Deleted (for everyone, or for me on another device). Private chats' don't say which chat. */
   | { type: 'deleted'; chatId?: string; ids: number[] }
   | { type: 'pinned'; chatId: string; ids: number[]; pinned: boolean }
+  /** Moved into or out of the Archive (on another device, or by Telegram when a message comes in). */
+  | { type: 'archived'; chatId: string; archived: boolean }
 
 /** The parts of a Telegram client this manager uses; tests pass a fake. */
 export interface TgClient {
@@ -118,6 +122,8 @@ export interface TgClient {
   /** Deletes for everyone in the chat, or only for me. */
   remove(chatId: string, messageIds: number[], forEveryone: boolean): Promise<void>
   pin(chatId: string, messageId: number, pinned: boolean): Promise<void>
+  /** Moves a chat into Telegram's Archive, or back out. */
+  archive(chatId: string, archived: boolean): Promise<void>
   setTyping(chatId: string, typing: boolean): Promise<void>
   /** A small profile or chat picture, if there is one. */
   picture(chatId: string): Promise<Buffer | undefined>
@@ -184,10 +190,19 @@ export function mediaOf(m: Api.Message): TgMessage['media'] {
     if (mime !== 'image/webp' && mime !== 'video/webm' && mime !== 'application/x-tgsticker') return { body: name }
     return { attachment: { kind: 'sticker', name, mime }, file: true }
   }
-  if (m.voice) return { body: '🎤 Voice message' }
+  if (m.voice || m.audio) {
+    const about = m.document?.attributes.find((a): a is Api.DocumentAttributeAudio => a instanceof Api.DocumentAttributeAudio)
+    const voice = !!m.voice
+    const title = [about?.performer, about?.title].filter(Boolean).join(' – ')
+    const sound = file('audio', voice ? 'Voice message' : title || m.file?.name || 'Audio', voice ? 'audio/ogg' : 'audio/mpeg')!
+    const waveform = about?.waveform?.length ? telegramWaveform(about.waveform) : undefined
+    return {
+      ...sound,
+      attachment: { ...sound.attachment!, ...(voice ? { voice } : {}), ...(about?.duration ? { duration: about.duration } : {}), ...(waveform ? { waveform } : {}) },
+    }
+  }
   if (m.videoNote) return { body: '📹 Video message' }
   if (m.gif) return { body: 'GIF' }
-  if (m.audio) return { body: '🎵 Audio' }
   if (m.video) return file('file', m.file?.name || 'Video', 'video/mp4')
   if (m.document) return file('file', m.file?.name || 'Document')
   if (m.geo || m.venue) return { body: '📍 Location' }
@@ -198,6 +213,17 @@ export function mediaOf(m: Api.Message): TgMessage['media'] {
   }
   if (m.dice) return { body: m.dice.emoticon }
   return undefined
+}
+
+/** A voice message's waveform as Telegram packs it (5-bit levels), as levels 0–100. */
+export function telegramWaveform(bytes: Uint8Array): number[] {
+  const levels: number[] = []
+  for (let bit = 0; bit + 5 <= bytes.length * 8 && levels.length < 100; bit += 5) {
+    const at = bit >> 3
+    const value = ((bytes[at] | ((bytes[at + 1] ?? 0) << 8)) >> (bit & 7)) & 31
+    levels.push(Math.round((value / 31) * 100))
+  }
+  return levels
 }
 
 /** Telegram writes the red heart without the emoji variation selector; everyone else with it. */
@@ -352,7 +378,9 @@ export const createGramClient: CreateTgClient = (session, api) => {
       const dialogs = await client.getDialogs({ limit })
       return dialogs.flatMap((d) => {
         const chat = peerOf(d.entity)
-        return chat ? [{ chat, unreadCount: d.unreadCount, readOutboxMaxId: d.dialog.readOutboxMaxId, date: d.date }] : []
+        return chat
+          ? [{ chat, unreadCount: d.unreadCount, readOutboxMaxId: d.dialog.readOutboxMaxId, date: d.date, ...(d.archived ? { archived: true } : {}) }]
+          : []
       })
     },
     async history(chatId, limit, beforeId) {
@@ -391,6 +419,11 @@ export const createGramClient: CreateTgClient = (session, api) => {
       const peer = await inputPeer(chatId)
       if (pinned) await client.pinMessage(peer, messageId, { notify: false })
       else await client.unpinMessage(peer, messageId)
+    },
+    async archive(chatId, archived) {
+      // Telegram's Archive is folder 1; the main list, 0.
+      const peer = await inputPeer(chatId)
+      await client.invoke(new Api.folders.EditPeerFolders({ folderPeers: [new Api.InputFolderPeer({ peer, folderId: archived ? 1 : 0 })] }))
     },
     async setTyping(chatId, typing) {
       await client.invoke(
@@ -477,6 +510,8 @@ export const createGramClient: CreateTgClient = (session, api) => {
           } else if (update instanceof Api.UpdatePinnedChannelMessages) {
             const chatId = utils.getPeerId(new Api.PeerChannel({ channelId: update.channelId }))
             listener({ type: 'pinned', chatId, ids: update.messages, pinned: !!update.pinned })
+          } else if (update instanceof Api.UpdateFolderPeers) {
+            for (const f of update.folderPeers) listener({ type: 'archived', chatId: utils.getPeerId(f.peer), archived: f.folderId === 1 })
           }
         },
         new Raw({
@@ -493,6 +528,7 @@ export const createGramClient: CreateTgClient = (session, api) => {
             Api.UpdateDeleteChannelMessages,
             Api.UpdatePinnedMessages,
             Api.UpdatePinnedChannelMessages,
+            Api.UpdateFolderPeers,
           ],
         }),
       )
@@ -830,6 +866,11 @@ export function createTelegram(deps: TelegramDeps) {
       case 'pinned':
         for (const id of update.ids) await updateAndPublish(s, `tga:${update.chatId}:${id}`, { pinned: update.pinned })
         return
+      case 'archived': {
+        const thread = await store.setArchived(s.userId, `tga:${update.chatId}`, update.archived)
+        if (thread) publish(s, { type: 'thread.updated', thread })
+        return
+      }
       case 'read': {
         const threadId = `tga:${update.chatId}`
         if (!(await store.thread(s.userId, threadId))) return
@@ -876,6 +917,7 @@ export function createTelegram(deps: TelegramDeps) {
         title: d.chat.name || 'Telegram chat',
         ...(d.chat.kind === 'direct' ? { participantIds: [threadId] } : {}),
         unreadCount: d.unreadCount,
+        archived: !!d.archived,
         lastAt: new Date(d.date * 1000),
       })
       if (d.chat.kind === 'direct') await upsertContact(s, d.chat)
@@ -1230,6 +1272,20 @@ export function createTelegram(deps: TelegramDeps) {
       }
     },
 
+    /** Moves a chat into Telegram's Archive or back out, as Telegram's own apps do. */
+    async archive(userId: ObjectId, threadId: string, archived: boolean): Promise<Thread> {
+      const s = connected(userId)
+      try {
+        await s.client.archive(threadId.slice('tga:'.length), archived)
+      } catch (error) {
+        throw telegramError(error)
+      }
+      const thread = await store.setArchived(userId, threadId, archived)
+      if (!thread) throw new HttpError(404, 'No such chat.')
+      hub.publish(keyOf(userId), { type: 'thread.updated', thread })
+      return thread
+    },
+
     /** Sends a photo or file, with the text as its caption. Telegram keeps it; Sytext only passes it on. */
     async sendFile(userId: ObjectId, threadId: string, upload: Upload, caption: string, replyToId?: string, quotedHint?: MessageHint): Promise<Message> {
       const s = connected(userId)
@@ -1326,10 +1382,11 @@ export function createTelegram(deps: TelegramDeps) {
       return { messages, hasMore: older.length === OLDER_PAGE }
     },
 
-    async markRead(userId: ObjectId, threadId: string) {
+    /** Marks a chat read in Sytext and, with `receipt`, on Telegram too (where they see it read). */
+    async markRead(userId: ObjectId, threadId: string, { receipt = true }: { receipt?: boolean } = {}) {
       await store.setUnread(userId, threadId, 0)
       const s = sessions.get(keyOf(userId))
-      if (!s) return
+      if (!s || !receipt) return
       const [latest] = await store.recentIncoming(userId, threadId, 1)
       const maxId = Number(latest?.ref?.id)
       if (maxId) await s.client.markRead(threadId.slice('tga:'.length), maxId).catch(report)

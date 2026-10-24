@@ -9,6 +9,7 @@ import { useUi, type SettingsTab } from '@/store/ui'
 import { AccountsTab } from './AccountsTab'
 import { AiTab } from './AiTab'
 import { SectionTitle } from './parts'
+import { PrivacyTab } from './PrivacyTab'
 import { ProfileTab } from './ProfileTab'
 
 export function SettingsDialog() {
@@ -25,6 +26,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'ai', label: 'AI' },
+  { id: 'privacy', label: 'Privacy' },
   { id: 'appearance', label: 'Appearance' },
 ]
 
@@ -44,7 +46,12 @@ function SettingsBody({ close }: { close(): void }) {
             <X className="size-4" />
           </Button>
         </div>
-        <div role="tablist" aria-label="Settings sections" className="flex gap-1 rounded-2xl bg-surface-2 p-1">
+        {/* On a phone the tabs scroll sideways rather than squeezing (or widening the sheet). */}
+        <div
+          role="tablist"
+          aria-label="Settings sections"
+          className="flex gap-1 overflow-x-auto rounded-2xl bg-surface-2 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {tabs.map(({ id, label }) => (
             <button
               key={id}
@@ -53,7 +60,7 @@ function SettingsBody({ close }: { close(): void }) {
               aria-selected={tab === id}
               onClick={() => setTab(id)}
               className={cn(
-                'relative isolate flex-1 rounded-xl px-3 py-1.5 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                'relative isolate flex-1 shrink-0 rounded-xl px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 tab === id ? 'text-fg' : 'text-muted hover:text-fg',
               )}
             >
@@ -78,6 +85,8 @@ function SettingsBody({ close }: { close(): void }) {
           <AccountsTab close={close} />
         ) : tab === 'ai' ? (
           <AiTab />
+        ) : tab === 'privacy' ? (
+          <PrivacyTab />
         ) : (
           <AppearanceTab />
         )}

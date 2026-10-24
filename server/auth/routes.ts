@@ -17,6 +17,7 @@ export const toPublicUser = (u: UserDoc): PublicUser => ({
   hasPassword: !!u.passwordHash,
   google: !!u.googleSub,
   ...(u.recoveryKeyHash && u.recoveryKeyCreatedAt ? { recoveryKeyCreatedAt: u.recoveryKeyCreatedAt.toISOString() } : {}),
+  ...(u.incognito ? { incognito: true } : {}),
 })
 
 /** A new recovery key, and what to store for it. */
@@ -188,11 +189,18 @@ export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDe
     res.json({ user: toPublicUser(user) })
   })
 
+  /** Changes the name, or turns Incognito mode on or off. */
   router.patch('/me', signedIn, async (req, res) => {
-    const name = field(req.body, 'name', { max: 80 })
+    const set: Partial<UserDoc> = {}
+    if (req.body?.name !== undefined) set.name = field(req.body, 'name', { max: 80 })
+    if (req.body?.incognito !== undefined) {
+      if (typeof req.body.incognito !== 'boolean') throw new HttpError(400, 'Say whether to turn Incognito mode on.')
+      set.incognito = req.body.incognito
+    }
+    if (!Object.keys(set).length) throw new HttpError(400, 'Nothing to change.')
     const user = await col.users.findOneAndUpdate(
       { _id: userIdOf(res) },
-      { $set: { name, updatedAt: new Date() } },
+      { $set: { ...set, updatedAt: new Date() } },
       { returnDocument: 'after' },
     )
     if (!user) throw new HttpError(401, 'Sign in to continue.')

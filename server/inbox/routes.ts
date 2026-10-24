@@ -1,4 +1,5 @@
 import express, { Router, type Request, type Response } from 'express'
+import type { ObjectId } from 'mongodb'
 import type { MessageHint } from '../../src/data/server/types.ts'
 import type { MessageAction } from '../../src/data/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
@@ -137,16 +138,31 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
     res.json(await network.act(userId, threadId, messageId, action, hintOf(req.body?.message, messageId)))
   })
 
+  /** Archives or unarchives a chat, on WhatsApp or Telegram too. */
+  router.post('/threads/:id/archive', signedIn, async (req, res) => {
+    const { userId, threadId, network } = await chatOf(req, res)
+    if (typeof req.body?.archived !== 'boolean') throw new HttpError(400, 'Say whether to archive it.')
+    res.json({ thread: await network.archive(userId, threadId, req.body.archived) })
+  })
+
+  /** Incognito mode: nothing tells people that the user read their messages, or is typing. */
+  const incognito = async (userId: ObjectId) => !!(await col.users.findOne({ _id: userId }, { projection: { incognito: 1 } }))?.incognito
+
   router.post('/threads/:id/typing', signedIn, async (req, res) => {
     const { userId, threadId, network } = await chatOf(req, res)
-    await network.setTyping(userId, threadId, req.body?.typing === true)
+    if (!(await incognito(userId))) await network.setTyping(userId, threadId, req.body?.typing === true)
     res.json({ ok: true })
   })
 
+  /**
+   * Marks a chat read. A read receipt goes to the network too, unless Incognito mode is on or the
+   * browser says not to; `receipt: true` sends one anyway (the user asked to).
+   */
   router.post('/threads/:id/read', signedIn, async (req, res) => {
     const { userId, threadId, network } = await chatOf(req, res)
-    await network.markRead(userId, threadId)
-    res.json({ ok: true })
+    const receipt = req.body?.receipt === true || (req.body?.receipt !== false && !(await incognito(userId)))
+    await network.markRead(userId, threadId, { receipt })
+    res.json({ ok: true, receipt })
   })
 
   /** A photo or file in a chat, fetched from WhatsApp or Telegram as it's opened (see files.ts). */

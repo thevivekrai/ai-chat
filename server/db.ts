@@ -27,6 +27,8 @@ export interface UserDoc {
   /** SHA-256 of the recovery key, which resets the password with the email address (see recoveryKeys.ts). */
   recoveryKeyHash?: string
   recoveryKeyCreatedAt?: Date
+  /** Incognito: reading and typing aren't shown to anyone on WhatsApp or Telegram. */
+  incognito?: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -70,6 +72,8 @@ export interface ThreadDoc {
   updatedAt: Date
   /** The group's picture, served by /api/avatars. */
   avatarUrl?: string
+  /** Archived on WhatsApp or Telegram (here or on the phone). */
+  archived?: boolean
 }
 
 export interface ContactDoc {

@@ -109,7 +109,12 @@ export function createUnifiedApi(): InboxApi {
   function withLocalState(thread: Thread): Thread {
     threadCache.set(thread.id, thread)
     const state = local.threadState[thread.id]
-    return { ...thread, doneAt: state?.doneAt ?? null, snoozedUntil: state?.snoozedUntil ?? null }
+    return {
+      ...thread,
+      doneAt: state?.doneAt ?? null,
+      snoozedUntil: state?.snoozedUntil ?? null,
+      ...(local.archived.includes(thread.id) ? { archived: true } : {}),
+    }
   }
 
   function onConnectorEvent(event: ConnectorEvent) {
@@ -309,6 +314,7 @@ export function createUnifiedApi(): InboxApi {
     local = {
       ...local,
       threadState: Object.fromEntries(Object.entries(local.threadState).filter(([id]) => keep(id))),
+      archived: local.archived.filter(keep),
       scheduled: local.scheduled.filter((s) => keep(s.threadId)),
       tasks: tasks ? local.tasks.filter((t) => !t.source || keep(t.source.threadId)) : local.tasks,
     }
@@ -505,10 +511,12 @@ export function createUnifiedApi(): InboxApi {
       return connector.loadOlder ? connector.loadOlder(threadId, beforeId) : { messages: [], hasMore: false }
     },
 
-    async markRead(threadId) {
+    async markRead(threadId, options) {
       if (sourceOf(threadId) === 'demo') return demoApi.markRead(threadId)
-      // A read marker that doesn't reach the network is caught up on the next read; never fail here.
-      const thread = (await connectorFor(threadId).markRead(threadId).catch(() => null)) ?? threadCache.get(threadId)
+      // A read marker that doesn't reach the network is caught up on the next read; never fail here,
+      // unless a read receipt was asked for.
+      const reading = connectorFor(threadId).markRead(threadId, options)
+      const thread = (await (options?.receipt ? reading : reading.catch(() => null))) ?? threadCache.get(threadId)
       if (!thread) throw new Error(`Unknown thread ${threadId}`)
       return withLocalState({ ...thread, unreadCount: 0 })
     },
@@ -517,6 +525,19 @@ export function createUnifiedApi(): InboxApi {
       if (sourceOf(threadId) === 'demo') return demoApi.updateThreadState(threadId, patch)
       const current = local.threadState[threadId] ?? { doneAt: null, snoozedUntil: null }
       local = { ...local, threadState: { ...local.threadState, [threadId]: { ...current, ...patch } } }
+      persistLocal()
+      const thread = threadCache.get(threadId)
+      if (!thread) throw new Error(`Unknown thread ${threadId}`)
+      return withLocalState(thread)
+    },
+
+    async archiveThread(threadId, archived) {
+      if (sourceOf(threadId) === 'demo') return demoApi.archiveThread(threadId, archived)
+      const connector = connectorFor(threadId)
+      if (connector.archiveThread) return withLocalState(await connector.archiveThread(threadId, archived))
+      // Networks that can't archive: kept on this device, like done and snoozed.
+      const others = local.archived.filter((id) => id !== threadId)
+      local = { ...local, archived: archived ? [...others, threadId] : others }
       persistLocal()
       const thread = threadCache.get(threadId)
       if (!thread) throw new Error(`Unknown thread ${threadId}`)

@@ -34,6 +34,8 @@ export interface PublicUser {
   google: boolean
   /** When the current recovery key was made, if there is one. */
   recoveryKeyCreatedAt?: string
+  /** Incognito mode: no read receipts and no "typing…" go out, from any device. */
+  incognito?: boolean
 }
 
 export interface AuthResult {

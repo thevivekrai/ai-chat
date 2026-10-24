@@ -65,6 +65,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     doneAt: null,
     snoozedUntil: null,
     ...(doc.avatarUrl ? { avatarUrl: doc.avatarUrl } : {}),
+    ...(doc.archived ? { archived: true } : {}),
   })
 
   const toMessage = (doc: MessageDoc): Message => {
@@ -134,16 +135,19 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     /** Creates or updates a chat. Fields left out keep their stored values. */
     async upsertThread(
       userId: ObjectId,
-      thread: Pick<Thread, 'id' | 'network' | 'kind'> & Partial<Pick<Thread, 'title' | 'participantIds' | 'unreadCount'>> & { lastAt?: Date },
+      thread: Pick<Thread, 'id' | 'network' | 'kind'> &
+        Partial<Pick<Thread, 'title' | 'participantIds' | 'unreadCount' | 'archived'>> & { lastAt?: Date },
     ): Promise<Thread> {
       const set: Partial<ThreadDoc> = { network: thread.network, kind: thread.kind, updatedAt: new Date() }
       if (thread.title !== undefined) set.title = sealer.seal(thread.title)
       if (thread.participantIds) set.participantIds = thread.participantIds
       if (thread.unreadCount !== undefined) set.unreadCount = thread.unreadCount
+      if (thread.archived === true) set.archived = true
       const doc = await col.threads.findOneAndUpdate(
         { userId, id: thread.id },
         {
           $set: set,
+          ...(thread.archived === false ? { $unset: { archived: '' } } : {}),
           ...(thread.lastAt ? { $max: { lastAt: thread.lastAt } } : {}),
           $setOnInsert: {
             ...(thread.title === undefined ? { title: sealer.seal('Chat') } : {}),
@@ -163,6 +167,16 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
 
     async setUnread(userId: ObjectId, threadId: string, unreadCount: number) {
       await col.threads.updateOne({ userId, id: threadId }, { $set: { unreadCount } })
+    },
+
+    /** Archives or unarchives a chat; returns it, or null if there's no such chat. */
+    async setArchived(userId: ObjectId, threadId: string, archived: boolean): Promise<Thread | null> {
+      const doc = await col.threads.findOneAndUpdate(
+        { userId, id: threadId },
+        archived ? { $set: { archived: true } } : { $unset: { archived: '' } },
+        { returnDocument: 'after' },
+      )
+      return doc && toThread(doc)
     },
 
     async incrementUnread(userId: ObjectId, threadId: string) {
@@ -379,7 +393,9 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       for (const doc of docs) {
         const m = toMessage(doc)
         const namedSticker = !m.attachments?.length && /^(\S+ )?Sticker$/u.test(m.body)
-        if (namedSticker || m.attachments?.some((a) => !a.url)) found.push({ id: doc.id, threadId: doc.threadId, ...(doc.ref ? { ref: doc.ref } : {}) })
+        // Voice messages and audio were only named, too, before they could be played.
+        const namedAudio = !m.attachments?.length && (m.body === '🎤 Voice message' || m.body === '🎵 Audio')
+        if (namedSticker || namedAudio || m.attachments?.some((a) => !a.url)) found.push({ id: doc.id, threadId: doc.threadId, ...(doc.ref ? { ref: doc.ref } : {}) })
         if (found.length >= limit) break
       }
       return found
@@ -410,6 +426,12 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         .sort({ sentAt: -1 })
         .limit(limit)
         .toArray()
+    },
+
+    /** The chat's latest message, as the network knows it (its `ref`), and when it was sent. */
+    async latestRef(userId: ObjectId, threadId: string): Promise<{ ref?: Record<string, unknown>; sentAt: Date } | null> {
+      const doc = await col.messages.find({ userId, threadId }, { projection: { ref: 1, sentAt: 1 } }).sort({ sentAt: -1 }).limit(1).next()
+      return doc && { ...(doc.ref ? { ref: doc.ref } : {}), sentAt: doc.sentAt }
     },
 
     async latestMessageAt(userId: ObjectId, threadId: string): Promise<Date | null> {

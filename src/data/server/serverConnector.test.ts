@@ -104,6 +104,10 @@ beforeEach(async () => {
       return json({ message })
     }
     if (url.pathname.endsWith('/read') || url.pathname.endsWith('/typing')) return json({ ok: true })
+    if (url.pathname.endsWith('/archive')) {
+      const thread = inbox.threads.find((t) => url.pathname.includes(encodeURIComponent(t.id)) || url.pathname.includes(t.id))!
+      return json({ thread: { ...thread, ...(body.archived ? { archived: true } : {}) } })
+    }
     if (url.pathname.endsWith('/reactions')) {
       if (reactionUnknown) return json({ message: null })
       const message: Message = { ...inbox.messages[0], reactions: [{ emoji: body.emoji, count: 1, mine: true }] }
@@ -179,6 +183,15 @@ describe('chats linked on the server', () => {
 
     await api.markRead(RAVI)
     expect(requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/threads/${RAVI}/read` })
+    // The account's setting decides whether a read receipt goes out.
+    expect(requests.at(-1)?.body ?? {}).not.toHaveProperty('receipt')
+    // Incognito: read here, with no read receipt.
+    await api.markRead(RAVI, { receipt: false })
+    expect(requests.at(-1)).toMatchObject({ path: `/api/threads/${RAVI}/read`, body: { receipt: false } })
+
+    // Archived on WhatsApp through the server, and kept on this device as it comes back.
+    expect(await api.archiveThread(RAVI, true)).toMatchObject({ id: RAVI, archived: true })
+    expect(requests.at(-1)).toMatchObject({ method: 'POST', path: `/api/threads/${RAVI}/archive`, body: { archived: true } })
     stop()
   })
 

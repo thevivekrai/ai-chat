@@ -65,5 +65,18 @@ export function typingLabel(names: string[], group: boolean): string {
 function attachmentPreview(attachment: Attachment | undefined): string {
   if (!attachment) return ''
   if (attachment.kind === 'sticker') return attachment.name
+  if (attachment.kind === 'audio') {
+    const length = attachment.duration ? ` (${formatDuration(attachment.duration)})` : ''
+    return attachment.voice ? `🎤 Voice message${length}` : `🎵 ${attachment.name}${length}`
+  }
   return `${attachment.kind === 'image' ? '📷' : '📎'} ${attachment.name}`
+}
+
+/** "0:07", "1:05", "1:02:09": how long audio plays, as players show it. */
+export function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  const s = String(total % 60).padStart(2, '0')
+  const m = Math.floor(total / 60) % 60
+  const h = Math.floor(total / 3600)
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
 }

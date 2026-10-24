@@ -98,6 +98,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     snoozed,
     scheduledCount,
     needsReply:
+      !thread.archived &&
       !fromMeLast &&
       pending.length > 0 &&
       input.now - lastAt < NEEDS_REPLY_FOR &&
@@ -106,6 +107,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
       !doneSinceLast &&
       scheduledCount === 0,
     waitingOnThem:
+      !thread.archived &&
       fromMeLast &&
       last.status !== 'failed' &&
       (hasQuestion(last.body) || hasRequest(last.body)) &&
@@ -146,7 +148,10 @@ export function selectViewThreads(
   view: View,
   { networks, query, messages }: { networks: NetworkId[]; query: string; messages: Record<string, Message[]> },
 ): ThreadView[] {
-  const list = filterByNetwork(views, networks).filter((v) => matchesQuery(v, query, messages[v.id]))
+  // Archived chats are only in Archived.
+  const list = filterByNetwork(views, networks).filter(
+    (v) => !!v.thread.archived === (view === 'archived') && matchesQuery(v, query, messages[v.id]),
+  )
   switch (view) {
     case 'needs-reply':
       // Most important first; within the same priority, whoever has waited longest.
@@ -171,13 +176,16 @@ export function countViews(
 ): Record<View, number> {
   const visible = filterByNetwork(views, networks)
   const visibleIds = new Set(visible.map((v) => v.id))
+  const archived = visible.filter((v) => v.thread.archived)
   return {
     'needs-reply': visible.filter((v) => v.needsReply).length,
-    all: visible.length,
+    all: visible.length - archived.length,
     waiting: visible.filter((v) => v.waitingOnThem).length,
     scheduled: scheduled.filter((s) => visibleIds.has(s.threadId)).length + visible.filter((v) => v.snoozed).length,
     tasks: tasks.filter((t) => !t.done).length,
     starred: [...visibleIds].reduce((n, id) => n + (messages[id]?.filter((m) => m.starred).length ?? 0), 0),
+    // Like WhatsApp: archived chats with something unread.
+    archived: archived.filter((v) => v.thread.unreadCount > 0).length,
   }
 }
 

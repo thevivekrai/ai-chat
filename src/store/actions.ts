@@ -11,6 +11,7 @@ import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
 import { useInbox } from './inbox'
+import { incognitoOn } from './privacy'
 import { useSession } from './session'
 import { usesClaude, useSettings, type ClaudeSettings } from './settings'
 import { toast, useToasts } from './toasts'
@@ -135,7 +136,8 @@ const typingIdle = new Map<string, ReturnType<typeof setTimeout>>()
 
 /** Called on each keystroke in the composer: tells the chat I'm typing, where it can be told. */
 export function noteTyping(threadId: string) {
-  if (!api.capabilities(threadId).typing) return
+  // Incognito: nobody sees "typing…".
+  if (!api.capabilities(threadId).typing || incognitoOn()) return
   if (Date.now() - (typingSentAt.get(threadId) ?? 0) > TYPING_RENEW_MS) {
     typingSentAt.set(threadId, Date.now())
     void api.setTyping(threadId, true)
@@ -176,6 +178,50 @@ async function leaveQueue(threadId: string, patch: { doneAt?: string | null; sno
       label: 'Undo',
       run: () => {
         void useInbox.getState().setThreadState(threadId, previous)
+        if (leavesList) openThread(threadId)
+      },
+    },
+  })
+}
+
+/**
+ * Archives a chat (out of every list, into Archived) or brings it back. Like done, the next chat
+ * opens when it leaves the list being worked through.
+ */
+export async function archiveThread(threadId: string, archived: boolean) {
+  const ui = useUi.getState()
+  const listed = archived ? ui.view === 'needs-reply' || ui.view === 'all' || ui.view === 'waiting' : ui.view === 'archived'
+  const leavesList = listed && ui.selectedThreadId === threadId
+  const ids = ui.navThreadIds
+  const index = ids.indexOf(threadId)
+  const nextId = ids[index + 1] ?? ids[index - 1] ?? null
+
+  const update = useInbox.getState().archiveThread(threadId, archived)
+  if (leavesList) {
+    if (isAtLeast('md')) ui.selectThread(nextId)
+    else ui.closeMobileThread()
+  }
+  try {
+    await update
+  } catch (error) {
+    toast({
+      title: archived ? "Couldn't archive the chat" : "Couldn't unarchive the chat",
+      description: error instanceof Error ? error.message : undefined,
+      group: 'queue',
+    })
+    return
+  }
+  toast({
+    title: archived ? 'Archived' : 'Unarchived',
+    description: threadTitle(threadId),
+    group: 'queue',
+    action: {
+      label: 'Undo',
+      run: () => {
+        void useInbox
+          .getState()
+          .archiveThread(threadId, !archived)
+          .catch((error: unknown) => toast({ title: "Couldn't undo that", description: error instanceof Error ? error.message : undefined }))
         if (leavesList) openThread(threadId)
       },
     },
@@ -392,6 +438,30 @@ export function watchSession() {
     forgetThreadsHere(isServerThread)
     void useSession.getState().signedOut('You were signed out. Sign in again to see your chats.')
   })
+}
+
+/** Turns Incognito mode on or off: for the account when signed in, else on this device. */
+export async function setIncognito(on: boolean) {
+  if (useSession.getState().user) {
+    const { user } = await serverApi.setIncognito(on)
+    useSession.getState().setUser(user)
+  } else {
+    useSettings.getState().setIncognito(on)
+  }
+  toast({
+    title: on ? 'Incognito mode is on' : 'Incognito mode is off',
+    description: on ? "People won't see when you've read their messages, or that you're typing." : 'Read receipts and typing show again.',
+  })
+}
+
+/** In Incognito mode: lets this chat know its messages were read, once. */
+export async function sendReadReceipt(threadId: string) {
+  try {
+    await api.markRead(threadId, { receipt: true })
+    toast({ title: 'Marked as read for them', description: threadTitle(threadId), group: 'read-receipt' })
+  } catch (error) {
+    toast({ title: "Couldn't send the read receipt", description: error instanceof Error ? error.message : undefined, group: 'read-receipt' })
+  }
 }
 
 export async function renameUser(name: string) {

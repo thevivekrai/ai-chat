@@ -861,6 +861,32 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // Not an image a browser shows by itself: fetched by the app, which plays it.
       expect((await browser.raw('GET', lottie.attachments[0].url)).headers.get('content-type')).toBe('application/octet-stream')
 
+      // Voice messages play in the chat, with their length and waveform; audio files too.
+      const ogg = Buffer.from('OggS voice message')
+      const waveform = Buffer.from([0, 20, 60, 100, 140, 40])
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: 'VOX1' },
+            message: mediaMessage('audioMessage', ogg, { mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: 7, waveform }),
+            messageTimestamp: ts + 4,
+          },
+          { key: { remoteJid: RAVI, fromMe: false, id: 'MP3' }, message: mediaMessage('audioMessage', Buffer.from('ID3 song'), { mimetype: 'audio/mpeg', seconds: 185 }), messageTimestamp: ts + 5 },
+        ],
+      } as never)
+      const voice = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:VOX1`)).message
+      expect(voice.body).toBe('')
+      expect(voice.attachments).toEqual([
+        { kind: 'audio', name: 'Voice message', mime: 'audio/ogg', size: '1 KB', voice: true, duration: 7, waveform: [0, 20, 60, 100, 100, 40], url: expect.stringMatching(FILE_LINK) },
+      ])
+      const voiceFile = await browser.raw('GET', voice.attachments[0].url)
+      expect(voiceFile.body).toEqual(ogg)
+      expect(voiceFile.headers.get('content-type')).toBe('audio/ogg')
+      expect(voiceFile.headers.get('content-disposition')).toMatch(/^inline; filename="Voice message.ogg"/)
+      const song = (await events.next((e) => e.type === 'message.created' && e.message.id === `wa:${RAVI}:MP3`)).message
+      expect(song.attachments).toEqual([{ kind: 'audio', name: 'Audio', mime: 'audio/mpeg', size: '1 KB', duration: 185, url: expect.stringMatching(FILE_LINK) }])
+
       // Gone from WhatsApp's servers (and the phone): said so, rather than failing.
       waMedia.delete(pageMedia.documentMessage!.url)
       const gone = await browser.raw('GET', doc.attachments[0].url)
@@ -943,6 +969,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         })
       await keep('OLDSTK', 'Sticker')
       await keep('OLDIMG', 'From the shop', { attachments: [{ kind: 'image', name: 'Photo' }] })
+      await keep('OLDVOX', '🎤 Voice message')
       await keep('OLDTXT', 'Just text')
 
       await server.restart()
@@ -955,6 +982,11 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         message: mediaMessage('imageMessage', PIXEL, { mimetype: 'image/png', caption: 'From the shop' }),
         messageTimestamp: ts - 60,
       } as never)
+      reopened.phone.set('OLDVOX', {
+        key: { remoteJid: RAVI, fromMe: false, id: 'OLDVOX' },
+        message: mediaMessage('audioMessage', Buffer.from('OggS old voice'), { mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: 4 }),
+        messageTimestamp: ts - 60,
+      } as never)
       reopened.user = { id: '919876543210:4@s.whatsapp.net' }
       reopened.emit('connection.update', { connection: 'open' })
 
@@ -963,6 +995,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
           const found = byId((await browser.get('/api/inbox')).json.messages)
           expect(found[`${thread}:OLDSTK`].attachments?.[0]?.url).toMatch(FILE_LINK)
           expect(found[`${thread}:OLDIMG`].attachments?.[0]?.url).toMatch(FILE_LINK)
+          expect(found[`${thread}:OLDVOX`].attachments?.[0]?.url).toMatch(FILE_LINK)
           return found
         },
         { timeout: 8000 },
@@ -970,7 +1003,8 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(messages[`${thread}:OLDSTK`]).toMatchObject({ body: '', attachments: [{ kind: 'sticker', name: 'Sticker', mime: 'image/webp' }] })
       expect(messages[`${thread}:OLDIMG`]).toMatchObject({ body: 'From the shop', attachments: [{ kind: 'image', mime: 'image/png' }] })
       // Only what had no link was asked for; text messages weren't.
-      expect(reopened.resendRequests.map((k) => k.id).sort()).toEqual(['OLDIMG', 'OLDSTK'])
+      expect(messages[`${thread}:OLDVOX`]).toMatchObject({ body: '', attachments: [{ kind: 'audio', voice: true, duration: 4 }] })
+      expect(reopened.resendRequests.map((k) => k.id).sort()).toEqual(['OLDIMG', 'OLDSTK', 'OLDVOX'])
       expect((await browser.raw('GET', messages[`${thread}:OLDSTK`].attachments[0].url)).body).toEqual(webp)
       // Not counted as new.
       expect((await browser.get('/api/inbox')).json.threads.find((t: { id: string }) => t.id === thread).unreadCount).toBe(0)
@@ -1169,6 +1203,134 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       await events.next((e) => e.type === 'message.deleted' && e.messageId === 'tga:5001:12')
       expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeUndefined()
       events.close()
+      await browser.delete('/api/link/telegram')
+    })
+  })
+
+  describe('archiving chats', () => {
+    const archive = (browser: Browser, threadId: string, archived: unknown) =>
+      browser.post(`/api/threads/${enc(threadId)}/archive`, { archived })
+
+    it('WhatsApp: archived here or on the phone, either way', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const KIRAN = '919800011122@s.whatsapp.net'
+      const NEHA = '919800033344@s.whatsapp.net'
+      const browser = await newUser('archive-wa@example.com')
+      const socket = await linkWhatsApp(browser)
+      const events = await browser.events()
+      const ts = Math.floor(Date.now() / 1000)
+      socket.emit('messaging-history.set', {
+        chats: [{ id: RAVI }, { id: KIRAN, archived: true }],
+        contacts: [],
+        messages: [
+          { key: { remoteJid: RAVI, fromMe: false, id: 'R1' }, message: { conversation: 'Parcel arrived' }, messageTimestamp: ts - 60 },
+          { key: { remoteJid: KIRAN, fromMe: false, id: 'K1' }, message: { conversation: 'Old offer' }, messageTimestamp: ts - 600 },
+        ],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      const threads = async () => byId((await browser.get('/api/inbox')).json.threads)
+      await waitFor(async () => expect((await threads())[`wa:${KIRAN}`]).toMatchObject({ archived: true }))
+      expect((await threads())[`wa:${RAVI}`].archived).toBeUndefined()
+
+      // Archived in Sytext: on WhatsApp too, with the chat's latest message as it asks.
+      const archived = await archive(browser, `wa:${RAVI}`, true)
+      expect(archived.json.thread).toMatchObject({ id: `wa:${RAVI}`, archived: true })
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'archive', id: 'R1', archived: true })
+      expect((await archive(browser, `wa:${RAVI}`, 'yes')).status).toBe(400)
+
+      // Unarchived on the phone.
+      socket.emit('chats.update', [{ id: RAVI, archived: false }] as never)
+      await events.next((e) => e.type === 'thread.updated' && e.thread.id === `wa:${RAVI}` && !e.thread.archived)
+
+      // Archived on the phone before any of its messages got here: it arrives archived.
+      socket.emit('chats.update', [{ id: NEHA, archived: true }] as never)
+      await new Promise((r) => setTimeout(r, 50))
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: NEHA, fromMe: false, id: 'N1' }, message: { conversation: 'Hi!' }, messageTimestamp: ts }],
+      } as never)
+      await waitFor(async () => expect((await threads())[`wa:${NEHA}`]).toMatchObject({ archived: true }))
+      events.close()
+      await browser.delete('/api/link/whatsapp')
+    })
+
+    it("Telegram: follows its Archive, and moves chats in and out of it", async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      tg.state.archived.add('-100777')
+      const browser = await newUser('archive-tg@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00012' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      const threads = async () => byId((await browser.get('/api/inbox')).json.threads)
+      await waitFor(async () => expect((await threads())['tga:-100777']).toMatchObject({ archived: true }))
+      expect((await threads())['tga:5001'].archived).toBeUndefined()
+      const events = await browser.events()
+
+      expect((await archive(browser, 'tga:5001', true)).json.thread).toMatchObject({ archived: true })
+      expect(tg.state.changes.at(-1)).toEqual({ chatId: '5001', change: 'archive', id: 0 })
+      // Telegram takes it out of the Archive (a new message, or another device).
+      tg.state.archived.delete('5001')
+      tg.emit({ type: 'archived', chatId: '5001', archived: false })
+      await events.next((e) => e.type === 'thread.updated' && e.thread.id === 'tga:5001' && !e.thread.archived)
+      expect((await archive(browser, 'tga:-100777', false)).json.thread.archived).toBeUndefined()
+      expect(tg.state.archived.size).toBe(0)
+      events.close()
+      await browser.delete('/api/link/telegram')
+    })
+  })
+
+  describe('incognito mode', () => {
+    it('reads and types without WhatsApp or Telegram showing it, until a read receipt is asked for', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('incognito@example.com')
+      const socket = await linkWhatsApp(browser)
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00013' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      const ts = Math.floor(Date.now() / 1000)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'SEEN1' }, message: { conversation: 'Did you get my email?' }, messageTimestamp: ts }],
+      } as never)
+      const threads = async () => byId((await browser.get('/api/inbox')).json.threads)
+      await waitFor(async () => {
+        expect((await threads())[`wa:${RAVI}`]?.unreadCount).toBe(1)
+        expect((await threads())['tga:5001']).toBeDefined()
+      })
+
+      // Turned on for the account: every device, and the server, go by it.
+      expect((await browser.request('PATCH', '/api/me', { incognito: 'yes' })).status).toBe(400)
+      expect((await browser.request('PATCH', '/api/me', {})).status).toBe(400)
+      const on = await browser.request('PATCH', '/api/me', { incognito: true })
+      expect(on.json.user).toMatchObject({ incognito: true, name: expect.any(String) })
+      expect((await browser.get('/api/auth/me')).json.user.incognito).toBe(true)
+
+      const readBefore = { wa: socket.read.length, tg: tg.state.read.length }
+      const presenceBefore = socket.presence.length
+      const typingBefore = tg.state.typing.length
+      expect((await browser.post(`/api/threads/${enc(`wa:${RAVI}`)}/read`)).json).toEqual({ ok: true, receipt: false })
+      expect((await browser.post(`/api/threads/${enc('tga:5001')}/read`)).json.receipt).toBe(false)
+      await browser.post(`/api/threads/${enc(`wa:${RAVI}`)}/typing`, { typing: true })
+      await browser.post(`/api/threads/${enc('tga:5001')}/typing`, { typing: true })
+      // Read in Sytext, on every device; nothing went to WhatsApp or Telegram.
+      expect((await threads())[`wa:${RAVI}`].unreadCount).toBe(0)
+      expect(socket.read.length).toBe(readBefore.wa)
+      expect(tg.state.read.length).toBe(readBefore.tg)
+      // (Subscribing to their typing notices tells them nothing.)
+      expect(socket.presence.slice(presenceBefore).filter((p) => p.type !== 'subscribe')).toEqual([])
+      expect(tg.state.typing.length).toBe(typingBefore)
+
+      // "Mark as read for them": a read receipt, asked for.
+      expect((await browser.post(`/api/threads/${enc(`wa:${RAVI}`)}/read`, { receipt: true })).json.receipt).toBe(true)
+      expect(socket.read.at(-1)).toMatchObject({ id: 'SEEN1' })
+
+      // Off again: reading sends read receipts as before.
+      expect((await browser.request('PATCH', '/api/me', { incognito: false })).json.user.incognito).toBeUndefined()
+      expect((await browser.post(`/api/threads/${enc('tga:5001')}/read`)).json.receipt).toBe(true)
+      expect(tg.state.read.length).toBe(readBefore.tg + 1)
+      await browser.delete('/api/link/whatsapp')
       await browser.delete('/api/link/telegram')
     })
   })

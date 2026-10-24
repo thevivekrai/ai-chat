@@ -18,7 +18,10 @@ interface SettingsState {
   /** The threads the user selected for AI. Nothing is selected until the user opts in. */
   aiThreadIds: string[]
   claude: ClaudeSettings
+  /** Incognito mode on this device, without an account (an account keeps its own, for every device). */
+  incognito: boolean
   setTheme(theme: ThemePreference): void
+  setIncognito(on: boolean): void
   setAiEnabled(enabled: boolean): void
   setThreadsAllowed(threadIds: string[], allowed: boolean): void
   setClaude(patch: Partial<ClaudeSettings>): void
@@ -38,7 +41,9 @@ export const useSettings = create<SettingsState>()(
       aiEnabled: false,
       aiThreadIds: [],
       claude: DEFAULT_CLAUDE,
+      incognito: false,
       setTheme: (theme) => set({ theme }),
+      setIncognito: (incognito) => set({ incognito }),
       setAiEnabled: (aiEnabled) => set({ aiEnabled }),
       setThreadsAllowed: (threadIds, allowed) =>
         set((s) => {
