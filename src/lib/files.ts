@@ -1,11 +1,7 @@
-import { isPhotoType } from '@/data/server/types'
+import { fileSize, isPhotoType } from '@/data/server/types'
 import type { Attachment } from '@/data/types'
 
-/** "2.4 MB", "830 KB": how big a file is. */
-export function fileSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`
-}
+export { fileSize }
 
 /** Photos the networks send as photos (anything else goes as a file). */
 export const isPhoto = (file: Pick<File, 'type'>) => isPhotoType(file.type)

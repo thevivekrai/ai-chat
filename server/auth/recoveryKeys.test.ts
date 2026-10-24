@@ -29,4 +29,11 @@ describe('recovery keys', () => {
     expect(matchesRecoveryKey('UUUUU-UUUUU-UUUUU-UUUUU-UUUUU', hash)).toBe(false)
     expect(matchesRecoveryKey(newRecoveryKey(), undefined)).toBe(false)
   })
+
+  it('are only ever stored as real keys', () => {
+    expect(() => hashRecoveryKey('not a key')).toThrow()
+    // However it's typed, a key is stored the same way.
+    const key = newRecoveryKey()
+    expect(hashRecoveryKey(key.toLowerCase().replace(/-/g, ' '))).toBe(hashRecoveryKey(key))
+  })
 })

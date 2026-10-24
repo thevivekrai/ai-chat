@@ -1092,6 +1092,8 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // Streamed back from Telegram in pieces, as a download.
       const again = await browser.raw('GET', sent.json.message.attachments[0].url)
       expect(again.body).toEqual(notes)
+      // Telegram says exactly how big it is: the browser can show the download's progress.
+      expect(again.headers.get('content-length')).toBe(String(notes.length))
       expect(again.headers.get('content-disposition')).toMatch(/^attachment; filename="notes.txt"/)
     })
   })

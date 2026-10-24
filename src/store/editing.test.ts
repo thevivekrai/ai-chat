@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '@/data/types'
 import { ME_ID } from '@/data/types'
 import type { SendOptions } from '@/data/api'
@@ -48,5 +48,28 @@ describe('sending text with files', () => {
     sent.length = 0
     await sendReply('t1', 'Short caption', [photo, photo])
     expect(sent.map((s) => s.body)).toEqual(['Short caption', ''])
+  })
+})
+
+describe("a message that wasn't sent", () => {
+  it('can be removed, letting go of the photo it held', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const failed: Message = {
+      id: 'pending-1',
+      threadId: 't1',
+      senderId: ME_ID,
+      body: '',
+      sentAt: '2026-10-21T10:00:00.000Z',
+      status: 'failed',
+      attachments: [{ kind: 'image', name: 'Photo', url: 'blob:http://localhost/abc' }],
+    }
+    useInbox.setState({ messages: { t1: [mine, failed] } })
+    useInbox.getState().discardMessage('t1', 'pending-1')
+    expect(useInbox.getState().messages.t1.map((m) => m.id)).toEqual(['m1'])
+    expect(revoke).toHaveBeenCalledWith('blob:http://localhost/abc')
+    // Only messages that weren't sent can be removed this way.
+    useInbox.getState().discardMessage('t1', 'm1')
+    expect(useInbox.getState().messages.t1.map((m) => m.id)).toEqual(['m1'])
+    revoke.mockRestore()
   })
 })

@@ -95,6 +95,12 @@ export const MAX_FILE_BYTES = 50 * 1024 * 1024
 /** Sent as photos (anything else goes as a file): the types WhatsApp and Telegram both take as one. */
 export const isPhotoType = (mime: string) => /^image\/(jpeg|png)$/.test(mime)
 
+/** "2.4 MB", "830 KB": how big a file is, as attachments say (the server and the app alike). */
+export function fileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`
+}
+
 /** The longest caption a photo or file is sent with; longer text goes as a message of its own. */
 export const MAX_CAPTION = 1024
 

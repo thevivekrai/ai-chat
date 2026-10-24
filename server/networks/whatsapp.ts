@@ -37,6 +37,7 @@ import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, downloadImage, type Avatars, type Picture } from '../inbox/avatars.ts'
 import { sizeLabel, type FileBody, type FileLinks, type FileRef, type Upload } from '../inbox/files.ts'
+import { messageChanges } from '../inbox/changes.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
 import type { Hub } from '../realtime.ts'
 import type { Accounts } from './accounts.ts'
@@ -259,6 +260,12 @@ function messageForFile(ref: Extract<FileRef, { n: 'wa' }>): WAMessage {
 
 const mimeOf = (m: WaMediaFields | null | undefined, fallback?: string) => m?.mimetype?.split(';')[0]?.trim() || fallback
 
+/** A pin, edit, deletion or reaction: a message that changes another one rather than adding to the chat. */
+function pointsAtAnother(m: WAMessage): boolean {
+  const content = normalizeMessageContent(m.message)
+  return !!(content?.reactionMessage || content?.pinInChatMessage || content?.protocolMessage)
+}
+
 /** WhatsApp's voice message waveform: 64 levels, 0–100. Kept as they are, within those bounds. */
 function waveformOf(bytes: Uint8Array): number[] {
   return [...bytes].slice(0, 100).map((level) => Math.min(100, level))
@@ -412,6 +419,7 @@ export interface WhatsAppDeps {
 
 export function createWhatsApp(deps: WhatsAppDeps) {
   const { col, sealer, store, accounts, hub, avatars, files } = deps
+  const { changeMessage, removeForMe } = messageChanges({ store, hub })
   const createSocket = deps.createSocket ?? createBaileysSocket
   const downloadMedia = deps.downloadMedia ?? downloadWithBaileys
   const filesRepairDelayMs = deps.filesRepairDelayMs ?? 20_000
@@ -454,9 +462,18 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       repairSoon(s)
     })
     socket.ev.on('messages.upsert', ({ messages, type }) => {
-      // In order: a pin, edit or reaction can come in the same batch as the message it points at.
+      const kind = type === 'notify' ? 'live' : 'history'
+      // A pin, edit, deletion or reaction can come in the same batch as the message it points at:
+      // those go once the batch's messages are stored. The messages themselves go chat by chat at
+      // once, in order within each chat (so a new chat is made once, and counts stay right).
+      const pointers = messages.filter(pointsAtAnother)
+      const byChat = new Map<string, WAMessage[]>()
+      for (const m of messages) if (!pointsAtAnother(m)) byChat.set(m.key.remoteJid ?? '', [...(byChat.get(m.key.remoteJid ?? '') ?? []), m])
       void (async () => {
-        for (const m of messages) await onMessage(s, m, type === 'notify' ? 'live' : 'history').catch(report)
+        await Promise.all([...byChat.values()].map(async (chat) => {
+          for (const m of chat) await onMessage(s, m, kind).catch(report)
+        }))
+        for (const m of pointers) await onMessage(s, m, kind).catch(report)
       })()
     })
     socket.ev.on('presence.update', (update) => void onPresence(s, update).catch(report))
@@ -793,7 +810,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       // WhatsApp pins run out (after 24 hours, 7 days or 30 days), with no message when they do.
       const lasts = toNumber(msg.message?.messageContextInfo?.messageAddOnDurationInSecs ?? 0)
       const pinnedUntil = pinned && lasts > 0 ? new Date(Date.parse(sentAtOf(msg)) + lasts * 1000).toISOString() : undefined
-      await updateAndPublish(s, `wa:${chatJid}:${pin.key.id}`, { pinned, ...(pinnedUntil ? { pinnedUntil } : {}) })
+      await changeMessage(s.userId, `wa:${chatJid}:${pin.key.id}`, { pinned, ...(pinnedUntil ? { pinnedUntil } : {}) })
       return
     }
 
@@ -803,9 +820,9 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       const target = `wa:${chatJid}:${protocol.key.id}`
       if (protocol.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT) {
         const edited = describe(protocol.editedMessage)
-        if (edited) await updateAndPublish(s, target, { body: edited.body, editedAt: sentAtOf(msg) })
+        if (edited) await changeMessage(s.userId, target, { body: edited.body, editedAt: sentAtOf(msg) })
       } else if (protocol.type === proto.Message.ProtocolMessage.Type.REVOKE) {
-        await updateAndPublish(s, target, { deleted: true })
+        await changeMessage(s.userId, target, { deleted: true })
       }
       return
     }
@@ -861,7 +878,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
   async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
     const stored = await store.message(s.userId, id)
     if (!stored || stored.attachments?.some((a) => a.url)) return
-    await updateAndPublish(s, id, { body, attachments })
+    await changeMessage(s.userId, id, { body, attachments })
   }
 
   /**
@@ -922,25 +939,20 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     return wire
   }
 
-  async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
-    const message = await store.updateMessage(s.userId, id, patch)
-    if (message) publish(s, { type: 'message.updated', message })
-  }
-
   async function onMessageUpdate(s: Session, key: WAMessageKey, update: Partial<WAMessage>) {
     if (!isChatJid(key.remoteJid)) return
     const id = `wa:${await chatIdOf(s, key.remoteJid, key.remoteJidAlt)}:${key.id}`
     if (typeof update.status === 'number' && key.fromMe && STATUS[update.status]) {
-      await updateAndPublish(s, id, { status: STATUS[update.status] })
+      await changeMessage(s.userId, id, { status: STATUS[update.status] })
     }
     if (update.messageStubType === WAMessageStubType.REVOKE) {
-      await updateAndPublish(s, id, { deleted: true })
+      await changeMessage(s.userId, id, { deleted: true })
       return
     }
     const edited = update.message ? describe(update.message.editedMessage?.message ?? update.message) : null
-    if (edited) await updateAndPublish(s, id, { body: edited.body, ...(update.message?.editedMessage ? { editedAt: new Date().toISOString() } : {}) })
+    if (edited) await changeMessage(s.userId, id, { body: edited.body, ...(update.message?.editedMessage ? { editedAt: new Date().toISOString() } : {}) })
     // Starred or unstarred on the phone (or another linked device).
-    if (typeof update.starred === 'boolean') await updateAndPublish(s, id, { starred: update.starred })
+    if (typeof update.starred === 'boolean') await changeMessage(s.userId, id, { starred: update.starred })
   }
 
   /** Deleted for me on the phone (or another linked device): gone here too. */
@@ -950,19 +962,6 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       const threadId = `wa:${await chatIdOf(s, key.remoteJid, key.remoteJidAlt)}`
       await removeForMe(s.userId, threadId, `${threadId}:${key.id}`)
     }
-  }
-
-  /** Deleted for me: gone from the server and, as they're told, from every device. */
-  async function removeForMe(userId: ObjectId, threadId: string, messageId: string) {
-    await store.deleteMessage(userId, threadId, messageId)
-    hub.publish(keyOf(userId), { type: 'message.deleted', threadId, messageId })
-  }
-
-  /** Changes a kept message and tells the user's devices; null when the server doesn't keep it. */
-  async function changeMessage(userId: ObjectId, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
-    const message = await store.updateMessage(userId, id, patch)
-    if (message) hub.publish(keyOf(userId), { type: 'message.updated', message })
-    return message
   }
 
   async function upsertContact(s: Session, jid: string) {
