@@ -8,7 +8,7 @@ import {
   type SendOptions,
 } from '../connectors/types'
 import { withMyReaction } from '../reactions'
-import type { ChatCapabilities, Contact, Message, MessageAction, Thread } from '../types'
+import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Thread } from '../types'
 import { ME_ID, withAction } from '../types'
 import { openDeviceStore, wipeDeviceStore, type DeviceStore } from './deviceStore'
 import { isSignedOut, serverApi } from './serverApi'
@@ -190,6 +190,12 @@ export class ServerConnector implements Connector {
     return updated
   }
 
+  async archiveThread(threadId: string, archived: boolean): Promise<Thread> {
+    const { thread } = await this.signedIn(serverApi.archive(threadId, archived))
+    this.keepThreads([thread])
+    return thread
+  }
+
   /** Deleted for me: gone from this device's copy too. */
   private forgetMessage(messageId: string) {
     this.messages.delete(messageId)
@@ -225,10 +231,10 @@ export class ServerConnector implements Connector {
     return older
   }
 
-  async markRead(threadId: string): Promise<Thread | null> {
+  async markRead(threadId: string, options?: ReadOptions): Promise<Thread | null> {
     const thread = this.threads.get(threadId)
     if (thread) this.keepThreads([{ ...thread, unreadCount: 0 }])
-    await serverApi.markRead(threadId)
+    await serverApi.markRead(threadId, options?.receipt)
     return this.threads.get(threadId) ?? null
   }
 

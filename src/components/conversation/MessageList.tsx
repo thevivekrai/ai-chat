@@ -42,6 +42,7 @@ import { useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
+import { AudioPlayer } from './AudioPlayer'
 import { LottieSticker } from './LottieSticker'
 import { RichText, type Highlight } from './RichText'
 
@@ -489,6 +490,7 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
       </span>
     )
   }
+  if (a.kind === 'audio' && a.url && !sending) return <AudioPlayer attachment={a} fromMe={fromMe} />
   if (a.kind === 'image' && a.url && !broken) {
     return (
       <div className="group/photo relative -mx-1.5 -mt-0.5 mb-1.5">
@@ -516,7 +518,8 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
     )
   }
   const link = a.url && !sending ? downloadUrl(a.url) : undefined
-  const kindLabel = a.kind === 'image' ? 'Photo' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'
+  const kindLabel =
+    a.kind === 'image' ? 'Photo' : a.kind === 'audio' ? 'Audio' : a.name.includes('.') ? a.name.split('.').pop()?.toUpperCase() : 'File'
   const body = (
     <>
       <span className={cn('grid size-9 shrink-0 place-items-center rounded-lg', fromMe ? 'bg-white/20' : 'bg-accent-soft text-accent-ink')}>
@@ -546,7 +549,6 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
   )
 }
 
-/** React and reply, next to a message: on hover, on keyboard focus, or after a tap. */
 /** Pinned, starred, edited: small marks at the end of a message. */
 function MessageMarks({ message: m, fromMe, bare }: { message: Message; fromMe: boolean; bare: boolean }) {
   const edited = !!m.editedAt && !m.deleted
@@ -565,6 +567,7 @@ function MessageMarks({ message: m, fromMe, bare }: { message: Message; fromMe: 
   )
 }
 
+/** React and reply, next to a message: on hover, on keyboard focus, or after a tap. */
 function MessageActions({
   threadId,
   message,

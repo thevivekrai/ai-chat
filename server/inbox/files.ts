@@ -43,6 +43,11 @@ const INLINE_TYPES = new Set([
   'audio/mpeg',
   'audio/ogg',
   'audio/mp4',
+  'audio/aac',
+  'audio/x-m4a',
+  'audio/wav',
+  'audio/webm',
+  'audio/flac',
 ])
 
 const EXTENSIONS: Record<string, string> = {
@@ -55,6 +60,11 @@ const EXTENSIONS: Record<string, string> = {
   'audio/mpeg': 'mp3',
   'audio/ogg': 'ogg',
   'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/x-m4a': 'm4a',
+  'audio/wav': 'wav',
+  'audio/webm': 'weba',
+  'audio/flac': 'flac',
   'application/pdf': 'pdf',
 }
 

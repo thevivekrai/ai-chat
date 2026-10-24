@@ -31,7 +31,7 @@ import type { Readable } from 'node:stream'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
 import type { MessageHint, ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
-import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage } from '../../src/data/types.ts'
+import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
@@ -63,7 +63,8 @@ export interface WaSocket {
   chatModify?(
     change:
       | { deleteForMe: { deleteMedia: boolean; key: WAMessageKey; timestamp: number } }
-      | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } },
+      | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } }
+      | { archive: boolean; lastMessages: { key: WAMessageKey; messageTimestamp: number }[] },
     jid: string,
   ): Promise<void>
   readMessages(keys: WAMessageKey[]): Promise<void>
@@ -221,7 +222,7 @@ const STATUS: Record<number, MessageStatus> = { 0: 'failed', 1: 'sending', 2: 's
 
 /** A photo, video or file in a message, and what WhatsApp needs to fetch it again. */
 interface WaFile {
-  type: 'imageMessage' | 'videoMessage' | 'documentMessage' | 'stickerMessage'
+  type: 'imageMessage' | 'videoMessage' | 'documentMessage' | 'stickerMessage' | 'audioMessage'
   media: Record<string, string | number>
 }
 
@@ -258,6 +259,11 @@ function messageForFile(ref: Extract<FileRef, { n: 'wa' }>): WAMessage {
 
 const mimeOf = (m: WaMediaFields | null | undefined, fallback?: string) => m?.mimetype?.split(';')[0]?.trim() || fallback
 
+/** WhatsApp's voice message waveform: 64 levels, 0–100. Kept as they are, within those bounds. */
+function waveformOf(bytes: Uint8Array): number[] {
+  return [...bytes].slice(0, 100).map((level) => Math.min(100, level))
+}
+
 function describe(message: proto.IMessage | null | undefined): { body: string; attachments?: Attachment[]; file?: WaFile } | null {
   const content = normalizeMessageContent(message)
   if (!content) return null
@@ -286,8 +292,17 @@ function describe(message: proto.IMessage | null | undefined): { body: string; a
     }
     case 'documentWithCaptionMessage':
       return describe(content.documentWithCaptionMessage?.message)
-    case 'audioMessage':
-      return { body: content.audioMessage?.ptt ? '🎤 Voice message' : '🎵 Audio' }
+    case 'audioMessage': {
+      const m = content.audioMessage
+      const voice = !!m?.ptt
+      const sound = attachment('audio', voice ? 'Voice message' : 'Audio', m, voice ? 'audio/ogg' : 'audio/mpeg')
+      const waveform = m?.waveform?.length ? waveformOf(m.waveform) : undefined
+      return {
+        body: '',
+        attachments: [{ ...sound, ...(voice ? { voice } : {}), ...(m?.seconds ? { duration: m.seconds } : {}), ...(waveform ? { waveform } : {}) }],
+        file: fileOf('audioMessage', m),
+      }
+    }
     case 'stickerMessage': {
       const m = content.stickerMessage
       // Most are WebP images; animated "Lottie" ones are a WhatsApp file (application/was) the app plays.
@@ -367,6 +382,8 @@ interface Session {
   aliases: Map<string, string>
   /** Chats whose older history was last asked of the phone, and from which message. */
   historyAsked: Map<string, string>
+  /** Chats archived or not on the phone, remembered for chats that have no messages here yet. */
+  archived: Map<string, boolean>
   repairTimer?: ReturnType<typeof setTimeout>
   /** Old stickers, photos and files without a link were asked for again (once per connection). */
   filesRepaired?: boolean
@@ -675,6 +692,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       // Only ever a better title: a name over a number, a number over a placeholder.
       ...(title && (!existing || nameRank(title) > nameRank(existing.title)) ? { title } : {}),
       ...(group ? {} : { participantIds: [`wa:${chatJid}`] }),
+      ...(!existing && s.archived.get(chatJid) ? { archived: true } : {}),
       lastAt,
     })
   }
@@ -978,12 +996,22 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       learnChat(s, chat)
       const jid = await chatIdOf(s, chat.id, chat.pnJid)
       if (chat.name && isJidGroup(jid)) await setGroupTitle(s, jid, chat.name)
+      if (typeof chat.archived === 'boolean') await setArchived(s, jid, chat.archived)
       if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
         await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
         const thread = await store.thread(s.userId, `wa:${jid}`)
         if (thread) publish(s, { type: 'thread.updated', thread })
       }
     }
+  }
+
+  /** Archived or unarchived on the phone (or by WhatsApp itself, when a message comes in). */
+  async function setArchived(s: Session, jid: string, archived: boolean) {
+    s.archived.set(jid, archived)
+    const thread = await store.thread(s.userId, `wa:${jid}`)
+    if (!thread || !!thread.archived === archived) return
+    const updated = await store.setArchived(s.userId, thread.id, archived)
+    if (updated) publish(s, { type: 'thread.updated', thread: updated })
   }
 
   async function setGroupTitle(s: Session, jid: string, title: string) {
@@ -1040,6 +1068,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
         await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
       }
+      if (typeof chat.archived === 'boolean') await setArchived(s, jid, chat.archived)
     }
     for (const [jid] of s.names) if (!isJidGroup(jid)) await upsertContact(s, jid)
     reloadSoon(s)
@@ -1071,6 +1100,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       groupTitles: new Map(),
       aliases: new Map(),
       historyAsked: new Map(),
+      archived: new Map(),
     }
     sessions.set(keyOf(userId), s)
     if (linking) await connect(s)
@@ -1244,6 +1274,27 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       }
     },
 
+    /** Archives or unarchives a chat on WhatsApp, so the phone and other devices follow. */
+    async archive(userId: ObjectId, threadId: string, archived: boolean): Promise<Thread> {
+      const socket = connected(userId)
+      const jid = threadId.slice('wa:'.length)
+      // WhatsApp wants the chat's latest message along with it.
+      const latest = await store.latestRef(userId, threadId)
+      const key = (latest?.ref as { key?: WAMessageKey } | undefined)?.key
+      const lastMessages = key && latest ? [{ key, messageTimestamp: Math.floor(latest.sentAt.getTime() / 1000) }] : []
+      try {
+        await socket.chatModify?.({ archive: archived, lastMessages }, jid)
+      } catch (error) {
+        report(error)
+        throw new HttpError(502, "WhatsApp didn't accept that. Try again in a moment.")
+      }
+      sessions.get(keyOf(userId))?.archived.set(jid, archived)
+      const thread = await store.setArchived(userId, threadId, archived)
+      if (!thread) throw new HttpError(404, 'No such chat.')
+      hub.publish(keyOf(userId), { type: 'thread.updated', thread })
+      return thread
+    },
+
     /** A photo or file from a link, fetched from WhatsApp now. */
     async openFile(userId: ObjectId, ref: FileRef): Promise<FileBody> {
       if (ref.n !== 'wa') throw new HttpError(404, 'No such file.')
@@ -1305,12 +1356,14 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       return { messages: stored.messages, hasMore: true }
     },
 
-    async markRead(userId: ObjectId, threadId: string) {
+    /** Marks a chat read in Sytext and, with `receipt`, on WhatsApp: the blue ticks. */
+    async markRead(userId: ObjectId, threadId: string, { receipt = true }: { receipt?: boolean } = {}) {
       await store.setUnread(userId, threadId, 0)
       const s = sessions.get(keyOf(userId))
       if (!s?.socket || !s.opened) return
       // Opening a chat is when its typing notices start to matter.
       void s.socket.presenceSubscribe(threadId.slice('wa:'.length)).catch(() => undefined)
+      if (!receipt) return
       const keys = (await store.recentIncoming(userId, threadId))
         .map((m) => (m.ref as { key?: WAMessageKey } | undefined)?.key)
         .filter((k): k is WAMessageKey => !!k?.id)

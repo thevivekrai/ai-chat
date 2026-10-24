@@ -14,6 +14,7 @@ import {
   Sparkles,
   Sun,
   UserRound,
+  VenetianMask,
   type LucideIcon,
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
@@ -25,6 +26,7 @@ import { isMac } from '@/lib/media'
 import { signOut } from '@/store/actions'
 import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
+import { useIncognito } from '@/store/privacy'
 import { useSession } from '@/store/session'
 import { usesClaude, useSettings, type ThemePreference } from '@/store/settings'
 import { useUi } from '@/store/ui'
@@ -62,6 +64,7 @@ export function Header() {
       <Button variant="ghost" size="icon" className="md:hidden" aria-label="Search" onClick={() => openDialog('command')}>
         <Search className="size-5" />
       </Button>
+      <IncognitoBadge />
       <PrivacyBadge />
       <ThemeMenu />
       <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => openDialog('settings')}>
@@ -145,6 +148,23 @@ function MenuButton({ icon: Icon, onClick, children }: { icon: LucideIcon; onCli
       className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm text-fg outline-none hover:bg-surface-2 focus-visible:bg-surface-2"
     >
       <Icon className="size-4 text-muted" aria-hidden /> {children}
+    </button>
+  )
+}
+
+/** Shown while Incognito mode is on, so it's never forgotten; opens its setting. */
+function IncognitoBadge() {
+  const on = useIncognito()
+  if (!on) return null
+  return (
+    <button
+      type="button"
+      onClick={() => useUi.getState().openSettings('privacy')}
+      title="Incognito mode: no read receipts or typing"
+      className="relative inline-flex size-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-fg text-xs font-medium text-canvas shadow-glass transition-opacity hover:opacity-90 sm:w-auto sm:px-3"
+    >
+      <VenetianMask className="size-4" aria-hidden />
+      <span className="sr-only sm:not-sr-only">Incognito</span>
     </button>
   )
 }

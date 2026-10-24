@@ -1,18 +1,19 @@
-import { AlarmClock, AlarmClockOff, ArrowLeft, Check, Search, Sparkles, Undo2 } from 'lucide-react'
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowLeft, Check, CheckCheck, MoreVertical, Search, Sparkles, Undo2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
-import { Menu } from '@/components/ui/Popover'
+import { Menu, type MenuItem } from '@/components/ui/Popover'
 import { typingLabel } from '@/lib/format'
 import { useBreakpoint } from '@/lib/media'
 import { NETWORKS } from '@/lib/networks'
 import { snoozeOptions } from '@/lib/schedule'
 import { formatShortWhen, toMs } from '@/lib/time'
-import { markDone, reopenThread, snoozeThread, toggleAiPanel, unsnoozeThread } from '@/store/actions'
+import { archiveThread, markDone, reopenThread, sendReadReceipt, snoozeThread, toggleAiPanel, unsnoozeThread } from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
+import { useIncognito } from '@/store/privacy'
 import { useUi } from '@/store/ui'
 
 export function ConversationHeader({ threadId }: { threadId: string }) {
@@ -97,6 +98,7 @@ export function ConversationHeader({ threadId }: { threadId: string }) {
         >
           <Sparkles className="size-4" />
         </Button>
+        <ChatMenu threadId={threadId} archived={!!thread.archived} />
       </div>
     </header>
   )
@@ -125,6 +127,29 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
       renderTrigger={(props) => (
         <Button {...props} variant={snoozed ? 'soft' : 'ghost'} size="icon-sm" aria-label="Snooze (S)" title="Snooze (S)">
           <AlarmClock className="size-4" />
+        </Button>
+      )}
+    />
+  )
+}
+
+/** What else can be done with the chat. */
+function ChatMenu({ threadId, archived }: { threadId: string; archived: boolean }) {
+  const incognito = useIncognito()
+  const items: MenuItem[] = [
+    archived
+      ? { id: 'unarchive', label: 'Unarchive chat', icon: ArchiveRestore, onSelect: () => void archiveThread(threadId, false) }
+      : { id: 'archive', label: 'Archive chat', icon: Archive, onSelect: () => void archiveThread(threadId, true) },
+  ]
+  // Incognito mode reads without telling them; this tells them, for this chat, once.
+  if (incognito) items.push({ id: 'read-receipt', label: 'Mark as read for them', icon: CheckCheck, onSelect: () => void sendReadReceipt(threadId) })
+  return (
+    <Menu
+      items={items}
+      panelClassName="min-w-56"
+      renderTrigger={(props) => (
+        <Button {...props} variant="ghost" size="icon-sm" aria-label="More for this chat" title="More">
+          <MoreVertical className="size-4" />
         </Button>
       )}
     />

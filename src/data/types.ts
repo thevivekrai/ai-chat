@@ -51,17 +51,31 @@ export interface Thread {
   snoozedUntil: string | null
   /** The group's picture (people's come from their contact). */
   avatarUrl?: string
+  /**
+   * Out of the lists, in Archived, until unarchived. Linked WhatsApp and Telegram chats are
+   * archived on the network itself (and follow the phone); other chats, on this device.
+   */
+  archived?: boolean
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
 
 export interface Attachment {
-  /** A sticker is a small picture shown on its own, without a bubble (a WebP image or WebM video). */
-  kind: 'file' | 'image' | 'sticker'
+  /**
+   * A sticker is a small picture shown on its own, without a bubble (a WebP image or WebM video).
+   * Audio plays in the chat: a voice message, or an audio file.
+   */
+  kind: 'file' | 'image' | 'sticker' | 'audio'
   name: string
   size?: string
   /** Its type, like "image/jpeg" or "application/pdf", where the network says. */
   mime?: string
+  /** Audio recorded in the chat (a voice message), rather than a music or audio file. */
+  voice?: boolean
+  /** How long the audio plays, in seconds, where the network says. */
+  duration?: number
+  /** A voice message's loudness over time, 0–100, as the network sends it for drawing its waveform. */
+  waveform?: number[]
   /**
    * Where it can be viewed or downloaded. For linked chats it's a link on the Sytext server, which
    * fetches it from the network when it's opened.
@@ -203,6 +217,11 @@ export interface InboxSnapshot {
   messages: Message[]
   scheduled: ScheduledMessage[]
   tasks: Task[]
+}
+
+/** How a chat is marked read: `receipt: false` tells nobody (Incognito mode). */
+export interface ReadOptions {
+  receipt?: boolean
 }
 
 export interface ThreadStatePatch {

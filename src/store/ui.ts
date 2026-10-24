@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { NetworkId } from '@/data/types'
 
-export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks' | 'starred'
+export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks' | 'starred' | 'archived'
 
 /** Searching inside the open chat: what for, and which match is on screen. */
 export interface ChatSearch {
@@ -12,7 +12,7 @@ export interface ChatSearch {
   current: string | null
 }
 export type Dialog = 'command' | 'settings' | 'shortcuts'
-export type SettingsTab = 'profile' | 'accounts' | 'ai' | 'appearance'
+export type SettingsTab = 'profile' | 'accounts' | 'ai' | 'privacy' | 'appearance'
 
 interface UiState {
   view: View

@@ -1,7 +1,7 @@
 import { returnBigInt as bigInt } from 'telegram/Helpers.js'
 import { Api } from 'telegram'
 import { describe, expect, it } from 'vitest'
-import { mediaOf, peerOf, reactionsOf, refFromId } from './telegram.ts'
+import { mediaOf, peerOf, reactionsOf, refFromId, telegramWaveform } from './telegram.ts'
 
 describe('reading GramJS objects', () => {
   it('maps people, groups and channels to marked ids', () => {
@@ -48,7 +48,17 @@ describe('reading GramJS objects', () => {
       attachment: { kind: 'file', name: 'invoice.pdf', size: '20 KB', mime: 'application/pdf' },
       file: true,
     })
-    expect(mediaOf(document([new Api.DocumentAttributeAudio({ voice: true, duration: 3 })], 'audio/ogg'))).toEqual({ body: '🎤 Voice message' })
+    // Voice messages and audio play in the chat.
+    const levels = Buffer.from([0b11111_000, 0b0_00000_11, 0b000_10000])
+    expect(mediaOf(document([new Api.DocumentAttributeAudio({ voice: true, duration: 3, waveform: levels })], 'audio/ogg'))).toEqual({
+      attachment: { kind: 'audio', name: 'Voice message', size: '20 KB', mime: 'audio/ogg', voice: true, duration: 3, waveform: telegramWaveform(levels) },
+      file: true,
+    })
+    const song = [new Api.DocumentAttributeAudio({ duration: 200, title: 'Kesariya', performer: 'Arijit Singh' })]
+    expect(mediaOf(document(song, 'audio/mpeg'))).toEqual({
+      attachment: { kind: 'audio', name: 'Arijit Singh – Kesariya', size: '20 KB', mime: 'audio/mpeg', duration: 200 },
+      file: true,
+    })
     // Stickers: WebP images, WebM videos and animated .tgs ones (Lottie) are all shown.
     const sticker = [new Api.DocumentAttributeSticker({ alt: '😂', stickerset: new Api.InputStickerSetEmpty() })]
     expect(mediaOf(document(sticker, 'image/webp'))).toEqual({ attachment: { kind: 'sticker', name: '😂 Sticker', mime: 'image/webp' }, file: true })
@@ -60,6 +70,16 @@ describe('reading GramJS objects', () => {
     expect(mediaOf(document(sticker, 'application/unknown-sticker'))).toEqual({ body: '😂 Sticker' })
     expect(mediaOf(message(new Api.MessageMediaGeo({ geo: new Api.GeoPointEmpty() })))).toEqual({ body: '📍 Location' })
     expect(mediaOf(message())).toBeUndefined()
+  })
+})
+
+describe('voice message waveforms', () => {
+  it('unpacks Telegram\'s 5-bit levels', () => {
+    // 31, 0, 31, 0 packed low bit first: 11111 00000 11111 00000.
+    const packed = Buffer.from([0b00011111, 0b01111100, 0b00000000])
+    expect(telegramWaveform(packed).slice(0, 4)).toEqual([100, 0, 100, 0])
+    expect(telegramWaveform(Buffer.alloc(0))).toEqual([])
+    expect(telegramWaveform(Buffer.alloc(100, 255))).toHaveLength(100)
   })
 })
 

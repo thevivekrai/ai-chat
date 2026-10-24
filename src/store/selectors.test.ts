@@ -130,6 +130,25 @@ describe('other views', () => {
   })
 })
 
+describe('archived chats', () => {
+  it('are only in Archived, out of the queue and every other list', () => {
+    const input = viewInput()
+    const queue = selectViewThreads(buildThreadViews(input), 'needs-reply', opts).map((v) => v.id)
+    const archivedId = queue[0]
+    input.threads = { ...input.threads, [archivedId]: { ...input.threads[archivedId], archived: true, unreadCount: 2 } }
+    const views = buildThreadViews(input)
+    for (const view of ['needs-reply', 'all', 'waiting'] as const) {
+      expect(selectViewThreads(views, view, opts).map((v) => v.id)).not.toContain(archivedId)
+    }
+    expect(selectViewThreads(views, 'archived', opts).map((v) => v.id)).toEqual([archivedId])
+    const counts = countViews(views, { networks: [], tasks: [], scheduled: input.scheduled })
+    expect(counts.all).toBe(14)
+    expect(counts['needs-reply']).toBe(9)
+    // Like WhatsApp: archived chats with something unread.
+    expect(counts.archived).toBe(1)
+  })
+})
+
 describe('starred messages', () => {
   it('lists starred messages newest first, for the chosen networks, and counts them', () => {
     const input = viewInput()

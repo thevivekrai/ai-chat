@@ -16,11 +16,15 @@
  *   POST /whatsapp/file               Ravi sends a PDF
  *   POST /whatsapp/sticker {"webp"}   Ravi sends a sticker (base64 WebP)
  *   POST /whatsapp/animated-sticker   Ravi sends an animated (Lottie) sticker: a bouncing ball
+ *   POST /whatsapp/voice              Ravi sends a 3-second voice message (a tone)
+ *   POST /whatsapp/archived {"archived"} Ravi's chat is archived (or not) on the phone
+ *   POST /whatsapp/sent-to-phone      what reached WhatsApp: read receipts (message ids) and typing
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /trim                        the server trims chats to what it keeps, now
  * Telegram's login code is 12345 and the two-step password hunter2.
  */
+import { spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { resolve } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
@@ -131,6 +135,30 @@ const BOUNCING_BALL = {
       bm: 0,
     },
   ],
+}
+
+/** A tone, `seconds` long, as a voice message: Ogg Opus like WhatsApp's (with ffmpeg), else WAV. */
+function voiceNote(seconds: number): { data: Buffer; mimetype: string } {
+  const args = ['-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=330:duration=${seconds}`, '-c:a', 'libopus', '-f', 'ogg', 'pipe:1']
+  const made = spawnSync('ffmpeg', args, { maxBuffer: 4 * 1024 * 1024 })
+  if (made.status === 0 && made.stdout?.length) return { data: made.stdout, mimetype: 'audio/ogg; codecs=opus' }
+  const rate = 8000
+  const samples = Buffer.alloc(rate * seconds * 2)
+  for (let i = 0; i < rate * seconds; i++) samples.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 330 * i) / rate) * 8000), i * 2)
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + samples.length, 4)
+  header.write('WAVEfmt ', 8)
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20)
+  header.writeUInt16LE(1, 22)
+  header.writeUInt32LE(rate, 24)
+  header.writeUInt32LE(rate * 2, 28)
+  header.writeUInt16LE(2, 32)
+  header.writeUInt16LE(16, 34)
+  header.write('data', 36)
+  header.writeUInt32LE(samples.length, 40)
+  return { data: Buffer.concat([header, samples]), mimetype: 'audio/wav' }
 }
 
 /** A small PNG of a sunset-ish gradient, so a photo looks like one. */
@@ -246,6 +274,27 @@ createServer(async (req, res) => {
           },
         ],
       } as never)
+    } else if (req.url === '/whatsapp/voice') {
+      const { data, mimetype } = voiceNote(3)
+      const waveform = Buffer.from(Array.from({ length: 64 }, (_, i) => Math.round(30 + 70 * Math.abs(Math.sin(i / 5)))))
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: `V${Date.now()}` },
+            message: mediaMessage('audioMessage', data, { mimetype, ptt: true, seconds: 3, waveform }),
+            messageTimestamp: now(),
+          },
+        ],
+      } as never)
+    } else if (req.url === '/whatsapp/archived') {
+      server.sockets.at(-1)!.emit('chats.update', [{ id: RAVI, archived: input.archived !== false }] as never)
+    } else if (req.url === '/whatsapp/sent-to-phone') {
+      const socket = server.sockets.at(-1)!
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({ read: socket.read.map((k) => k.id), typing: socket.presence.filter((p) => p.type !== 'subscribe').map((p) => p.type) }),
+      )
+      return
     } else if (req.url === '/trim') {
       res.writeHead(200).end(String(await server.current().store.trim()))
       return

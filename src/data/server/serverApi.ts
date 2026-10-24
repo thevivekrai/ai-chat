@@ -9,7 +9,7 @@ import type {
   TelegramVerifyResult,
   WhatsAppLinkResult,
 } from './types'
-import type { Message, MessageAction } from '../types'
+import type { Message, MessageAction, Thread } from '../types'
 
 /**
  * The Sytext server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
@@ -84,6 +84,7 @@ export const serverApi = {
   newRecoveryKey: (current: string) => request<{ user: PublicUser; recoveryKey: string }>('POST', '/me/recovery-key', { current }),
 
   rename: (name: string) => request<{ user: PublicUser }>('PATCH', '/me', { name }),
+  setIncognito: (incognito: boolean) => request<{ user: PublicUser }>('PATCH', '/me', { incognito }),
   setPassword: (input: { password: string; current?: string }) => request<AuthResult>('POST', '/me/password', input),
   uploadAvatar: (image: string) => request<{ user: PublicUser }>('POST', '/me/avatar', { image }),
 
@@ -100,7 +101,9 @@ export const serverApi = {
       ...(replyToId ? { replyToId } : {}),
       ...(replyTo ? { replyTo } : {}),
     }),
-  markRead: (threadId: string) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/read`),
+  /** `receipt` false: no read receipt (Incognito mode); true: one anyway. Left out, the account's setting decides. */
+  markRead: (threadId: string, receipt?: boolean) =>
+    request<{ ok: true; receipt: boolean }>('POST', `/threads/${segment(threadId)}/read`, receipt === undefined ? undefined : { receipt }),
   /** The message as the server now has it, or null when it no longer keeps it. */
   react: (threadId: string, messageId: string, emoji: string | null, message?: MessageHint) =>
     request<{ message: Message | null }>('POST', `/threads/${segment(threadId)}/reactions`, {
@@ -144,6 +147,8 @@ export const serverApi = {
       ...(message ? { message } : {}),
     }),
   typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
+  archive: (threadId: string, archived: boolean) =>
+    request<{ thread: Thread }>('POST', `/threads/${segment(threadId)}/archive`, { archived }),
   older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
     const query = new URLSearchParams({ before: before.id })
     if (before.senderId && before.sentAt) {

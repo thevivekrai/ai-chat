@@ -64,6 +64,13 @@ describe('mock api', () => {
     expect(snapshot.scheduled.map((s) => s.threadId)).toEqual(['arjun'])
   })
 
+  it('archives a chat, and remembers it', async () => {
+    const api = await freshApi()
+    expect(await api.archiveThread('rohan', true)).toMatchObject({ id: 'rohan', archived: true })
+    expect((await createMockApi().loadInbox()).threads.find((t) => t.id === 'rohan')?.archived).toBe(true)
+    expect((await api.archiveThread('rohan', false)).archived).toBeUndefined()
+  })
+
   it('edits, pins, stars and deletes messages, and remembers it', async () => {
     const api = await freshApi()
     const sent = await api.sendMessage('rohan', 'A set of 6 is ₹2,400')

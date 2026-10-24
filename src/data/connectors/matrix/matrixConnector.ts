@@ -1,5 +1,5 @@
 import type { ICreateClientOpts, MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk'
-import type { Attachment, Contact, Message, NetworkId, Thread } from '../../types'
+import type { Attachment, Contact, Message, NetworkId, ReadOptions, Thread } from '../../types'
 import { ME_ID } from '../../types'
 import { Emitter, type Connector, type ConnectorEvent, type ConnectorSnapshot, type ConnectorStatus } from '../types'
 
@@ -190,7 +190,7 @@ export class MatrixConnector implements Connector {
     return { id: `mx:${event_id}`, threadId, senderId: ME_ID, body, sentAt: new Date().toISOString(), status: 'sent' }
   }
 
-  async markRead(threadId: string): Promise<Thread | null> {
+  async markRead(threadId: string, options?: ReadOptions): Promise<Thread | null> {
     const client = this.requireClient()
     const room = client.getRoom(threadId.slice('mx:'.length))
     if (!room) return null
@@ -198,7 +198,8 @@ export class MatrixConnector implements Connector {
       .getLiveTimeline()
       .getEvents()
       .findLast((e) => !e.isSending() && !!e.getId())
-    if (last) await client.setRoomReadMarkers(room.roomId, last.getId()!, last)
+    // Incognito: a private read receipt, which only my own devices see.
+    if (last) await client.setRoomReadMarkers(room.roomId, last.getId()!, options?.receipt === false ? undefined : last, options?.receipt === false ? last : undefined)
     // The homeserver recounts on the next sync; show it as read straight away.
     this.unread.set(room.roomId, 0)
     return { ...this.thread(room), unreadCount: 0 }

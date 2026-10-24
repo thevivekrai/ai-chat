@@ -7,6 +7,7 @@ import { Panel } from '@/components/ui/Panel'
 import { isMac, useBreakpoint } from '@/lib/media'
 import { useAi } from '@/store/ai'
 import { settledLastMessageId, useInbox } from '@/store/inbox'
+import { incognitoOn } from '@/store/privacy'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
 import { ChatSearchBar } from './ChatSearchBar'
@@ -38,9 +39,10 @@ function Conversation({ threadId }: { threadId: string }) {
   const wide = useBreakpoint('wide')
   const visible = useBreakpoint('md') || mobileThreadOpen
 
-  // Opening a chat (or a new message arriving while it's open) marks it read.
+  // Opening a chat (or a new message arriving while it's open) marks it read: for them too, unless
+  // Incognito mode is on.
   useEffect(() => {
-    if (visible && unread > 0) useInbox.getState().markRead(threadId)
+    if (visible && unread > 0) useInbox.getState().markRead(threadId, { receipt: !incognitoOn() })
   }, [visible, unread, threadId])
 
   // Summary and tasks for the open chat, refreshed when it changes.

@@ -12,6 +12,7 @@ import type {
   ScheduledMessage,
   Task,
   Thread,
+  ReadOptions,
   ThreadStatePatch,
 } from '@/data/types'
 import { ME_ID } from '@/data/types'
@@ -53,9 +54,12 @@ interface InboxState {
   loadOlder(threadId: string): Promise<void>
   /** Sends a failed message again. */
   retryMessage(threadId: string, messageId: string): Promise<void>
-  markRead(threadId: string): void
+  /** Clears the unread count; `receipt: false` (Incognito mode) tells nobody else. */
+  markRead(threadId: string, options?: ReadOptions): void
   /** Updates done/snoozed state and returns the previous state, for undo. */
   setThreadState(threadId: string, patch: ThreadStatePatch): Promise<ThreadStatePatch>
+  /** Archives a chat or brings it back; shown at once, put back if the network refuses. */
+  archiveThread(threadId: string, archived: boolean): Promise<void>
   scheduleMessage(threadId: string, body: string, sendAt: string): Promise<void>
   cancelScheduled(scheduledId: string): Promise<void>
   sendScheduledNow(scheduledId: string): Promise<void>
@@ -309,11 +313,11 @@ export const useInbox = create<InboxState>()((set, get) => {
       }
     },
 
-    markRead(threadId) {
+    markRead(threadId, options) {
       const thread = get().threads[threadId]
       if (!thread || thread.unreadCount === 0) return
       patchThread({ ...thread, unreadCount: 0 })
-      void api.markRead(threadId)
+      void api.markRead(threadId, options)
     },
 
     async setThreadState(threadId, patch) {
@@ -322,6 +326,19 @@ export const useInbox = create<InboxState>()((set, get) => {
       patchThread({ ...thread, ...patch })
       patchThread(await api.updateThreadState(threadId, patch))
       return previous
+    },
+
+    async archiveThread(threadId, archived) {
+      const thread = get().threads[threadId]
+      if (!thread) return
+      patchThread({ ...thread, archived })
+      try {
+        patchThread(await api.archiveThread(threadId, archived))
+      } catch (error) {
+        const current = get().threads[threadId]
+        if (current) patchThread({ ...current, archived: thread.archived })
+        throw error
+      }
     },
 
     async scheduleMessage(threadId, body, sendAt) {

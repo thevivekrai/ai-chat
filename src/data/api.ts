@@ -26,6 +26,7 @@ import type {
   SearchHit,
   Task,
   Thread,
+  ReadOptions,
   ThreadStatePatch,
 } from './types'
 import { createUnifiedApi } from './unified/unifiedApi'
@@ -57,11 +58,17 @@ export interface InboxApi {
   /** Messages from before `beforeId` (the earliest one loaded), oldest first. */
   loadOlder(threadId: string, beforeId: string): Promise<OlderMessages>
 
-  /** Clears the unread count (read receipt / read marker). */
-  markRead(threadId: string): Promise<Thread>
+  /**
+   * Clears the unread count, and sends a read receipt where the network has them. With
+   * `receipt: false` (Incognito mode) nobody is told: only the unread count clears.
+   */
+  markRead(threadId: string, options?: ReadOptions): Promise<Thread>
 
   /** Done / snoozed state for the Needs-reply queue. */
   updateThreadState(threadId: string, patch: ThreadStatePatch): Promise<Thread>
+
+  /** Archives a chat or brings it back: on WhatsApp and Telegram too, for linked chats. */
+  archiveThread(threadId: string, archived: boolean): Promise<Thread>
 
   /** "Send later". Sent on time while the app is open; see ScheduledMessage.error otherwise. */
   scheduleMessage(threadId: string, body: string, sendAt: string): Promise<ScheduledMessage>

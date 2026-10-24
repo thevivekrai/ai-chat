@@ -16,9 +16,12 @@ Nothing is ever sent automatically.
   server keeps only the links and the latest 40 messages of each chat (plus any pinned or
   starred), so a small free database is enough.
 - **Conversations as on the networks themselves.** Quoted replies, reactions, "typing…" both
-  ways, profile and group pictures, read ticks, and earlier messages as you scroll back. Edit
-  your messages, unsend them or delete messages just for you, pin and star messages, and search
-  for a word in a chat. The demo chats have all of it too.
+  ways, profile and group pictures, read ticks, and earlier messages as you scroll back. Voice
+  messages play in the chat. Edit your messages, unsend them or delete messages just for you, pin
+  and star messages, search for a word in a chat, and archive chats. The demo chats have all of
+  it too.
+- **Incognito mode**, as in Beeper: read messages without sending read receipts, and type
+  without showing "typing…".
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
 - **Real AI.** Add your **Claude API key** and every AI feature calls Claude. Without one, a
@@ -169,7 +172,7 @@ like WhatsApp Web; your phone doesn't have to stay online.
   delivery and read ticks for yours, edits and deletions.
 - **Photos and files** both ways: photos show in the chat, videos and documents as cards, and
   each one downloads (see *Photos and files* below). Stickers show as stickers, animated ones
-  too (see below). The paperclip, pasting, or dropping files on
+  too, and voice messages play in the chat (see below). The paperclip, pasting, or dropping files on
   the message box sends them; JPEG and PNG go as photos, MP4 as video, anything else as a document.
 - Quoted replies and reactions come in and go out. You see when someone is typing, and they see
   when you are. Profile and group pictures show too.
@@ -191,7 +194,8 @@ your phone (**Settings → Devices → Link Desktop Device**). Sytext signs in a
 a new device, and shows up in Telegram under **Settings → Devices**, where you can end it.
 
 - Your 30 most recent chats come in (20 messages each; broadcast channels are left out), then
-  everything new, with read status both ways, edits, and photos and files both ways as above.
+  everything new, with read status both ways, edits, and photos, files, stickers and voice
+  messages as above.
 - Quoted replies, reactions (Telegram's standard set), typing both ways, and profile and group
   pictures. Scrolling back fetches earlier messages from Telegram.
 - **Unlink** ends the session in Telegram and deletes its chats from the server.
@@ -220,10 +224,15 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
   and animated Lottie stickers (Telegram's .tgs, WhatsApp's animated ones), which the app plays
   with lottie-web's light build. It runs nothing from the file, fetches no pictures from
   elsewhere, loads only when one is shown, and won't unpack a sticker past 8 MB.
-- **Kept before this existed?** Stickers, photos and files kept by earlier versions had no link
-  (a sticker was only named). Each time the server reconnects, it asks again for the latest 40
-  of them: WhatsApp's phone sends each one again (it must be online), and Telegram is asked by
-  message id. They then open like new ones.
+- **Voice messages** play in the chat: a play button, the waveform WhatsApp or Telegram sends
+  with it (tap or drag it to jump), how long it is, and 1× / 1.5× / 2× speed. One plays at a
+  time. Audio files (music, recordings) play the same way, with their name and a download link.
+  A voice message is fetched whole the first time it's played (they're small), so it can be
+  scrubbed at once. Browsers that can't play WhatsApp's Ogg Opus offer it as a download instead.
+- **Kept before this existed?** Stickers, voice messages, photos and files kept by earlier
+  versions had no link (a sticker or voice message was only named). Each time the server
+  reconnects, it asks again for the latest 40 of them: WhatsApp's phone sends each one again (it
+  must be online), and Telegram is asked by message id. They then open like new ones.
 
 ### Edit, delete, pin, star and search
 
@@ -250,6 +259,33 @@ stars from your phone's WhatsApp.
 **Search in a chat** with the 🔍 in its header: every match is highlighted, and `Enter` /
 `Shift+Enter` (or the arrows) go to the older or newer one. It searches the messages loaded in
 the chat; **Earlier** loads older ones until it finds more. Deleted messages aren't searched.
+
+### Archive
+
+**Archive chat**, in a chat's **⋯** menu, takes it out of Needs reply, All chats and Waiting on
+them, into **Archived** in the sidebar (its count is archived chats with something unread).
+**Unarchive chat** brings it back; the toast offers Undo too.
+
+- **WhatsApp and Telegram** chats are archived on the network itself, so your phone shows them
+  archived too, and archiving or unarchiving on the phone shows in Sytext. Whether a new message
+  brings a chat back is up to the network: WhatsApp keeps it archived while *Keep chats archived*
+  is on in its settings; Telegram brings back chats that aren't muted.
+- Other chats (a Telegram bot, Matrix, the demo) are archived in Sytext, on that device.
+
+### Incognito mode
+
+**Settings → Privacy → Incognito mode**, as in Beeper. While it's on, an **Incognito** badge shows
+at the top:
+
+- **No read receipts.** Opening a chat clears its unread count in Sytext, but WhatsApp's blue
+  ticks and Telegram's "seen" don't go out (Matrix gets a private read receipt). To let one chat
+  know, choose **Mark as read for them** in its ⋯ menu.
+- **No "typing…"** while you write.
+- Signed in, it's a setting of your account: every device follows it, and the server itself
+  won't send read receipts or typing for you, whatever an older copy of the app asks. Without an
+  account it applies on that device.
+- Replying still shows you were there, of course, and opening the chat on your phone may send
+  read receipts from the phone.
 
 ### Where your chats are kept
 

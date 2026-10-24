@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import {
+  Archive,
   ArrowRight,
   CalendarClock,
   CornerDownLeft,
@@ -13,7 +14,9 @@ import {
   Search,
   Settings,
   Sparkles,
+  Star,
   Sun,
+  VenetianMask,
   Zap,
   type LucideIcon,
 } from 'lucide-react'
@@ -31,14 +34,16 @@ import { ME_ID } from '@/data/types'
 import { cn } from '@/lib/cn'
 import { NETWORKS } from '@/lib/networks'
 import { formatAgo } from '@/lib/time'
-import { openThread, simulateIncoming, turnOnAi } from '@/store/actions'
+import { openThread, setIncognito, simulateIncoming, turnOnAi } from '@/store/actions'
 import { describeAiError } from '@/store/ai'
 import { asksAboutTasks, buildAnswerSources, taskSources } from '@/store/aiInput'
 import { useClock } from '@/store/clock'
 import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
+import { useIncognito } from '@/store/privacy'
 import { threadPicture } from '@/store/selectors'
 import { canAiReadThread, useSettings } from '@/store/settings'
+import { toast } from '@/store/toasts'
 import { useUi, type View } from '@/store/ui'
 
 const SUGGESTED_QUESTIONS = ['What are my tasks for today?', 'Have I ordered anything?', 'When is my flight?']
@@ -139,6 +144,7 @@ function CommandBody({ close }: { close(): void }) {
   }, [q, aiEnabled, aiThreadIds])
 
   const demoShown = useConnections((s) => s.demo)
+  const incognito = useIncognito()
   const commands = useMemo<Command[]>(() => {
     const go = (view: View, label: string, icon: LucideIcon): Command => ({
       id: `go-${view}`,
@@ -152,6 +158,14 @@ function CommandBody({ close }: { close(): void }) {
       go('waiting', 'Waiting on them', Hourglass),
       go('scheduled', 'Scheduled', CalendarClock),
       go('tasks', 'Tasks', ListTodo),
+      go('starred', 'Starred', Star),
+      go('archived', 'Archived', Archive),
+      {
+        id: 'incognito',
+        label: incognito ? 'Turn off Incognito mode' : 'Turn on Incognito mode',
+        icon: VenetianMask,
+        run: () => void setIncognito(!incognito).catch((error: unknown) => toast({ title: "Couldn't change Incognito mode", description: error instanceof Error ? error.message : undefined })),
+      },
       {
         id: 'theme',
         label: theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode',
@@ -173,7 +187,7 @@ function CommandBody({ close }: { close(): void }) {
     if (!q) return all
     const needle = q.toLowerCase()
     return all.filter((c) => c.label.toLowerCase().includes(needle)).slice(0, 3)
-  }, [q, theme, demoShown])
+  }, [q, theme, demoShown, incognito])
 
   // Cited messages first, then the rest of the matches.
   const citedIds = answerState.status === 'ready' ? answerState.result.citedMessageIds : NO_IDS

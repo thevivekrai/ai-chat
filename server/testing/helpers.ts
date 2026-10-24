@@ -68,7 +68,7 @@ export const waMedia = new Map<string, Buffer>()
 
 /** A photo, video or file message's media fields, as WhatsApp sends them, for data now in `waMedia`. */
 export function mediaMessage(
-  type: 'imageMessage' | 'videoMessage' | 'documentMessage' | 'stickerMessage',
+  type: 'imageMessage' | 'videoMessage' | 'documentMessage' | 'stickerMessage' | 'audioMessage',
   data: Buffer,
   extra: Record<string, unknown> = {},
 ) {
@@ -104,7 +104,7 @@ export class FakeWaSocket implements WaSocket {
   sent: { jid: string; text: string; quotedId?: string }[] = []
   files: { jid: string; kind: 'image' | 'video' | 'document'; mimetype: string; fileName?: string; caption?: string; size: number; quotedId?: string }[] = []
   /** Edits, deletions for everyone and pins sent; deletions for me and stars synced. */
-  changes: { jid: string; change: string; id: string; text?: string; pinned?: boolean; starred?: boolean }[] = []
+  changes: { jid: string; change: string; id: string; text?: string; pinned?: boolean; starred?: boolean; archived?: boolean }[] = []
   reactions: { jid: string; emoji: string; targetId: string }[] = []
   presence: { type: string; jid?: string }[] = []
   historyRequests: { count: number; oldestId: string }[] = []
@@ -199,11 +199,13 @@ export class FakeWaSocket implements WaSocket {
   async chatModify(
     change:
       | { deleteForMe: { deleteMedia: boolean; key: WAMessageKey; timestamp: number } }
-      | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } },
+      | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } }
+      | { archive: boolean; lastMessages: { key: WAMessageKey; messageTimestamp: number }[] },
     jid: string,
   ) {
     if ('deleteForMe' in change) this.changes.push({ jid, change: 'delete-for-me', id: change.deleteForMe.key.id! })
-    else for (const m of change.star.messages) this.changes.push({ jid, change: 'star', id: m.id, starred: change.star.star })
+    else if ('star' in change) for (const m of change.star.messages) this.changes.push({ jid, change: 'star', id: m.id, starred: change.star.star })
+    else this.changes.push({ jid, change: 'archive', id: change.lastMessages.at(-1)?.key.id ?? '', archived: change.archive })
   }
 
   async requestPlaceholderResend(key: WAMessageKey) {
@@ -257,8 +259,10 @@ export function fakeTelegram() {
     sessions: [] as string[],
     listeners: [] as ((update: TgUpdate) => void)[],
     reactions: [] as { chatId: string; messageId: number; emoji: string | null }[],
-    changes: [] as { chatId: string; change: 'edit' | 'delete' | 'delete-for-me' | 'pin' | 'unpin'; id: number; text?: string }[],
+    changes: [] as { chatId: string; change: 'edit' | 'delete' | 'delete-for-me' | 'pin' | 'unpin' | 'archive' | 'unarchive'; id: number; text?: string }[],
     typing: [] as { chatId: string; typing: boolean }[],
+    /** Chats in Telegram's Archive. */
+    archived: new Set<string>(),
     qrShown: 0,
     /** Scans the QR code shown, as Telegram on a phone would. */
     scanQr: () => {},
@@ -322,7 +326,7 @@ export function fakeTelegram() {
           { chat: asha, unreadCount: 1, readOutboxMaxId: 11, date: ashaMessages[0]!.date },
           { chat: trek, unreadCount: 0, readOutboxMaxId: 0, date: now - 3600 },
           { chat: { id: '-100999', kind: 'group' as const, name: 'News channel', skip: true }, unreadCount: 9, readOutboxMaxId: 0, date: now },
-        ]
+        ].map((d) => (state.archived.has(d.chat.id) ? { ...d, archived: true } : d))
       },
       async history(chatId, limit, beforeId) {
         if (chatId === asha.id) {
@@ -349,6 +353,11 @@ export function fakeTelegram() {
       },
       async remove(chatId, ids, forEveryone) {
         for (const id of ids) state.changes.push({ chatId, change: forEveryone ? 'delete' : 'delete-for-me', id })
+      },
+      async archive(chatId, archived) {
+        state.changes.push({ chatId, change: archived ? 'archive' : 'unarchive', id: 0 })
+        if (archived) state.archived.add(chatId)
+        else state.archived.delete(chatId)
       },
       async pin(chatId, id, pinned) {
         state.changes.push({ chatId, change: pinned ? 'pin' : 'unpin', id })

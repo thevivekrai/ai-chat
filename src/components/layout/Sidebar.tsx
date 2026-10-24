@@ -1,6 +1,6 @@
 import { useId, useMemo } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
-import { CalendarClock, Hourglass, Inbox, Keyboard, ListTodo, MessagesSquare, Sparkles, Star, type LucideIcon } from 'lucide-react'
+import { Archive, CalendarClock, Hourglass, Inbox, Keyboard, ListTodo, MessagesSquare, Sparkles, Star, type LucideIcon } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
@@ -23,6 +23,7 @@ const NAV: { id: View; label: string; icon: LucideIcon }[] = [
   { id: 'scheduled', label: 'Scheduled', icon: CalendarClock },
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
   { id: 'starred', label: 'Starred', icon: Star },
+  { id: 'archived', label: 'Archived', icon: Archive },
 ]
 
 export function Sidebar({ className }: { className?: string }) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { CloudOff, Hourglass, Link2, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
+import { Archive, CloudOff, Hourglass, Link2, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
@@ -19,7 +19,7 @@ import { useUi } from '@/store/ui'
 import { AllCaughtUp, EmptyState, NoMatches } from './EmptyStates'
 import { ThreadRow } from './ThreadRow'
 
-type ListView = 'needs-reply' | 'all' | 'waiting'
+type ListView = 'needs-reply' | 'all' | 'waiting' | 'archived'
 
 const COPY: Record<ListView, { title: string; subtitle: (ai: boolean) => string }> = {
   'needs-reply': {
@@ -28,6 +28,7 @@ const COPY: Record<ListView, { title: string; subtitle: (ai: boolean) => string 
   },
   all: { title: 'All chats', subtitle: () => 'Most recent first' },
   waiting: { title: 'Waiting on them', subtitle: () => "You asked, they haven't answered" },
+  archived: { title: 'Archived', subtitle: () => 'Out of your lists until you unarchive' },
 }
 
 export function ThreadListPane({ view }: { view: ListView }) {
@@ -165,6 +166,11 @@ export function ThreadListPane({ view }: { view: ListView }) {
           ) : view === 'waiting' ? (
             <EmptyState icon={<Hourglass className="size-6" />} title="Nobody owes you a reply">
               When you ask someone something, the chat shows up here until they answer.
+            </EmptyState>
+          ) : view === 'archived' ? (
+            <EmptyState icon={<Archive className="size-6" />} title="No archived chats">
+              Archive a chat from its ⋯ menu to keep it out of your lists. Chats you archive on WhatsApp or
+              Telegram show up here too.
             </EmptyState>
           ) : (
             <EmptyState icon={<MessagesSquare className="size-6" />} title="No chats here">

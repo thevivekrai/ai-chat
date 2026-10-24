@@ -24,6 +24,8 @@ export interface ConnectionsConfig {
 export interface LocalState {
   /** Done and snoozed state, per thread. */
   threadState: Record<string, Required<ThreadStatePatch>>
+  /** Chats archived on this device, for networks that can't archive them (a Telegram bot, Matrix). */
+  archived: string[]
   /** Every task, wherever it came from. */
   tasks: Task[]
   /** "Send later" for chats from real accounts. Demo chats keep theirs in the demo backend. */
@@ -41,7 +43,7 @@ export function saveConfig(config: ConnectionsConfig) {
 }
 
 export function loadLocal(): LocalState {
-  return { threadState: {}, tasks: [], scheduled: [], importedDemoTasks: false, ...readJson<Partial<LocalState>>(LOCAL_KEY) }
+  return { threadState: {}, archived: [], tasks: [], scheduled: [], importedDemoTasks: false, ...readJson<Partial<LocalState>>(LOCAL_KEY) }
 }
 
 export function saveLocal(state: LocalState) {

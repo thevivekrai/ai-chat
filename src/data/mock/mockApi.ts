@@ -178,6 +178,15 @@ export function createMockApi(): DemoApi {
       return clone(thread)
     },
 
+    async archiveThread(threadId, archived) {
+      await latency(60)
+      const thread = findThread(threadId)
+      if (archived) thread.archived = true
+      else delete thread.archived
+      persist()
+      return clone(thread)
+    },
+
     async scheduleMessage(threadId, body, sendAt) {
       await latency(120)
       findThread(threadId)

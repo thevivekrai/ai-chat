@@ -1,4 +1,4 @@
-import type { ChatCapabilities, Contact, Message, MessageAction, Thread } from '../types'
+import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Thread } from '../types'
 
 /**
  * A connector brings one real account into the inbox: a Telegram bot, a Matrix account (and,
@@ -51,8 +51,11 @@ export interface Connector {
   /** Stops syncing. The connector can be started again. */
   stop(): void
   sendMessage(threadId: string, body: string, options?: SendOptions): Promise<Message>
-  /** Clears the unread count, and tells the network where it can. Resolves with the updated thread. */
-  markRead(threadId: string): Promise<Thread | null>
+  /**
+   * Clears the unread count, and tells the network where it can (unless `receipt` is false: then
+   * nobody else is told). Resolves with the updated thread.
+   */
+  markRead(threadId: string, options?: ReadOptions): Promise<Thread | null>
   /** What this chat supports; connectors that leave this out support none of the extras. */
   capabilities?(threadId: string): ChatCapabilities
   /** Sets my reaction to a message, replacing any I had; null removes it. */
@@ -60,6 +63,8 @@ export interface Connector {
   /** Edits, deletes, pins or stars a message: the message as it is now, or null once deleted for me. */
   actOnMessage?(threadId: string, messageId: string, action: MessageAction): Promise<Message | null>
   setTyping?(threadId: string, typing: boolean): Promise<void>
+  /** Archives a chat on the network itself. Chats of connectors without it are archived on the device. */
+  archiveThread?(threadId: string, archived: boolean): Promise<Thread>
   /** Messages from before `beforeId`, oldest first. */
   loadOlder?(threadId: string, beforeId: string): Promise<OlderMessages>
   subscribe(listener: (event: ConnectorEvent) => void): () => void
