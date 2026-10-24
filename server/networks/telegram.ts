@@ -7,7 +7,7 @@ import { CustomFile } from 'telegram/client/uploads.js'
 import { computeCheck } from 'telegram/Password.js'
 import { StringSession } from 'telegram/sessions/index.js'
 import QRCode from 'qrcode'
-import type { MessageHint, ServerOlderMessages, TelegramCodeResult, TelegramVerifyResult } from '../../src/data/server/types.ts'
+import { isPhotoType, type MessageHint, type ServerOlderMessages, type TelegramCodeResult, type TelegramVerifyResult } from '../../src/data/server/types.ts'
 import { withMyReaction } from '../../src/data/reactions.ts'
 import type { Attachment, Message, MessageAction, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
@@ -453,7 +453,7 @@ export const createGramClient: CreateTgClient = (session, api) => {
       return { data: client.iterDownload({ file: m.media, requestSize: 512 * 1024 }), size: Number(m.document.size) }
     },
     async sendFile(chatId, file, caption, replyToId) {
-      const photo = /^image\/(jpeg|png|webp)$/.test(file.mime)
+      const photo = isPhotoType(file.mime)
       const sent = await client.sendFile(await inputPeer(chatId), {
         file: new CustomFile(file.name, file.data.length, '', file.data),
         caption,
@@ -634,6 +634,8 @@ interface Session {
   check: ReturnType<typeof setInterval>
   /** Checks in a row that couldn't reach Telegram. */
   failedChecks: number
+  /** Chats moved into or out of the Archive, remembered for chats that have no messages here yet. */
+  archived: Map<string, boolean>
 }
 
 export interface TelegramDeps {
@@ -750,6 +752,7 @@ export function createTelegram(deps: TelegramDeps) {
       // Keep the stored name when this update didn't carry one.
       ...(m.chat.name ? { title: m.chat.name } : known ? {} : { title: 'Telegram chat' }),
       ...(direct ? { participantIds: [threadId] } : {}),
+      ...(!known && s.archived.get(m.chat.id) ? { archived: true } : {}),
       lastAt: sentAt,
     })
     if (direct) await upsertContact(s, m.chat)
@@ -836,7 +839,7 @@ export function createTelegram(deps: TelegramDeps) {
 
   /** Deleted (for me, or for everyone, which on Telegram is gone too): from the server and every device. */
   async function removeForMe(userId: ObjectId, threadId: string, messageId: string) {
-    await store.deleteMessage(userId, messageId)
+    await store.deleteMessage(userId, threadId, messageId)
     hub.publish(keyOf(userId), { type: 'message.deleted', threadId, messageId })
   }
 
@@ -867,6 +870,7 @@ export function createTelegram(deps: TelegramDeps) {
         for (const id of update.ids) await updateAndPublish(s, `tga:${update.chatId}:${id}`, { pinned: update.pinned })
         return
       case 'archived': {
+        s.archived.set(update.chatId, update.archived)
         const thread = await store.setArchived(s.userId, `tga:${update.chatId}`, update.archived)
         if (thread) publish(s, { type: 'thread.updated', thread })
         return
@@ -942,6 +946,7 @@ export function createTelegram(deps: TelegramDeps) {
       stopped: false,
       check: setInterval(() => void check(s).catch(report), CHECK_EVERY_MS),
       failedChecks: 0,
+      archived: new Map(),
     }
     s.check.unref()
     sessions.set(keyOf(userId), s)
@@ -1248,6 +1253,7 @@ export function createTelegram(deps: TelegramDeps) {
       const ref = Number(target?.ref?.id) || refFromId(threadId, messageId)
       if (!ref) throw new HttpError(404, 'That message is gone.')
       const mine = (target?.senderId ?? (hint?.id === messageId ? hint.senderId : undefined)) === 'me'
+      if (!target && hint?.id === messageId) await store.keepFlagged(userId, threadId, hint, action, { id: ref })
       try {
         switch (action.type) {
           case 'edit':
@@ -1300,10 +1306,11 @@ export function createTelegram(deps: TelegramDeps) {
       } catch (error) {
         throw telegramError(error)
       }
-      const photo = /^image\/(jpeg|png|webp)$/.test(upload.mime)
+      const photo = isPhotoType(upload.mime)
       const size = sizeLabel(upload.data.length)
       const media = {
-        attachment: { kind: photo ? ('image' as const) : ('file' as const), name: photo ? 'Photo' : upload.name, mime: upload.mime, ...(size ? { size } : {}) },
+        // Telegram keeps every photo as a JPEG, whatever was sent.
+        attachment: { kind: photo ? ('image' as const) : ('file' as const), name: photo ? 'Photo' : upload.name, mime: photo ? 'image/jpeg' : upload.mime, ...(size ? { size } : {}) },
         file: true,
       }
       const message: StoredMessage = {
@@ -1383,13 +1390,23 @@ export function createTelegram(deps: TelegramDeps) {
     },
 
     /** Marks a chat read in Sytext and, with `receipt`, on Telegram too (where they see it read). */
-    async markRead(userId: ObjectId, threadId: string, { receipt = true }: { receipt?: boolean } = {}) {
-      await store.setUnread(userId, threadId, 0)
+    async markRead(userId: ObjectId, threadId: string, { receipt = true, strict = false }: { receipt?: boolean; strict?: boolean } = {}) {
+      await store.markReadHere(userId, threadId, { receipt })
       const s = sessions.get(keyOf(userId))
-      if (!s || !receipt) return
+      if (!s) {
+        if (strict) throw new HttpError(409, "Telegram isn't connected right now, so it can't be told. Try again in a minute.")
+        return
+      }
+      if (!receipt) return
       const [latest] = await store.recentIncoming(userId, threadId, 1)
       const maxId = Number(latest?.ref?.id)
-      if (maxId) await s.client.markRead(threadId.slice('tga:'.length), maxId).catch(report)
+      if (!maxId) return
+      try {
+        await s.client.markRead(threadId.slice('tga:'.length), maxId)
+      } catch (error) {
+        if (strict) throw telegramError(error)
+        report(error)
+      }
     },
 
     /**

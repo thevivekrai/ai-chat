@@ -1,11 +1,14 @@
 import type { ObjectId } from 'mongodb'
 import { MESSAGES_KEPT_PER_CHAT } from '../../src/data/server/types.ts'
-import type { Contact, Message, Reaction, Thread } from '../../src/data/types.ts'
+import type { MessageHint } from '../../src/data/server/types.ts'
+import type { Contact, Message, MessageAction, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, MessageDoc, MessagePayload, ThreadDoc } from '../db.ts'
 
 /** How many chats the browser gets on load (each with every message the server keeps of it). */
 const SNAPSHOT_THREADS = 200
+/** Messages deleted for me remembered per chat, for devices that were away when it happened. */
+const DELETIONS_KEPT = 200
 
 export interface StoredMessage extends Message {
   /** Network-specific reference kept alongside (e.g. a WhatsApp message key). */
@@ -30,6 +33,8 @@ export interface InboxSnapshotPart {
   threads: Thread[]
   contacts: Contact[]
   messages: Message[]
+  /** Messages deleted for me lately: devices that were away remove them too. */
+  deleted: string[]
 }
 
 /**
@@ -52,6 +57,15 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     } catch {
       return fallback
     }
+  }
+
+  /** `count` unread as the network says, but no more than came in since the chat was read in Sytext. */
+  async function unreadSince(userId: ObjectId, threadId: string, count: number): Promise<number> {
+    if (count <= 0) return Math.max(0, count)
+    const thread = await col.threads.findOne({ userId, id: threadId }, { projection: { readThrough: 1 } })
+    if (!thread?.readThrough) return count
+    const since = await col.messages.countDocuments({ userId, threadId, senderId: { $ne: 'me' }, sentAt: { $gt: thread.readThrough } })
+    return Math.min(count, since)
   }
 
   const toThread = (doc: ThreadDoc): Thread => ({
@@ -84,6 +98,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       ...(payload.editedAt ? { editedAt: payload.editedAt } : {}),
       ...(payload.deleted ? { deleted: true } : {}),
       ...(doc.pinned ? { pinned: true } : {}),
+      ...(doc.pinned && doc.pinnedUntil ? { pinnedUntil: doc.pinnedUntil.toISOString() } : {}),
       ...(doc.starred ? { starred: true } : {}),
     }
   }
@@ -103,7 +118,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
   async function trimThread(userId: ObjectId, threadId: string): Promise<number> {
     // Pinned and starred messages stay, however old: they're what the user wanted to find again.
     const extra = await col.messages
-      .find({ userId, threadId, pinned: { $ne: true }, starred: { $ne: true } }, { projection: { _id: 1 } })
+      .find(
+        // A pin that has run out no longer keeps a message.
+        { userId, threadId, starred: { $ne: true }, $or: [{ pinned: { $ne: true } }, { pinnedUntil: { $lte: new Date() } }] },
+        { projection: { _id: 1 } },
+      )
       .sort({ sentAt: -1 })
       .skip(MESSAGES_KEPT_PER_CHAT)
       .toArray()
@@ -141,7 +160,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       const set: Partial<ThreadDoc> = { network: thread.network, kind: thread.kind, updatedAt: new Date() }
       if (thread.title !== undefined) set.title = sealer.seal(thread.title)
       if (thread.participantIds) set.participantIds = thread.participantIds
-      if (thread.unreadCount !== undefined) set.unreadCount = thread.unreadCount
+      if (thread.unreadCount !== undefined) set.unreadCount = await unreadSince(userId, thread.id, thread.unreadCount)
       if (thread.archived === true) set.archived = true
       const doc = await col.threads.findOneAndUpdate(
         { userId, id: thread.id },
@@ -165,8 +184,20 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       await col.threads.updateOne({ userId, id: threadId }, { $addToSet: { participantIds: contactId } })
     },
 
+    /** The unread count as the network gives it (capped at what's new since an Incognito read). */
     async setUnread(userId: ObjectId, threadId: string, unreadCount: number) {
-      await col.threads.updateOne({ userId, id: threadId }, { $set: { unreadCount } })
+      await col.threads.updateOne({ userId, id: threadId }, { $set: { unreadCount: await unreadSince(userId, threadId, unreadCount) } })
+    },
+
+    /**
+     * Read in Sytext. Without a read receipt (Incognito mode), the network keeps counting those
+     * messages unread; that's remembered, so its counts don't bring them back.
+     */
+    async markReadHere(userId: ObjectId, threadId: string, { receipt }: { receipt: boolean }) {
+      await col.threads.updateOne(
+        { userId, id: threadId },
+        receipt ? { $set: { unreadCount: 0 }, $unset: { readThrough: '' } } : { $set: { unreadCount: 0, readThrough: new Date() } },
+      )
     },
 
     /** Archives or unarchives a chat; returns it, or null if there's no such chat. */
@@ -264,6 +295,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
             ...(message.status ? { status: message.status } : {}),
             ...(message.ref ? { ref: message.ref } : {}),
             ...(message.pinned ? { pinned: true } : {}),
+            ...(message.pinned && message.pinnedUntil ? { pinnedUntil: new Date(message.pinnedUntil) } : {}),
             ...(message.starred ? { starred: true } : {}),
           },
         },
@@ -290,6 +322,8 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         editedAt?: string
         deleted?: boolean
         pinned?: boolean
+        /** With `pinned: true`: when the pin ends by itself. */
+        pinnedUntil?: string
         starred?: boolean
       },
     ): Promise<Message | null> {
@@ -316,6 +350,9 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         if (patch[flag] === true) set[flag] = true
         else if (patch[flag] === false) unset[flag] = ''
       }
+      // A new pin brings its own end (or none); unpinned, there's none.
+      if (patch.pinned === true && patch.pinnedUntil) set.pinnedUntil = new Date(patch.pinnedUntil)
+      else if (patch.pinned !== undefined) unset.pinnedUntil = ''
       if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) return toMessage(doc)
       const updated = await col.messages.findOneAndUpdate(
         { userId, id },
@@ -325,9 +362,31 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return updated && toMessage(updated)
     },
 
+    /**
+     * Pinned or starred, a message the server no longer keeps (older than the latest of its chat)
+     * is kept again, from what the device says of it, so it shows on every device however old.
+     */
+    async keepFlagged(userId: ObjectId, threadId: string, hint: MessageHint, action: MessageAction, ref: Record<string, unknown>) {
+      const flags = action.type === 'pin' && action.pinned ? { pinned: true } : action.type === 'star' && action.starred ? { starred: true } : null
+      if (!flags || !hint.id.startsWith(`${threadId}:`)) return
+      await this.addMessage(userId, {
+        id: hint.id,
+        threadId,
+        senderId: hint.senderId,
+        body: hint.body ?? '',
+        sentAt: hint.sentAt,
+        ...(hint.attachments ? { attachments: hint.attachments } : {}),
+        ...flags,
+        ref,
+      })
+    },
+
     /** Deleted for me: gone from the server. Returns whether it was kept. */
-    async deleteMessage(userId: ObjectId, id: string): Promise<boolean> {
-      return (await col.messages.deleteOne({ userId, id })).deletedCount > 0
+    async deleteMessage(userId: ObjectId, threadId: string, id: string): Promise<boolean> {
+      const gone = (await col.messages.deleteOne({ userId, id })).deletedCount > 0
+      // Remembered, kept or not: devices that were away remove it when they come back.
+      await col.threads.updateOne({ userId, id: threadId }, { $push: { deletedIds: { $each: [id], $slice: -DELETIONS_KEPT } } })
+      return gone
     },
 
     /** Telegram's private and small-group messages by their own ids (deletions say only those). */
@@ -428,9 +487,13 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         .toArray()
     },
 
-    /** The chat's latest message, as the network knows it (its `ref`), and when it was sent. */
-    async latestRef(userId: ObjectId, threadId: string): Promise<{ ref?: Record<string, unknown>; sentAt: Date } | null> {
-      const doc = await col.messages.find({ userId, threadId }, { projection: { ref: 1, sentAt: 1 } }).sort({ sentAt: -1 }).limit(1).next()
+    /** The chat's latest message that the network knows by `ref.<field>`, and when it was sent. */
+    async latestRef(userId: ObjectId, threadId: string, field: string): Promise<{ ref?: Record<string, unknown>; sentAt: Date } | null> {
+      const doc = await col.messages
+        .find({ userId, threadId, [`ref.${field}`]: { $exists: true } }, { projection: { ref: 1, sentAt: 1 } })
+        .sort({ sentAt: -1 })
+        .limit(1)
+        .next()
       return doc && { ...(doc.ref ? { ref: doc.ref } : {}), sentAt: doc.sentAt }
     },
 
@@ -461,6 +524,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         threads: threadDocs.map(toThread),
         contacts: contactDocs.map(toContact),
         messages: [...latest, ...flagged.filter((d) => !seen.has(d.id))].map(toMessage),
+        deleted: threadDocs.flatMap((t) => t.deletedIds ?? []),
       }
     },
 

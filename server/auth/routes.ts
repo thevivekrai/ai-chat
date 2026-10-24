@@ -4,6 +4,7 @@ import type { PublicUser } from '../../src/data/server/types.ts'
 import type { Collections, UserDoc } from '../db.ts'
 import { field, HttpError, rateLimit, requireUser, userIdOf } from '../http.ts'
 import type { Media } from '../media.ts'
+import type { Hub } from '../realtime.ts'
 import type { GoogleVerifier } from './google.ts'
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from './passwords.ts'
 import { hashRecoveryKey, matchesRecoveryKey, newRecoveryKey } from './recoveryKeys.ts'
@@ -32,13 +33,15 @@ const DUMMY_HASH = hashPassword('not-a-real-password')
 
 interface AuthDeps {
   col: Collections
+  /** Tells the user's other devices when the account changes. */
+  hub?: Hub
   tokens: SessionTokens
   google: GoogleVerifier | null
   media: Media | null
   secureCookies: boolean
 }
 
-export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDeps): Router {
+export function authRoutes({ col, hub, tokens, google, media, secureCookies }: AuthDeps): Router {
   const router = Router()
   const limited = rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 30 })
   // Resetting a password is rarer still, and a guess at a recovery key is worth slowing down.
@@ -204,6 +207,8 @@ export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDe
       { returnDocument: 'after' },
     )
     if (!user) throw new HttpError(401, 'Sign in to continue.')
+    // Every device follows at once: Incognito mode most of all.
+    hub?.publish(user._id.toHexString(), { type: 'user.updated', user: toPublicUser(user) })
     res.json({ user: toPublicUser(user) })
   })
 
@@ -220,13 +225,16 @@ export function authRoutes({ col, tokens, google, media, secureCookies }: AuthDe
       if (!(await verifyPassword(current, user.passwordHash))) throw new HttpError(400, 'Your current password isn\'t right.')
     }
     const now = new Date()
+    // A new recovery key too: the old one could have been made by anyone who knew the old password,
+    // and would let them take the account back.
+    const { recoveryKey, fields } = recoveryKeyFields(now)
     // Other sessions end; this one carries on with a fresh token.
     const updated = await col.users.findOneAndUpdate(
       { _id: user._id },
-      { $set: { passwordHash: await hashPassword(password), sessionsValidAfter: now, updatedAt: now } },
+      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now } },
       { returnDocument: 'after' },
     )
-    await startSession(res, updated!)
+    await startSession(res, updated!, { recoveryKey })
   })
 
   /** A new recovery key, replacing the old one (which stops working). Needs the current password. */

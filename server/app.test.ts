@@ -209,6 +209,33 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect((await recover(fresh.json.recoveryKey)).status).toBe(200)
     })
 
+    it("replaces the recovery key when the password changes, so an old one can't take the account back", async () => {
+      // Someone who knew the password made themselves a key…
+      const intruder = new Browser(server.url)
+      await intruder.post('/api/auth/register', { name: 'Meera', email: 'key-thief@example.com', password: 'long enough' })
+      const stolen = (await intruder.post('/api/me/recovery-key', { current: 'long enough' })).json.recoveryKey
+      // …and the owner changes the password.
+      const changed = await intruder.post('/api/me/password', { password: 'only mine now', current: 'long enough' })
+      expect(changed.status).toBe(200)
+      expect(changed.json.recoveryKey).toMatch(/^([0-9A-Z]{5}-){4}[0-9A-Z]{5}$/)
+      expect(changed.json.recoveryKey).not.toBe(stolen)
+      const recover = (recoveryKey: string) =>
+        new Browser(server.url).post('/api/auth/recover', { email: 'key-thief@example.com', recoveryKey, password: 'taken back' })
+      expect((await recover(stolen)).status).toBe(401)
+      expect((await recover(changed.json.recoveryKey)).status).toBe(200)
+    })
+
+    it('slows down guessing at recovery keys', async () => {
+      const guesser = new Browser(server.url)
+      const guess = () => guesser.post('/api/auth/recover', { email: 'zoya@example.com', recoveryKey: 'AAAAA-BBBBB-CCCCC-DDDDD-EEEEE', password: 'new password' })
+      for (let i = 0; i < 10; i++) expect((await guess()).status).toBe(401)
+      const blocked = await guess()
+      expect(blocked.status).toBe(429)
+      expect(blocked.headers.get('retry-after')).toBeTruthy()
+      // Someone else (another address) isn't held back by it.
+      expect((await new Browser(server.url).post('/api/auth/recover', { email: 'zoya@example.com', recoveryKey: 'x', password: 'new password' })).status).toBe(401)
+    })
+
     it('drops the recovery key when Google takes over an account made with the same email', async () => {
       const squatter = new Browser(server.url)
       const signUp = await squatter.post('/api/auth/register', { name: 'X', email: 'real-owner@example.com', password: 'long enough' })
@@ -936,16 +963,21 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // A name with a path in it keeps only the name.
       await browser.upload(thread, Buffer.from('x'), { name: '../../etc/passwd', type: '' })
       expect(socket.files[4]).toMatchObject({ fileName: '.. .. etc passwd', mimetype: 'application/octet-stream' })
+      // WebP isn't a photo to WhatsApp: it goes as a file, as the app shows it while sending.
+      await browser.upload(thread, Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 '), { name: 'sticker.webp', type: 'image/webp' })
+      expect(socket.files[5]).toMatchObject({ kind: 'document', mimetype: 'image/webp' })
 
-      // Refused: no name, too big, someone else's chat, not signed in.
+      // Refused: no name, too big, someone else's chat, a chat that doesn't exist (before the file
+      // is read), not signed in.
       expect((await browser.raw('POST', `/api/threads/${enc(thread)}/files`, pdf, { 'Content-Type': 'application/octet-stream' })).status).toBe(400)
       const big = await browser.upload(thread, Buffer.alloc(MAX_TEST_FILE_BYTES + 1), { name: 'big.bin', type: 'application/octet-stream' })
       expect(big.status).toBe(413)
       expect(big.json.error).toMatch(/Files up to/)
       const stranger = await newUser('files-wa-send-stranger@example.com')
       expect((await stranger.upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(404)
+      expect((await browser.upload('wa:000@s.whatsapp.net', pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(404)
       expect((await new Browser(server.url).upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(401)
-      expect(socket.files).toHaveLength(5)
+      expect(socket.files).toHaveLength(6)
     })
 
     it('WhatsApp: brings back stickers and photos kept before they could be opened', async () => {
@@ -1106,7 +1138,10 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(socket.changes.length).toBe(changesBeforeLimits)
 
       // Pinning and starring.
-      expect((await act(browser, thread, `${thread}:HIS`, { type: 'pin', pinned: true })).json.message).toMatchObject({ pinned: true })
+      const pinnedHis = (await act(browser, thread, `${thread}:HIS`, { type: 'pin', pinned: true })).json.message
+      expect(pinnedHis).toMatchObject({ pinned: true })
+      // For 30 days, as WhatsApp keeps it.
+      expect(Date.parse(pinnedHis.pinnedUntil) - Date.now()).toBeGreaterThan(29 * 86_400_000)
       expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'pin', id: 'HIS', pinned: true })
       expect((await act(browser, thread, `${thread}:HIS`, { type: 'star', starred: true })).json.message).toMatchObject({ starred: true })
       expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'star', id: 'HIS', starred: true })
@@ -1119,9 +1154,28 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect((await act(browser, thread, `${thread}:MINE`, { type: 'edit', body: 'Back again' })).status).toBe(409)
       const gone = await act(browser, thread, `${thread}:OTHER`, { type: 'delete', forEveryone: false })
       expect(gone.json).toEqual({ message: null, removed: true })
-      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'delete-for-me', id: 'OTHER' })
+      // With the message's time in seconds, as WhatsApp keeps it.
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'delete-for-me', id: 'OTHER', timestamp: ts - 100 })
       await events.next((e) => e.type === 'message.deleted' && e.messageId === `${thread}:OTHER`)
       expect(byId((await browser.get('/api/inbox')).json.messages)[`${thread}:OTHER`]).toBeUndefined()
+      // Remembered, for devices that were away when it happened.
+      expect((await browser.get('/api/inbox')).json.deleted).toContain(`${thread}:OTHER`)
+
+      // Starring a message the server no longer keeps: it keeps a copy, from what the device says.
+      const old = { id: `${thread}:ANCIENT`, senderId: thread, sentAt: new Date((ts - 90 * 86400) * 1000).toISOString(), body: 'Here is the warranty card' }
+      const attachments = [
+        { kind: 'image', name: 'Photo', mime: 'image/jpeg', url: '/api/files/abc' },
+        { kind: 'file', name: 'evil.html', url: 'https://evil.example/x' },
+      ]
+      const starredOld = await browser.post(`/api/threads/${enc(thread)}/message-actions`, {
+        messageId: old.id,
+        action: { type: 'star', starred: true },
+        message: { ...old, attachments },
+      })
+      expect(starredOld.json.message).toMatchObject({ id: old.id, body: 'Here is the warranty card', starred: true })
+      // Only links to this server's own files are kept.
+      expect(starredOld.json.message.attachments).toEqual([{ kind: 'image', name: 'Photo', mime: 'image/jpeg', url: '/api/files/abc' }, { kind: 'file', name: 'evil.html' }])
+      expect(byId((await browser.get('/api/inbox')).json.messages)[old.id]).toMatchObject({ starred: true })
 
       // The same, done on the phone.
       socket.emit('messages.upsert', {
@@ -1129,10 +1183,16 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         messages: [
           { key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, message: { conversation: 'Call me when you leave' }, messageTimestamp: ts },
           { key: { remoteJid: RAVI, fromMe: true, id: 'UNPIN' }, message: { pinInChatMessage: { key: { remoteJid: RAVI, fromMe: false, id: 'HIS' }, type: 2 } }, messageTimestamp: ts },
-          { key: { remoteJid: RAVI, fromMe: false, id: 'PINP1' }, message: { pinInChatMessage: { key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, type: 1 } }, messageTimestamp: ts },
+          {
+            key: { remoteJid: RAVI, fromMe: false, id: 'PINP1' },
+            message: { pinInChatMessage: { key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, type: 1 }, messageContextInfo: { messageAddOnDurationInSecs: 86400 } },
+            messageTimestamp: ts,
+          },
         ],
       } as never)
-      await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:P1` && e.message.pinned === true)
+      const pinnedP1 = await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:P1` && e.message.pinned === true)
+      // A pin for 24 hours (WhatsApp says how long with the pin) ends a day after it was made.
+      expect(pinnedP1.message.pinnedUntil).toBe(new Date((ts + 86400) * 1000).toISOString())
       await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:HIS` && !e.message.pinned)
       socket.emit('messages.update', [{ key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, update: { starred: true } }] as never)
       await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:P1` && e.message.starred === true)
@@ -1149,8 +1209,19 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       const { store } = server.current()
       const busy = `wa:120363999999@g.us`
       await store.upsertThread(userId, { id: busy, network: 'whatsapp', kind: 'group', title: 'Busy group' })
+      const lapsed = new Date((ts - 3600) * 1000).toISOString()
       for (let i = 0; i < 45; i++) {
-        await store.addMessage(userId, { id: `${busy}:B${i}`, threadId: busy, senderId: 'me', body: `Message ${i}`, sentAt: new Date((ts - 1000 + i) * 1000).toISOString(), ...(i === 0 ? { starred: true } : {}), ...(i === 1 ? { pinned: true } : {}) })
+        await store.addMessage(userId, {
+          id: `${busy}:B${i}`,
+          threadId: busy,
+          senderId: 'me',
+          body: `Message ${i}`,
+          sentAt: new Date((ts - 1000 + i) * 1000).toISOString(),
+          ...(i === 0 ? { starred: true } : {}),
+          ...(i === 1 ? { pinned: true } : {}),
+          // A pin that ran out keeps nothing.
+          ...(i === 2 ? { pinned: true, pinnedUntil: lapsed } : {}),
+        })
       }
       await store.trim()
       const kept = (await browser.get('/api/inbox')).json.messages.filter((m: { threadId: string }) => m.threadId === busy).map((m: { id: string }) => m.id)
@@ -1233,7 +1304,10 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       await waitFor(async () => expect((await threads())[`wa:${KIRAN}`]).toMatchObject({ archived: true }))
       expect((await threads())[`wa:${RAVI}`].archived).toBeUndefined()
 
-      // Archived in Sytext: on WhatsApp too, with the chat's latest message as it asks.
+      // Archived in Sytext: on WhatsApp too, with the chat's latest message as it asks (one it
+      // knows the key of).
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      await server.current().store.addMessage(userId, { id: `wa:${RAVI}:NOKEY`, threadId: `wa:${RAVI}`, senderId: 'me', body: 'Kept without a key', sentAt: new Date().toISOString() })
       const archived = await archive(browser, `wa:${RAVI}`, true)
       expect(archived.json.thread).toMatchObject({ id: `wa:${RAVI}`, archived: true })
       expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'archive', id: 'R1', archived: true })
@@ -1275,6 +1349,12 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       await events.next((e) => e.type === 'thread.updated' && e.thread.id === 'tga:5001' && !e.thread.archived)
       expect((await archive(browser, 'tga:-100777', false)).json.thread.archived).toBeUndefined()
       expect(tg.state.archived.size).toBe(0)
+
+      // Archived in Telegram before its first message got here: it arrives archived.
+      const newcomer = { id: '5999', kind: 'direct' as const, name: 'Meera' }
+      tg.emit({ type: 'archived', chatId: newcomer.id, archived: true })
+      tg.emit({ type: 'message', message: { id: 1, chat: newcomer, out: false, text: 'Hi!', date: Math.floor(Date.now() / 1000) } })
+      await waitFor(async () => expect((await threads())['tga:5999']).toMatchObject({ archived: true }))
       events.close()
       await browser.delete('/api/link/telegram')
     })
@@ -1303,8 +1383,12 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // Turned on for the account: every device, and the server, go by it.
       expect((await browser.request('PATCH', '/api/me', { incognito: 'yes' })).status).toBe(400)
       expect((await browser.request('PATCH', '/api/me', {})).status).toBe(400)
+      const otherDevice = await browser.events()
       const on = await browser.request('PATCH', '/api/me', { incognito: true })
       expect(on.json.user).toMatchObject({ incognito: true, name: expect.any(String) })
+      // Other devices hear of it at once.
+      await otherDevice.next((e) => e.type === 'user.updated' && e.user.incognito === true)
+      otherDevice.close()
       expect((await browser.get('/api/auth/me')).json.user.incognito).toBe(true)
 
       const readBefore = { wa: socket.read.length, tg: tg.state.read.length }
@@ -1322,9 +1406,34 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(socket.presence.slice(presenceBefore).filter((p) => p.type !== 'subscribe')).toEqual([])
       expect(tg.state.typing.length).toBe(typingBefore)
 
-      // "Mark as read for them": a read receipt, asked for.
+      // Stopping typing always goes through (it may have started before Incognito was on).
+      await browser.post(`/api/threads/${enc(`wa:${RAVI}`)}/typing`, { typing: false })
+      expect(socket.presence.at(-1)).toMatchObject({ type: 'paused' })
+
+      // WhatsApp still counts it unread, and says so: what was read here stays read, and only
+      // what comes in after counts.
+      socket.emit('chats.update', [{ id: RAVI, unreadCount: 1 }] as never)
+      await new Promise((r) => setTimeout(r, 100))
+      expect((await threads())[`wa:${RAVI}`].unreadCount).toBe(0)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'SEEN2' }, message: { conversation: 'Hello??' }, messageTimestamp: ts + 5 }],
+      } as never)
+      await waitFor(async () => expect((await threads())[`wa:${RAVI}`].unreadCount).toBe(1))
+      socket.emit('chats.update', [{ id: RAVI, unreadCount: 2 }] as never)
+      await new Promise((r) => setTimeout(r, 100))
+      expect((await threads())[`wa:${RAVI}`].unreadCount).toBe(1)
+
+      // "Mark as read for them": a read receipt, asked for; one that can't go out says so.
+      socket.failReads = true
+      const failed = await browser.post(`/api/threads/${enc(`wa:${RAVI}`)}/read`, { receipt: true })
+      expect(failed.status).toBe(502)
+      socket.failReads = false
       expect((await browser.post(`/api/threads/${enc(`wa:${RAVI}`)}/read`, { receipt: true })).json.receipt).toBe(true)
-      expect(socket.read.at(-1)).toMatchObject({ id: 'SEEN1' })
+      expect(socket.read.map((k) => k.id)).toEqual(expect.arrayContaining(['SEEN1', 'SEEN2']))
+      // Told, WhatsApp's own counts are believed again.
+      socket.emit('chats.update', [{ id: RAVI, unreadCount: 3 }] as never)
+      await waitFor(async () => expect((await threads())[`wa:${RAVI}`].unreadCount).toBe(3))
 
       // Off again: reading sends read receipts as before.
       expect((await browser.request('PATCH', '/api/me', { incognito: false })).json.user.incognito).toBeUndefined()

@@ -40,9 +40,10 @@ function Conversation({ threadId }: { threadId: string }) {
   const visible = useBreakpoint('md') || mobileThreadOpen
 
   // Opening a chat (or a new message arriving while it's open) marks it read: for them too, unless
-  // Incognito mode is on.
+  // Incognito mode is on. Otherwise it's left to the account's setting (another device may have
+  // just turned Incognito on), never forced.
   useEffect(() => {
-    if (visible && unread > 0) useInbox.getState().markRead(threadId, { receipt: !incognitoOn() })
+    if (visible && unread > 0) useInbox.getState().markRead(threadId, incognitoOn() ? { receipt: false } : undefined)
   }, [visible, unread, threadId])
 
   // Summary and tasks for the open chat, refreshed when it changes.

@@ -104,11 +104,13 @@ export class FakeWaSocket implements WaSocket {
   sent: { jid: string; text: string; quotedId?: string }[] = []
   files: { jid: string; kind: 'image' | 'video' | 'document'; mimetype: string; fileName?: string; caption?: string; size: number; quotedId?: string }[] = []
   /** Edits, deletions for everyone and pins sent; deletions for me and stars synced. */
-  changes: { jid: string; change: string; id: string; text?: string; pinned?: boolean; starred?: boolean; archived?: boolean }[] = []
+  changes: { jid: string; change: string; id: string; text?: string; pinned?: boolean; starred?: boolean; archived?: boolean; timestamp?: number }[] = []
   reactions: { jid: string; emoji: string; targetId: string }[] = []
   presence: { type: string; jid?: string }[] = []
   historyRequests: { count: number; oldestId: string }[] = []
   read: WAMessageKey[] = []
+  /** WhatsApp refuses read receipts (as when the connection drops mid-send). */
+  failReads = false
   loggedOut = false
   ended = false
   /** Chats with a profile picture. */
@@ -203,7 +205,7 @@ export class FakeWaSocket implements WaSocket {
       | { archive: boolean; lastMessages: { key: WAMessageKey; messageTimestamp: number }[] },
     jid: string,
   ) {
-    if ('deleteForMe' in change) this.changes.push({ jid, change: 'delete-for-me', id: change.deleteForMe.key.id! })
+    if ('deleteForMe' in change) this.changes.push({ jid, change: 'delete-for-me', id: change.deleteForMe.key.id!, timestamp: change.deleteForMe.timestamp })
     else if ('star' in change) for (const m of change.star.messages) this.changes.push({ jid, change: 'star', id: m.id, starred: change.star.star })
     else this.changes.push({ jid, change: 'archive', id: change.lastMessages.at(-1)?.key.id ?? '', archived: change.archive })
   }
@@ -221,6 +223,7 @@ export class FakeWaSocket implements WaSocket {
   }
 
   async readMessages(keys: WAMessageKey[]) {
+    if (this.failReads) throw new Error('Connection Closed')
     this.read.push(...keys)
   }
 
@@ -523,12 +526,18 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
 
 /* ── A browser stand-in: keeps the session cookie, reads server-sent events ── */
 
+let visitors = 0
+
 export class Browser {
   cookie = ''
   private readonly base: string
+  /** Each browser is its own visitor, as rate limits see it (the server trusts one proxy). */
+  readonly address: string
 
   constructor(base: string) {
     this.base = base
+    visitors++
+    this.address = `10.${(visitors >> 16) & 255}.${(visitors >> 8) & 255}.${visitors & 255}`
   }
 
   async request(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
@@ -537,6 +546,7 @@ export class Browser {
       headers: {
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(this.cookie ? { Cookie: this.cookie } : {}),
+        'X-Forwarded-For': this.address,
         ...headers,
       },
       body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
@@ -557,7 +567,7 @@ export class Browser {
   async raw(method: string, path: string, body?: Buffer, headers: Record<string, string> = {}) {
     const res = await fetch(this.base + path, {
       method,
-      headers: { ...(this.cookie ? { Cookie: this.cookie } : {}), ...headers },
+      headers: { ...(this.cookie ? { Cookie: this.cookie } : {}), 'X-Forwarded-For': this.address, ...headers },
       ...(body ? { body: new Uint8Array(body) } : {}),
     })
     return { status: res.status, headers: res.headers, body: Buffer.from(await res.arrayBuffer()) }

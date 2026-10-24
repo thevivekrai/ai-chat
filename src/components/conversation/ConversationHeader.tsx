@@ -136,7 +136,15 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
 /** What else can be done with the chat. */
 function ChatMenu({ threadId, archived }: { threadId: string; archived: boolean }) {
   const incognito = useIncognito()
+  const searching = useUi((s) => s.chatSearch?.threadId === threadId)
   const items: MenuItem[] = [
+    // Also a button in the header, except on phones, where there's no room for it.
+    {
+      id: 'search',
+      label: searching ? 'Close search' : 'Search in this chat',
+      icon: Search,
+      onSelect: () => useUi.getState().setChatSearch(searching ? null : { threadId, query: '', current: null }),
+    },
     archived
       ? { id: 'unarchive', label: 'Unarchive chat', icon: ArchiveRestore, onSelect: () => void archiveThread(threadId, false) }
       : { id: 'archive', label: 'Archive chat', icon: Archive, onSelect: () => void archiveThread(threadId, true) },
@@ -163,6 +171,7 @@ function ChatSearchButton({ threadId }: { threadId: string }) {
     <Button
       variant={searching ? 'soft' : 'ghost'}
       size="icon-sm"
+      className="max-sm:hidden"
       aria-pressed={searching}
       aria-label="Search in this chat"
       title="Search in this chat"

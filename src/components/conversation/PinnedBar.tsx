@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { Pin } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
+import { isPinned } from '@/data/types'
 import { messagePreview } from '@/lib/format'
+import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { useUi } from '@/store/ui'
 
@@ -10,7 +12,8 @@ import { useUi } from '@/store/ui'
  * and moves on to the next, as in WhatsApp.
  */
 export function PinnedBar({ threadId }: { threadId: string }) {
-  const pinned = useInbox(useShallow((s) => (s.messages[threadId] ?? []).filter((m) => m.pinned && !m.deleted).reverse()))
+  const now = useClock((s) => s.now)
+  const pinned = useInbox(useShallow((s) => (s.messages[threadId] ?? []).filter((m) => isPinned(m, now)).reverse()))
   const contacts = useInbox((s) => s.contacts)
   const [index, setIndex] = useState(0)
   if (!pinned.length) return null

@@ -80,6 +80,17 @@ export function Composer({ threadId }: { threadId: string }) {
     selectNextBlank(el)
   })
 
+  // The message being edited was deleted (here, or on another device): there's nothing to save the
+  // edit to, so it's dropped, and what was being written before comes back.
+  // (Only once the chat has loaded: after a reload the edit is restored before its messages are.)
+  const loaded = useInbox((s) => s.status === 'ready' && !!s.messages[threadId])
+  const editGone = !!editingId && loaded && (!editing || !!editing.deleted)
+  useEffect(() => {
+    if (!editGone) return
+    cancelEdit(threadId)
+    toast({ title: 'That message was deleted', description: 'So there was nothing left to edit.', group: 'message-action' })
+  }, [editGone, threadId])
+
   if (!thread) return null
   const setText = (value: string) => {
     setConfirmingBlanks(false)

@@ -11,6 +11,7 @@ import type { MatrixLogin } from './connectors/matrix/matrixConnector'
 import type {
   LinkedNetwork,
   PublicAccount,
+  PublicUser,
   TelegramCodeResult,
   TelegramVerifyResult,
   WhatsAppLinkResult,
@@ -129,6 +130,8 @@ export interface ConnectionsApi {
   setServerSession(user: { id: string; name: string } | null): Promise<void>
   /** Called when the server says the session ended (expired, or signed out elsewhere). */
   onSignedOut(listener: () => void): () => void
+  /** Called when the account changes, on this device or another (its name, Incognito mode…). */
+  onUserUpdated(listener: (user: PublicUser) => void): () => void
 
   /** Starts linking WhatsApp: resolves with a code to type into WhatsApp, or a QR code. */
   linkWhatsApp(request: { method: 'code'; phone: string } | { method: 'qr' }): Promise<WhatsAppLinkResult>

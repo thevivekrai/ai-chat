@@ -140,8 +140,9 @@ account.
   key and a new password. The key then stops working and a new one is shown, and the account's
   other sessions end. Only a SHA-256 hash of the key is stored. Resets are rate-limited more tightly
   than sign-ins. **Settings → Profile** makes a new key with the current password, for accounts
-  made before keys existed or a lost key. Linking Google to an account with the same email removes
-  its key, for the same reason it turns the password off.
+  made before keys existed or a lost key. Changing the password gives a new key too (the old one
+  stops working: someone who knew the old password could have made it). Linking Google to an
+  account with the same email removes its key, for the same reason it turns the password off.
 - **Google**: the ID token from Google's button is verified on the server (signature, issuer,
   audience, expiry, verified email). Signing in with Google to an existing account with the same
   email links the two, and turns that account's password off and ends its sessions, since email
@@ -212,8 +213,11 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
   streams it to the browser, which caches it. The link carries, encrypted, what the network needs
   to find the file again, so it keeps working for messages the server no longer keeps.
 - **Sending:** the browser hands the file to the server, which passes it straight on to WhatsApp or
-  Telegram (they keep it). Up to 50 MB each, ten at a time; the message text becomes the first
-  one's caption.
+  Telegram (they keep it). Up to 50 MB each, ten at a time, sent one after another in the order
+  picked; the message text becomes the first one's caption (text longer than a caption's 1,024
+  characters goes as its own message first). JPEG and PNG go as photos; anything else, WebP
+  included, as a file. A photo that couldn't be fetched (the network reconnecting, say) offers
+  **Try again**.
 - **Safety:** a link works only for the account it belongs to. Only plain images, video and audio
   are shown in the page; anything else (say, an HTML file someone sent) is always a download, and
   is served with a sandboxing policy, so it can't run as part of the site.
@@ -248,7 +252,10 @@ Each message's **⋯** menu (hover, or tap the message on a phone) has what its 
   large groups and channels have no "delete for me" (deleting there deletes for everyone), so
   there it's removed from Sytext only.
 - **Pin** pins it in the chat for everyone (on WhatsApp for 30 days, the longest it offers). The
-  chat's pinned messages show in a bar above it; tapping it jumps to each in turn.
+  chat's pinned messages show in a bar above it; tapping it jumps to each in turn. WhatsApp pins
+  run out after the time they were pinned for (24 hours, 7 days or 30 days), and leave the bar then
+  too. Pinning or starring an old message keeps it on the server however old, so it shows on every
+  device.
 - **Star** keeps it under **Starred** in the sidebar, from every chat, newest first. On WhatsApp
   it's starred on your phone too; Telegram has no stars, so they're kept by Sytext.
 - **Copy text.**
@@ -278,12 +285,13 @@ them, into **Archived** in the sidebar (its count is archived chats with somethi
 at the top:
 
 - **No read receipts.** Opening a chat clears its unread count in Sytext, but WhatsApp's blue
-  ticks and Telegram's "seen" don't go out (Matrix gets a private read receipt). To let one chat
-  know, choose **Mark as read for them** in its ⋯ menu.
+  ticks and Telegram's "seen" don't go out (Matrix gets a private read receipt). It stays read in
+  Sytext even though WhatsApp and Telegram still count it unread. To let one chat know, choose
+  **Mark as read for them** in its ⋯ menu (it says so if that can't go out right now).
 - **No "typing…"** while you write.
-- Signed in, it's a setting of your account: every device follows it, and the server itself
-  won't send read receipts or typing for you, whatever an older copy of the app asks. Without an
-  account it applies on that device.
+- Signed in, it's a setting of your account: every device follows it at once, and the server
+  itself won't send read receipts or typing for you, whatever an older copy of the app asks.
+  Without an account it applies on that device.
 - Replying still shows you were there, of course, and opening the chat on your phone may send
   read receipts from the phone.
 

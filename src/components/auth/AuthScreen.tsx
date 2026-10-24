@@ -175,8 +175,8 @@ export function AuthScreen() {
 
         {mode === 'recover' && (
           <p className="mt-4 text-[11px] leading-relaxed text-faint">
-            No recovery key? Accounts made before recovery keys existed don't have one: if you're still signed in somewhere,
-            make one in Settings → Profile. If you sign in with Google, use Continue with Google instead.
+            No recovery key? Then a forgotten password can't be reset here: Sytext can't email you a link. If you sign in
+            with Google, use Continue with Google instead. Once you're back in, make a key in Settings → Profile.
           </p>
         )}
 

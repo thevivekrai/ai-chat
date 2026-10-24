@@ -7,6 +7,7 @@ import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/d
 import type { MessageAction } from '@/data/types'
 import { myReaction } from '@/data/reactions'
 import { serverApi } from '@/data/server/serverApi'
+import { MAX_CAPTION } from '@/data/server/types'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
@@ -44,8 +45,14 @@ export async function sendReply(threadId: string, text: string, files: File[] = 
     await inbox.sendMessage(threadId, body, replyToId ? { replyToId } : undefined)
     return
   }
+  // Text too long for a caption goes first, as a message of its own (with the quote), then the files.
+  const ownMessage = body.length > MAX_CAPTION
+  if (ownMessage) await inbox.sendMessage(threadId, body, replyToId ? { replyToId } : undefined)
+  // All shown at once; they go one after another, in this order (see the server connector).
   await Promise.all(
-    files.map((file, i) => inbox.sendMessage(threadId, i === 0 ? body : '', { file, ...(i === 0 && replyToId ? { replyToId } : {}) })),
+    files.map((file, i) =>
+      inbox.sendMessage(threadId, i === 0 && !ownMessage ? body : '', { file, ...(i === 0 && !ownMessage && replyToId ? { replyToId } : {}) }),
+    ),
   )
 }
 
@@ -76,16 +83,28 @@ export function startEdit(threadId: string, messageId: string) {
   const message = useInbox.getState().messages[threadId]?.find((m) => m.id === messageId)
   if (!message) return
   const ui = useUi.getState()
+  // What was being written is set aside, and comes back when the edit is saved or cancelled.
+  if (!ui.editing[threadId]) setAside(threadId)
   ui.setReplyingTo(threadId, null)
   ui.setEditing(threadId, messageId)
   ui.setComposer(threadId, message.body)
   ui.focusComposer()
 }
 
+function setAside(threadId: string) {
+  const ui = useUi.getState()
+  const replyingTo = ui.replyingTo[threadId]
+  ui.setEditDraft(threadId, { text: ui.composer[threadId] ?? '', ...(replyingTo ? { replyingTo } : {}) })
+}
+
+/** Leaves the edit; the reply that was being written before it comes back. */
 export function cancelEdit(threadId: string) {
   const ui = useUi.getState()
+  const draft = ui.editDrafts[threadId]
   ui.setEditing(threadId, null)
-  ui.setComposer(threadId, '')
+  ui.setEditDraft(threadId, null)
+  ui.setComposer(threadId, draft?.text ?? '')
+  if (draft?.replyingTo) ui.setReplyingTo(threadId, draft.replyingTo)
 }
 
 /** Saves the composer's text as the edited message. */
@@ -98,9 +117,11 @@ export async function saveEdit(threadId: string, text: string) {
   cancelEdit(threadId)
   if (before?.body === body) return
   const saved = await messageAction(threadId, messageId, { type: 'edit', body })
-  // Refused (too late to edit, say): the text comes back, unless something else is being written by now.
+  // Refused (too late to edit, say): back to editing, with the new text, unless another edit began.
   const now = useUi.getState()
-  if (!saved && !now.editing[threadId] && !now.composer[threadId]?.trim()) {
+  if (!saved && !now.editing[threadId]) {
+    setAside(threadId)
+    now.setReplyingTo(threadId, null)
     now.setEditing(threadId, messageId)
     now.setComposer(threadId, text)
   }
@@ -433,11 +454,19 @@ export async function signOut() {
 
 /** Sends the user back to the sign-in screen when the server ends the session. */
 export function watchSession() {
-  return api.connections.onSignedOut(() => {
+  const offSignedOut = api.connections.onSignedOut(() => {
     if (useSession.getState().status !== 'signed-in') return
     forgetThreadsHere(isServerThread)
     void useSession.getState().signedOut('You were signed out. Sign in again to see your chats.')
   })
+  // Changed on another device (Incognito mode turned on there, say): this one follows at once.
+  const offUser = api.connections.onUserUpdated((user) => {
+    if (useSession.getState().user?.id === user.id) useSession.getState().setUser(user)
+  })
+  return () => {
+    offSignedOut()
+    offUser()
+  }
 }
 
 /** Turns Incognito mode on or off: for the account when signed in, else on this device. */
@@ -470,8 +499,11 @@ export async function renameUser(name: string) {
 }
 
 export async function changePassword(password: string, current?: string) {
-  const { user } = await serverApi.setPassword({ password, current })
+  const { user, recoveryKey } = await serverApi.setPassword({ password, current })
   useSession.getState().setUser(user)
+  // A new password comes with a new recovery key: the old one could have been made by whoever knew
+  // the old password.
+  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey)
   toast({ title: 'Password saved', description: 'Other devices were signed out.', group: 'session' })
 }
 

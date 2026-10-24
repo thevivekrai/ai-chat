@@ -56,6 +56,15 @@ export interface ThreadViewInput {
   now: number
 }
 
+/**
+ * What a message says, for the reply rules. A voice message, photo or file says something even
+ * with no text; a sticker on its own is like a 👍, and a deleted message says nothing.
+ */
+function replyText(m: Message): string {
+  if (m.deleted) return ''
+  return m.body.trim() || m.attachments?.find((a) => a.kind !== 'sticker')?.name || ''
+}
+
 function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
   const messages = input.messages[thread.id] ?? []
   const last = messages[messages.length - 1]
@@ -63,7 +72,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
   const fromMeLast = last?.senderId === ME_ID
 
   const pending: Message[] = []
-  for (let i = messages.length - 1; i >= 0 && messages[i].senderId !== ME_ID; i--) pending.unshift(messages[i])
+  for (let i = messages.length - 1; i >= 0 && messages[i].senderId !== ME_ID; i--) pending.unshift({ ...messages[i], body: replyText(messages[i]) })
 
   const participants = thread.participantIds.map((id) => input.contacts[id]).filter((c): c is Contact => !!c)
   const aiAllowed = input.canRead(thread.id)

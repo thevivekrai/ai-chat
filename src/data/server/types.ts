@@ -1,4 +1,4 @@
-import type { Contact, Message, Thread } from '../types'
+import type { Attachment, Contact, Message, Thread } from '../types'
 
 /**
  * What the Sytext server and the web app send each other. The server (../../../server) imports
@@ -92,6 +92,12 @@ export const MESSAGES_KEPT_PER_CHAT = 40
  */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 
+/** Sent as photos (anything else goes as a file): the types WhatsApp and Telegram both take as one. */
+export const isPhotoType = (mime: string) => /^image\/(jpeg|png)$/.test(mime)
+
+/** The longest caption a photo or file is sent with; longer text goes as a message of its own. */
+export const MAX_CAPTION = 1024
+
 /**
  * What a device knows about a message the server may no longer keep: enough for the network to
  * find it (to react to it, quote it or load what came before it).
@@ -101,6 +107,8 @@ export interface MessageHint {
   senderId: string
   sentAt: string
   body?: string
+  /** With a pin or star of a message the server no longer keeps: what it showed, to keep a copy. */
+  attachments?: Attachment[]
 }
 
 /** Linked chats on load: every chat, and the latest messages of each (as many as the server keeps). */
@@ -108,6 +116,8 @@ export interface ServerInbox {
   threads: Thread[]
   contacts: Contact[]
   messages: Message[]
+  /** Messages deleted for me lately, for devices that were away when it happened. */
+  deleted?: string[]
   accounts: PublicAccount[]
 }
 
@@ -126,6 +136,8 @@ export type ServerEvent =
   | { type: 'typing'; threadId: string; senderId: string; active: boolean }
   /** Many things changed at once (a history sync): fetch the inbox again. */
   | { type: 'reloaded' }
+  /** The account itself changed (its name, Incognito mode…), on this device or another. */
+  | { type: 'user.updated'; user: PublicUser }
 
 /** Linking WhatsApp: the code to type into WhatsApp, or a QR code to scan. */
 export type WhatsAppLinkResult = { code: string } | { qr: string }
