@@ -35,3 +35,5 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: AI_API
+        sync: false

@@ -259,6 +259,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         uploads: false,
         database: true,
         storage: 'database',
+        ai: false,
       })
     })
   })

@@ -77,6 +77,8 @@ export interface ServerFeatures {
   storage?: 'database' | 'temporary'
   /** Why the database in MONGODB_URI isn't in use, while it isn't. */
   databaseProblem?: DatabaseProblem
+  /** The server offers its shared AI to everyone signed in. */
+  ai?: boolean
 }
 
 /**

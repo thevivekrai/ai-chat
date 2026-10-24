@@ -14,7 +14,8 @@ import { useAi } from './ai'
 import { isUnsentHere, useInbox } from './inbox'
 import { incognitoOn } from './privacy'
 import { useSession } from './session'
-import { usesClaude, useSettings, type ClaudeSettings } from './settings'
+import { currentAiEngine } from './aiEngine'
+import { useSettings, type AiSettings } from './settings'
 import { toast, useToasts } from './toasts'
 import { useUi } from './ui'
 
@@ -316,9 +317,11 @@ export function turnOnAi(options: { threadIds?: string[]; quiet?: boolean } = {}
   settings.setAiEnabled(true)
   if (options.quiet) return
   const count = useSettings.getState().aiThreadIds.length
-  const where = usesClaude(useSettings.getState())
-    ? 'They are sent to Claude when an AI feature runs.'
-    : 'The built-in demo AI runs on this device.'
+  const engine = currentAiEngine()
+  const where =
+    engine.kind === 'demo'
+      ? 'The built-in demo AI runs on this device.'
+      : `They are sent to ${engine.name} when an AI feature runs.`
   toast({
     title: 'AI is on',
     description: `It can read ${count} of ${allIds.length} chats. ${where}`,
@@ -527,16 +530,11 @@ export async function setDemoShown(shown: boolean) {
   await api.connections.setDemoEnabled(shown)
 }
 
-/* ── Claude ──────────────────────────────────────────────────────────────── */
+/* ── AI engine ───────────────────────────────────────────────────────────── */
 
-/** Saves the key or model choice. Results from another engine or model are recomputed. */
-export function updateClaude(patch: Partial<ClaudeSettings>) {
-  const before = useSettings.getState().claude
-  useSettings.getState().setClaude(patch)
-  const after = useSettings.getState().claude
-  const changed =
-    before.apiKey.trim() !== after.apiKey.trim() || before.model !== after.model || before.triageModel !== after.triageModel
-  if (changed) useAi.getState().forgetAll()
+/** Saves the AI choice, keys or models. Results from another engine or model are recomputed (aiEngine.ts). */
+export function updateAi(patch: Partial<AiSettings>) {
+  useSettings.getState().setAi(patch)
 }
 
 /** After a setup problem (say, a rejected key), resumes the automatic AI calls. */
@@ -548,12 +546,12 @@ export function retryAi() {
   useAi.getState().ensureTasks(threadId)
 }
 
-/** Tells the user once when Claude can't run at all, instead of failing quietly per chat. */
+/** Tells the user once when the AI can't run at all, instead of failing quietly per chat. */
 export function watchAiProblems() {
   return useAi.subscribe((state, prev) => {
     if (!state.problem || state.problem.message === prev.problem?.message) return
     toast({
-      title: "Claude couldn't run",
+      title: `${currentAiEngine().name} couldn't run`,
       description: state.problem.message,
       group: 'ai-problem',
       action: { label: 'Settings', run: () => useUi.getState().openSettings('ai') },

@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn'
 import { byDue, DAY, formatWhen, startOfDay, toMs } from '@/lib/time'
 import { addExtractedTask, openThread, turnOnAi } from '@/store/actions'
 import { useAi } from '@/store/ai'
+import { engineKey, useAiEngine } from '@/store/aiEngine'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { useSettings } from '@/store/settings'
@@ -35,12 +36,13 @@ export function TasksView() {
   const extracted = useAi((s) => s.tasks)
   const networks = useUi((s) => s.networks)
   const now = useClock((s) => s.now)
+  const engine = engineKey(useAiEngine())
 
   // Look for tasks in every chat AI is allowed to read.
   useEffect(() => {
     if (!aiEnabled) return
     for (const id of aiThreadIds) if (threads[id]) useAi.getState().ensureTasks(id)
-  }, [aiEnabled, aiThreadIds, threads])
+  }, [aiEnabled, aiThreadIds, threads, engine])
 
   const { groups, done } = useMemo(() => {
     const visible = tasks.filter((t) => inNetworks(t.source?.threadId, threads, networks))

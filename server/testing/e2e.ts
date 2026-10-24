@@ -42,7 +42,31 @@ import { mediaMessage, PIXEL, startTestServer, TEST_MONGODB_URI } from './helper
 
 if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
 
-const server = await startTestServer({ port: 5180, staticDir: resolve('dist'), sharedPhone: true })
+/** A stand-in for Google's Gemini behind the shared AI: answers each task, and counts calls. */
+const aiCalls: { model: string; task: string }[] = []
+let aiDown = false
+const CANNED: Record<string, unknown> = {
+  priority: { priority: 'urgent', expectsReply: true, reason: 'Ravi is waiting on the planter order.' },
+  summary: { oneLine: 'Ravi wants two more planters shipped next week.', bullets: ['Two more planters', 'Ship next week', 'Courier being booked'] },
+  tasks: { tasks: [] },
+  drafts: { short: 'Shipping Monday.', friendly: 'Hi Ravi! Both planters ship Monday 🙂', professional: 'Hello Ravi, both planters will ship on Monday.' },
+  answer: { answer: 'Ravi asked for **2 more planters**.', citedMessageIds: [] },
+}
+const fakeGemini = (async (url: string | URL | Request, init?: RequestInit) => {
+  const body = JSON.parse(String(init?.body ?? '{}'))
+  const required: string[] = body.generationConfig?.responseJsonSchema?.required ?? []
+  const task = Object.keys(CANNED).find((t) => Object.keys(CANNED[t] as object).join() === required.join()) ?? 'summary'
+  aiCalls.push({ model: String(url).split('/models/')[1]!.split(':')[0]!, task })
+  if (aiDown) return Response.json({ error: { code: 429, message: 'Quota exceeded' } }, { status: 429 })
+  return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(CANNED[task]) }] } }] })
+}) as typeof fetch
+
+const server = await startTestServer({
+  port: 5180,
+  staticDir: resolve('dist'),
+  sharedPhone: true,
+  ai: { apiKey: 'e2e-key', model: 'gemini-main', triageModel: 'gemini-light', fetch: fakeGemini },
+})
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'
 const KIRAN = '919800011122@s.whatsapp.net'
@@ -347,6 +371,11 @@ createServer(async (req, res) => {
         }),
       )
       return
+    } else if (req.url === '/ai/calls') {
+      res.writeHead(200).end(JSON.stringify(aiCalls))
+      return
+    } else if (req.url === '/ai/down') {
+      aiDown = !!input.down
     } else if (req.url === '/trim') {
       res.writeHead(200).end(String(await server.current().store.trim()))
       return

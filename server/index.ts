@@ -175,6 +175,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     files,
     secureCookies: config.production,
     staticDir,
+    ai: config.ai ?? null,
     ...(temporaryProblem ? { temporaryStorage: { problem: temporaryProblem } } : {}),
   })
 
@@ -183,6 +184,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     config.telegram && 'Telegram',
     config.cloudinary && 'profile photo uploads',
     config.keepAwakeUrl && 'keep-awake',
+    config.ai && 'shared AI',
   ]
   console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)
 

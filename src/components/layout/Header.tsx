@@ -28,7 +28,8 @@ import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
 import { useIncognito } from '@/store/privacy'
 import { useSession } from '@/store/session'
-import { usesClaude, useSettings, type ThemePreference } from '@/store/settings'
+import { engineWhere, useAiEngine } from '@/store/aiEngine'
+import { useSettings, type ThemePreference } from '@/store/settings'
 import { useUi } from '@/store/ui'
 import { Logo } from './LogoMark'
 
@@ -170,9 +171,8 @@ function IncognitoBadge() {
 }
 
 function PrivacyBadge() {
-  const { aiEnabled, aiThreadIds, claude } = useSettings(
-    useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds, claude: usesClaude(s) })),
-  )
+  const { aiEnabled, aiThreadIds } = useSettings(useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds })))
+  const engine = useAiEngine()
   const total = useInbox((s) => Object.keys(s.threads).length)
   // Chats linked on the server are stored there (encrypted), not only in this browser.
   const linked = useConnections((s) => !!(s.server?.whatsapp || s.server?.telegram))
@@ -222,9 +222,7 @@ function PrivacyBadge() {
             </p>
             <p className="mt-1 text-muted">
               AI only reads the chats you select, and only when a feature needs it.{' '}
-              {claude
-                ? 'They are sent to Claude with your API key.'
-                : 'The built-in demo AI runs on this device.'}
+              {engineWhere(engine)}
             </p>
           </div>
           <Button

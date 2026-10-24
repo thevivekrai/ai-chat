@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { Readable } from 'node:stream'
 import { exportJWK, generateKeyPair, SignJWT, createLocalJWKSet } from 'jose'
+import type { SharedAi } from '../ai.ts'
 import type { AuthenticationState, BaileysEventMap, WAMessage, WAMessageKey } from '@whiskeysockets/baileys'
 import { createApp } from '../app.ts'
 import { createGoogleVerifier } from '../auth/google.ts'
@@ -445,7 +446,8 @@ export async function startTestServer({
   port: fixedPort = 0,
   staticDir,
   sharedPhone = false,
-}: { port?: number; staticDir?: string; sharedPhone?: boolean } = {}): Promise<TestServer> {
+  ai,
+}: { port?: number; staticDir?: string; sharedPhone?: boolean; ai?: SharedAi } = {}): Promise<TestServer> {
   const dbName = `tidings_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const database = await connectDatabase(TEST_MONGODB_URI!, dbName)
   const sealer = createSealer(Buffer.alloc(32, 7))
@@ -511,6 +513,7 @@ export async function startTestServer({
       maxFileBytes: MAX_TEST_FILE_BYTES,
       secureCookies: false,
       staticDir,
+      ai,
     })
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(port, '127.0.0.1', () => resolve(s))

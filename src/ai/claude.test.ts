@@ -30,7 +30,7 @@ const message = (output: unknown, stop_reason = 'end_turn') => ({
 // The SDK keeps one client per key, and a client keeps the fetch it was created with.
 let keyCounter = 0
 function useClaude() {
-  setLlmConfig({ apiKey: `sk-test-${++keyCounter}`, model: 'claude-opus-5-5', triageModel: 'claude-haiku-5-5' })
+  setLlmConfig({ provider: 'anthropic', apiKey: `sk-test-${++keyCounter}`, model: 'claude-opus-5-5', triageModel: 'claude-haiku-5-5' })
 }
 
 beforeEach(() => {

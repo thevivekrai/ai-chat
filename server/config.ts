@@ -30,6 +30,11 @@ export interface Config {
    * for the database instead.
    */
   temporaryStorage: boolean
+  /**
+   * Turns on the shared AI for everyone signed in: a Google Gemini API key in AI_API (or
+   * GEMINI_API_KEY). AI_MODEL and AI_TRIAGE_MODEL choose the models.
+   */
+  ai?: { apiKey: string; model: string; triageModel: string }
 }
 
 export class ConfigError extends Error {}
@@ -62,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (jwtSecret.length < 32) throw new ConfigError('JWT_SECRET must be at least 32 characters of random text.')
 
   const apiId = Number(env.TELEGRAM_API_ID)
+  const aiKey = (env.AI_API ?? env.GEMINI_API_KEY)?.trim()
   const cloud = [env.CLOUDINARY_CLOUD_NAME, env.CLOUDINARY_API_KEY, env.CLOUDINARY_API_SECRET].map((v) => v?.trim())
 
   return {
@@ -75,6 +81,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
     keepAwakeUrl: isOff(env.KEEP_AWAKE) ? undefined : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
     temporaryStorage: !isOff(env.TEMPORARY_STORAGE),
+    ai: aiKey
+      ? {
+          apiKey: aiKey,
+          model: env.AI_MODEL?.trim() || 'gemini-flash-latest',
+          triageModel: env.AI_TRIAGE_MODEL?.trim() || 'gemini-flash-lite-latest',
+        }
+      : undefined,
   }
 }
 
