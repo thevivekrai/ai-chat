@@ -54,6 +54,8 @@ interface InboxState {
   loadOlder(threadId: string): Promise<void>
   /** Sends a failed message again. */
   retryMessage(threadId: string, messageId: string): Promise<void>
+  /** Gives up on a message that wasn't sent: it goes, with the file it held on to. */
+  discardMessage(threadId: string, messageId: string): void
   /** Clears the unread count; `receipt: false` (Incognito mode) tells nobody else. */
   markRead(threadId: string, options?: ReadOptions): void
   /** Updates done/snoozed state and returns the previous state, for undo. */
@@ -261,15 +263,21 @@ export const useInbox = create<InboxState>()((set, get) => {
     async retryMessage(threadId, messageId) {
       const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
       if (!failed) return
-      set((s) => ({ messages: { ...s.messages, [threadId]: s.messages[threadId].filter((m) => m.id !== messageId) } }))
       const file = unsentFiles.get(messageId)
-      unsentFiles.delete(messageId)
-      const preview = failed.attachments?.[0]?.url
-      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
+      get().discardMessage(threadId, messageId)
       await get().sendMessage(threadId, failed.body, {
         ...(failed.replyTo ? { replyToId: failed.replyTo.id } : {}),
         ...(file ? { file } : {}),
       })
+    },
+
+    discardMessage(threadId, messageId) {
+      const failed = get().messages[threadId]?.find((m) => m.id === messageId && m.status === 'failed')
+      if (!failed) return
+      removeMessage(threadId, messageId)
+      unsentFiles.delete(messageId)
+      const preview = failed.attachments?.[0]?.url
+      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
     },
 
     async actOnMessage(threadId, messageId, action) {

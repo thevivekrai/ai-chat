@@ -14,6 +14,7 @@ import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, type Avatars, type Picture } from '../inbox/avatars.ts'
 import { sizeLabel, type FileBody, type FileLinks, type FileRef, type Upload } from '../inbox/files.ts'
+import { messageChanges } from '../inbox/changes.ts'
 import type { InboxStore, StoredMessage } from '../inbox/store.ts'
 import type { Hub } from '../realtime.ts'
 import type { Accounts } from './accounts.ts'
@@ -658,6 +659,7 @@ type VerifyResult = TelegramVerifyResult
 
 export function createTelegram(deps: TelegramDeps) {
   const { sealer, store, accounts, hub, avatars, files, api } = deps
+  const { changeMessage, removeForMe } = messageChanges({ store, hub })
   const createClient = deps.createClient ?? createGramClient
   const pending = new Map<string, PendingLogin>()
   const pictures = createQueue()
@@ -802,7 +804,7 @@ export function createTelegram(deps: TelegramDeps) {
   async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
     const stored = await store.message(s.userId, id)
     if (!stored || stored.attachments?.some((a) => a.url)) return
-    await updateAndPublish(s, id, { body, attachments })
+    await changeMessage(s.userId, id, { body, attachments })
   }
 
   /**
@@ -826,23 +828,6 @@ export function createTelegram(deps: TelegramDeps) {
     return { ...attachment, url: files.urlFor(userId, ref) }
   }
 
-  async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
-    await changeMessage(s.userId, id, patch)
-  }
-
-  /** Changes a kept message and tells the user's devices; null when the server doesn't keep it. */
-  async function changeMessage(userId: ObjectId, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
-    const message = await store.updateMessage(userId, id, patch)
-    if (message) hub.publish(keyOf(userId), { type: 'message.updated', message })
-    return message
-  }
-
-  /** Deleted (for me, or for everyone, which on Telegram is gone too): from the server and every device. */
-  async function removeForMe(userId: ObjectId, threadId: string, messageId: string) {
-    await store.deleteMessage(userId, threadId, messageId)
-    hub.publish(keyOf(userId), { type: 'message.deleted', threadId, messageId })
-  }
-
   async function onUpdate(s: Session, update: TgUpdate) {
     if (s.stopped) return
     switch (update.type) {
@@ -852,7 +837,7 @@ export function createTelegram(deps: TelegramDeps) {
       case 'edited': {
         const m = update.message
         // Telegram also reports changes that aren't edits (a link preview loading, say): those have no edit date.
-        return updateAndPublish(s, `tga:${m.chat.id}:${m.id}`, {
+        return changeMessage(s.userId, `tga:${m.chat.id}:${m.id}`, {
           body: m.text || m.media?.body || '',
           ...(m.editDate ? { editedAt: new Date(m.editDate * 1000).toISOString() } : {}),
           pinned: !!m.pinned,
@@ -867,7 +852,7 @@ export function createTelegram(deps: TelegramDeps) {
         return
       }
       case 'pinned':
-        for (const id of update.ids) await updateAndPublish(s, `tga:${update.chatId}:${id}`, { pinned: update.pinned })
+        for (const id of update.ids) await changeMessage(s.userId, `tga:${update.chatId}:${id}`, { pinned: update.pinned })
         return
       case 'archived': {
         s.archived.set(update.chatId, update.archived)

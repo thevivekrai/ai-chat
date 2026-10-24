@@ -3,6 +3,7 @@ import type { Response } from 'express'
 import type { ObjectId } from 'mongodb'
 import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
+import { fileSize } from '../../src/data/server/types.ts'
 
 /**
  * Photos and files in linked chats. Nothing is stored: each one gets a link on this server that
@@ -118,23 +119,37 @@ export async function serveFile(res: Response, file: FileBody, { download = fals
     return
   }
   const stream = file.data instanceof Readable ? file.data : Readable.from(file.data)
+  // Its size, where the network knows it exactly (Telegram's documents), so the browser shows how
+  // far a download has got. One that turns out longer or shorter fails, rather than saving a
+  // broken file.
+  const declared = file.size && file.size > 0 ? file.size : undefined
+  if (declared) res.setHeader('Content-Length', declared)
   await new Promise<void>((resolve) => {
     let started = false
+    let sent = 0
     stream.on('data', (chunk: Buffer) => {
       started = true
+      sent += chunk.length
+      if (declared && sent > declared) {
+        stream.destroy()
+        res.destroy()
+        return resolve()
+      }
       if (!res.write(chunk)) {
         stream.pause()
         res.once('drain', () => stream.resume())
       }
     })
     stream.on('end', () => {
-      res.end()
+      if (declared && sent !== declared) res.destroy()
+      else res.end()
       resolve()
     })
     stream.on('error', (error) => {
       console.error('[files]', error instanceof Error ? error.message : error)
       if (!started && !res.headersSent) {
         res.removeHeader('Content-Disposition')
+        res.removeHeader('Content-Length')
         // A failure isn't the file: it mustn't be kept in place of it.
         res.setHeader('Cache-Control', 'no-store')
         res.status(502).type('application/json').json({ error: "The file couldn't be fetched. Try again in a moment." })
@@ -191,9 +206,5 @@ export function decodedHeader(headers: Record<string, string | string[] | undefi
   return text
 }
 
-/** "2.4 MB", "830 KB": how big a file is, for the chat. */
-export function sizeLabel(bytes: number | undefined): string | undefined {
-  if (!bytes || bytes <= 0) return undefined
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`
-}
+/** How big a file is, for the chat (as the app shows a file being sent); nothing when unknown. */
+export const sizeLabel = (bytes: number | undefined): string | undefined => (bytes && bytes > 0 ? fileSize(bytes) : undefined)

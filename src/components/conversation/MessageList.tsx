@@ -425,6 +425,14 @@ function MessageGroup({
                     onClick={() => void useInbox.getState().retryMessage(m.threadId, m.id)}
                   >
                     Try again
+                  </button>{' '}
+                  ·{' '}
+                  <button
+                    type="button"
+                    className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
+                    onClick={() => useInbox.getState().discardMessage(m.threadId, m.id)}
+                  >
+                    Remove
                   </button>
                 </p>
               )}

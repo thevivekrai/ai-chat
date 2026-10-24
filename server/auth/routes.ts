@@ -21,6 +21,19 @@ export const toPublicUser = (u: UserDoc): PublicUser => ({
   ...(u.incognito ? { incognito: true } : {}),
 })
 
+/** The new password a request sets, if it's long enough. */
+function newPassword(body: unknown): string {
+  const password = field(body, 'password', { max: 200, trim: false })
+  if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(400, `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`)
+  return password
+}
+
+/** Changing what protects the account takes the current password. */
+async function requireCurrentPassword(body: unknown, passwordHash: string) {
+  const current = typeof (body as { current?: unknown })?.current === 'string' ? (body as { current: string }).current : ''
+  if (!(await verifyPassword(current, passwordHash))) throw new HttpError(400, "Your current password isn't right.")
+}
+
 /** A new recovery key, and what to store for it. */
 function recoveryKeyFields(now: Date) {
   const recoveryKey = newRecoveryKey()
@@ -61,11 +74,8 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
   router.post('/auth/register', limited, async (req, res) => {
     const name = field(req.body, 'name', { max: 80 })
     const email = field(req.body, 'email', { max: 254 }).toLowerCase()
-    const password = field(req.body, 'password', { max: 200, trim: false })
     if (!EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address.')
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      throw new HttpError(400, `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`)
-    }
+    const password = newPassword(req.body)
     const existing = await col.users.findOne({ email })
     if (existing) {
       throw new HttpError(
@@ -103,10 +113,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
   router.post('/auth/recover', recovering, async (req, res) => {
     const email = field(req.body, 'email', { max: 254 }).toLowerCase()
     const key = field(req.body, 'recoveryKey', { max: 100 })
-    const password = field(req.body, 'password', { max: 200, trim: false })
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      throw new HttpError(400, `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`)
-    }
+    const password = newPassword(req.body)
     const mismatch = new HttpError(401, "That email and recovery key don't match. Use the key you saved when you made your account.")
     const user = await col.users.findOne({ email })
     if (!matchesRecoveryKey(key, user?.recoveryKeyHash) || !user) throw mismatch
@@ -214,16 +221,10 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
 
   /** Sets a password (Google-only accounts) or changes it (with the current one). */
   router.post('/me/password', signedIn, limited, async (req, res) => {
-    const password = field(req.body, 'password', { max: 200, trim: false })
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      throw new HttpError(400, `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`)
-    }
+    const password = newPassword(req.body)
     const user = await col.users.findOne({ _id: userIdOf(res) })
     if (!user) throw new HttpError(401, 'Sign in to continue.')
-    if (user.passwordHash) {
-      const current = typeof req.body?.current === 'string' ? req.body.current : ''
-      if (!(await verifyPassword(current, user.passwordHash))) throw new HttpError(400, 'Your current password isn\'t right.')
-    }
+    if (user.passwordHash) await requireCurrentPassword(req.body, user.passwordHash)
     const now = new Date()
     // A new recovery key too: the old one could have been made by anyone who knew the old password,
     // and would let them take the account back.
@@ -242,8 +243,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     const user = await col.users.findOne({ _id: userIdOf(res) })
     if (!user) throw new HttpError(401, 'Sign in to continue.')
     if (!user.passwordHash) throw new HttpError(400, 'Set a password first: a recovery key is for resetting it.')
-    const current = typeof req.body?.current === 'string' ? req.body.current : ''
-    if (!(await verifyPassword(current, user.passwordHash))) throw new HttpError(400, "Your current password isn't right.")
+    await requireCurrentPassword(req.body, user.passwordHash)
     const now = new Date()
     const { recoveryKey, fields } = recoveryKeyFields(now)
     const updated = await col.users.findOneAndUpdate(

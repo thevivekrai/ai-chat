@@ -32,14 +32,20 @@ export function normalizeRecoveryKey(input: string): string | null {
   return key.length === LENGTH && [...key].every((c) => ALPHABET.includes(c)) ? key : null
 }
 
+const digest = (normalized: string) => createHash('sha256').update(normalized).digest()
+
+/** What's stored of a key. Only real keys are hashed: anything else can't be stored as one. */
 export function hashRecoveryKey(key: string): string {
-  return createHash('sha256').update(normalizeRecoveryKey(key) ?? key).digest('hex')
+  const normalized = normalizeRecoveryKey(key)
+  if (!normalized) throw new Error('Not a recovery key')
+  return digest(normalized).toString('hex')
 }
 
 export function matchesRecoveryKey(input: string, storedHash: string | undefined): boolean {
   const key = normalizeRecoveryKey(input)
-  // Hashed either way, so a malformed key or a missing hash takes as long as a wrong key.
-  const actual = createHash('sha256').update(key ?? input).digest()
+  // Hashed either way (the same way as stored), so a malformed key or a missing hash takes as long
+  // as a wrong key.
+  const actual = digest(key ?? input)
   const expected = Buffer.from(storedHash ?? '', 'hex')
   return !!key && expected.length === actual.length && timingSafeEqual(actual, expected)
 }
