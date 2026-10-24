@@ -117,6 +117,7 @@ export interface MessageHint {
   attachments?: Attachment[]
   replyTo?: QuotedMessage
   reactions?: Reaction[]
+  reactedBy?: Record<string, string>
   editedAt?: string
   /** Delivery state of my own message. */
   status?: MessageStatus

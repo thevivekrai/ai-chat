@@ -113,6 +113,11 @@ export interface Message {
   attachments?: Attachment[]
   replyTo?: QuotedMessage
   reactions?: Reaction[]
+  /**
+   * Who reacted with what, where the network says (WhatsApp): sender id (ME_ID for me) to emoji.
+   * Part of `reactions` when only some givers are known.
+   */
+  reactedBy?: Record<string, string>
   /** When it was last edited (by whoever wrote it). */
   editedAt?: string
   /** Deleted for everyone: shown as such, without its text or attachments. */

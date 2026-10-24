@@ -175,8 +175,8 @@ like WhatsApp Web; your phone doesn't have to stay online.
   each one downloads (see *Photos and files* below). Stickers show as stickers, animated ones
   too, and voice messages play in the chat (see below). The paperclip, pasting, or dropping files on
   the message box sends them; JPEG and PNG go as photos, MP4 as video, anything else as a document.
-- Quoted replies and reactions come in and go out. You see when someone is typing, and they see
-  when you are. Profile and group pictures show too.
+- Quoted replies and reactions come in and go out, also those on messages from history. You see
+  when someone is typing, and they see when you are. Profile and group pictures show too.
 - Scrolling back past what's stored asks your phone for older messages, as WhatsApp Web does.
   They arrive a moment later, if the phone is online.
 - Reading a chat in Sytext marks it read on WhatsApp; replies go out from your number.

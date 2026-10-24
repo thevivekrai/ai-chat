@@ -34,12 +34,13 @@ const MAX_EMOJI_LENGTH = 16
  */
 export function hintOf(value: unknown, id: string | undefined): MessageHint | undefined {
   if (!value || typeof value !== 'object' || !id) return undefined
-  const { id: hintId, senderId, sentAt, body, attachments, replyTo, reactions, editedAt, status } = value as Record<string, unknown>
+  const { id: hintId, senderId, sentAt, body, attachments, replyTo, reactions, reactedBy, editedAt, status } = value as Record<string, unknown>
   if (hintId !== id || typeof senderId !== 'string' || senderId.length > 300) return undefined
   if (!isDate(sentAt)) return undefined
   const files = attachmentsOf(attachments)
   const quote = quoteOf(replyTo)
   const reacted = reactionsOf(reactions)
+  const givers = giversOf(reactedBy)
   return {
     id,
     senderId,
@@ -48,6 +49,7 @@ export function hintOf(value: unknown, id: string | undefined): MessageHint | un
     ...(files ? { attachments: files } : {}),
     ...(quote ? { replyTo: quote } : {}),
     ...(reacted ? { reactions: reacted } : {}),
+    ...(givers ? { reactedBy: givers } : {}),
     ...(isDate(editedAt) ? { editedAt } : {}),
     ...(senderId === 'me' && STATUSES.has(status as MessageStatus) ? { status: status as MessageStatus } : {}),
   }
@@ -64,6 +66,15 @@ function quoteOf(value: unknown): QuotedMessage | undefined {
   const { id, senderId, body } = value as Record<string, unknown>
   if (typeof id !== 'string' || typeof senderId !== 'string' || typeof body !== 'string' || id.length > 300 || senderId.length > 300) return undefined
   return { id, senderId, body: body.slice(0, 300) }
+}
+
+/** Who reacted with what, as the device knows it. */
+function giversOf(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const entries = Object.entries(value as Record<string, unknown>)
+    .slice(0, 256)
+    .filter((e): e is [string, string] => e[0].length <= 300 && typeof e[1] === 'string' && !!e[1] && e[1].length <= MAX_EMOJI_LENGTH)
+  return entries.length ? Object.fromEntries(entries) : undefined
 }
 
 /** Everyone's reactions, as the device shows them. */

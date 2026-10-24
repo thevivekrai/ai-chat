@@ -150,6 +150,11 @@ export interface MessagePayload {
    * givers aren't known: reactionsBy goes on top of them.
    */
   reactionBase?: Reaction[]
+  /**
+   * When each giver's latest reaction (or taking it back) was given, by their own clock, as WhatsApp
+   * says: an older word of it is old news. 0 where it didn't say.
+   */
+  reactedAt?: Record<string, number>
 }
 
 export interface Collections {
