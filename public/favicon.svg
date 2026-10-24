@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sytext icon">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <path d="M18 21.5c0-3.3 2.7-6 6-6h16.5c3.3 0 6 2.7 6 6v1.5c0 3.3-2.7 6-6 6H26.2c-2.3 0-4.2 1.9-4.2 4.2v1.1c0 2.3 1.9 4.2 4.2 4.2H37.5c3.3 0 6 2.7 6 6v1.5c0 3.3-2.7 6-6 6H24c-3.3 0-6-2.7-6-6v-1.5c0-3.3 2.7-6 6-6h8.5c2.3 0 4.2-1.9 4.2-4.2v-1.1c0-2.3-1.9-4.2-4.2-4.2H24c-3.3 0-6-2.7-6-6z" fill="#f8fafc" opacity="0.96"/>
+</svg>
