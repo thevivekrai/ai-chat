@@ -76,8 +76,15 @@ export interface AiSearchSource {
   fromMe: boolean
   body: string
   sentAt: string
-  /** An open task found in this message, for questions about tasks ("what are my tasks today?"). */
-  task?: { title: string; dueAt: string | null }
+}
+
+/** An open task, for questions about tasks ("what are my tasks for today?"). */
+export interface AiTask {
+  title: string
+  dueAt: string | null
+  /** The chat it was found in, and the message, when it came from one (not added by hand). */
+  threadTitle?: string
+  messageId?: string
 }
 
 export interface SearchAnswer {

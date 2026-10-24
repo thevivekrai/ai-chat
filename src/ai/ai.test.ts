@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { asksAboutTasks, buildAnswerSources, taskSources } from '@/store/aiInput'
+import { asksAboutTasks, buildAnswerSources, openTasks } from '@/store/aiInput'
 import { searchMessages } from '@/data/search'
 import { NOW, aiThread, seedState } from '@/test/fixtures'
 import {
@@ -13,6 +13,7 @@ import {
   summarizeThread,
 } from '.'
 import { heuristicExpectsReply } from './mock/heuristics'
+import { buildAnswerPrompt } from './prompts'
 
 const THREAD_IDS = Object.keys(seedState().threads)
 
@@ -154,24 +155,48 @@ describe('answerQuestion', () => {
   it('answers "what are my tasks for today?" from the open tasks', async () => {
     const state = seedState()
     const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString()
+    const priya = state.messages.priya[0].id
     const tasks = [
       { id: 't1', title: 'Send the invoice', dueAt: at(2), done: false, createdAt: at(-5), source: { threadId: 'sharma', messageId: 'sharma-5' } },
-      { id: 't2', title: 'Ship the planters', dueAt: at(72), done: false, createdAt: at(-5), source: { threadId: 'priya', messageId: state.messages.priya[0].id } },
+      { id: 't2', title: 'Ship the planters', dueAt: at(72), done: false, createdAt: at(-5), source: { threadId: 'priya', messageId: priya } },
       { id: 't3', title: 'Already done', dueAt: at(1), done: true, createdAt: at(-5), source: { threadId: 'sharma', messageId: 'sharma-5' } },
       { id: 't4', title: 'Private chat', dueAt: at(1), done: false, createdAt: at(-5), source: { threadId: 'divya', messageId: state.messages.divya[0].id } },
+      // Added by hand, and one from a message this device no longer has loaded.
+      { id: 't5', title: 'Renew the domain', dueAt: at(3), done: false, createdAt: at(-5) },
+      { id: 't6', title: 'Call the bank', dueAt: null, done: false, createdAt: at(-5), source: { threadId: 'sharma', messageId: 'sharma-gone' } },
     ]
     expect(asksAboutTasks('What are my tasks for today?')).toBe(true)
+    expect(asksAboutTasks('What do I have to do today?')).toBe(true)
+    expect(asksAboutTasks("What's on my to do list today?")).toBe(true)
     expect(asksAboutTasks('When is my flight?')).toBe(false)
+    // Asking about a chat, not the task list.
+    expect(asksAboutTasks('What did the supplier ask me to do?')).toBe(false)
 
-    // Open ones only, from chats AI may read, soonest first, each with its title and due date.
-    const sources = taskSources(tasks, state, (id) => id !== 'divya')
-    expect(sources.map((s) => s.task?.title)).toEqual(['Send the invoice', 'Ship the planters'])
+    // Open ones only (from chats AI may read, or added by hand), soonest first.
+    const open = openTasks(tasks, state.threads, (id) => id !== 'divya')
+    expect(open.map((t) => t.title)).toEqual(['Send the invoice', 'Renew the domain', 'Ship the planters', 'Call the bank'])
+    expect(open[0]).toMatchObject({ threadTitle: state.threads.sharma.title, messageId: 'sharma-5' })
+    expect(open[1]).toEqual({ title: 'Renew the domain', dueAt: at(3) })
 
-    const { answer, citedMessageIds } = await answerQuestion('What are my tasks for today?', sources)
-    expect(answer).toMatch(/1 task due today/)
+    const { answer, citedMessageIds } = await answerQuestion('What are my tasks for today?', [], open)
+    expect(answer).toMatch(/2 tasks due today/)
     expect(answer).toContain('**Send the invoice**')
+    expect(answer).toContain('**Renew the domain**')
     expect(answer).not.toContain('Ship the planters')
     expect(citedMessageIds).toEqual(['sharma-5'])
+
+    // Nothing due today: what's open, counted in full.
+    const later = open.slice(2)
+    expect((await answerQuestion('What are my tasks for today?', [], later)).answer).toMatch(/Nothing is due today\. You have 2 tasks open/)
+    const many = Array.from({ length: 12 }, (_, i) => ({ title: `Task ${i}`, dueAt: null }))
+    expect((await answerQuestion('my tasks?', [], many)).answer).toMatch(/12 tasks open: .*, and 7 more\./)
+
+    // Claude gets them too, with the user's time zone to tell what "today" is.
+    const prompt = buildAnswerPrompt('What are my tasks for today?', [], new Date(NOW), 'Asia/Kolkata', open)
+    expect(prompt.user).toContain("(the user's time zone: Asia/Kolkata)")
+    expect(prompt.user).toContain('Open tasks (4 in all)')
+    expect(prompt.user).toContain(`- Renew the domain · due ${at(3)} · added by hand`)
+    expect(prompt.user).toContain(`- Send the invoice · due ${at(2)} · [sharma-5] from "${state.threads.sharma.title}"`)
   })
 
   it('only uses what was retrieved', async () => {

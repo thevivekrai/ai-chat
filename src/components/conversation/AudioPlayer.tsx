@@ -27,15 +27,19 @@ export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment;
   const [rate, setRate] = useState(1)
   const bars = useMemo(() => waveBars(a.waveform, BARS, a.url ?? a.name), [a.waveform, a.url, a.name])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Shown (again: React may take it away and put it back, as StrictMode does).
+    gone.current = false
+    return () => {
       gone.current = true
       audio.current?.pause()
       if (current === audio.current) current = null
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
-    },
-    [],
-  )
+      // Fetched again if it comes back.
+      audio.current = loading.current = null
+      objectUrl.current = null
+    }
+  }, [])
 
   // The position, smoothly, while it plays.
   useEffect(() => {
@@ -96,8 +100,8 @@ export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment;
       await el.play()
     } catch (error) {
       const name = error instanceof DOMException ? error.name : ''
-      // Paused again before it started, or closed: not a failure.
-      if (name === 'AbortError') return
+      // Paused again before it started, or closed while it loaded: not a failure.
+      if (name === 'AbortError') return setState((s) => (s === 'loading' ? 'idle' : s))
       // Loading took long enough that the browser wants another tap (iOS Safari): ready for it.
       if (name === 'NotAllowedError') setState('paused')
       else setState('error')
@@ -114,6 +118,7 @@ export function AudioPlayer({ attachment: a, fromMe }: { attachment: Attachment;
       if (state === 'loading' || state === 'idle') setState('paused')
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setState('error')
+      else setState((s) => (s === 'loading' ? 'idle' : s))
     }
   }
 

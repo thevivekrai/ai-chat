@@ -10,7 +10,7 @@ import { Panel } from '@/components/ui/Panel'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import type { NetworkId, Task, Thread } from '@/data/types'
 import { cn } from '@/lib/cn'
-import { DAY, formatWhen, startOfDay, toMs } from '@/lib/time'
+import { byDue, DAY, formatWhen, startOfDay, toMs } from '@/lib/time'
 import { addExtractedTask, openThread, turnOnAi } from '@/store/actions'
 import { useAi } from '@/store/ai'
 import { useClock } from '@/store/clock'
@@ -22,8 +22,6 @@ interface Suggestion {
   threadId: string
   task: ExtractedTask
 }
-
-const byDue = (a: string | null, b: string | null) => (a ? toMs(a) : Infinity) - (b ? toMs(b) : Infinity)
 
 function inNetworks(threadId: string | undefined, threads: Record<string, Thread>, networks: NetworkId[]) {
   if (!networks.length) return true

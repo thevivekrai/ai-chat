@@ -1,7 +1,7 @@
-import type { AiSearchSource, AiThread } from '@/ai'
+import type { AiSearchSource, AiTask, AiThread } from '@/ai'
 import type { Contact, Me, Message, SearchHit, Task, Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
-import { toMs } from '@/lib/time'
+import { byDue } from '@/lib/time'
 
 /** Builds the minimal view of a chat that AI functions receive. */
 export function toAiThread(thread: Thread, messages: Message[], contacts: Record<string, Contact>, me: Me): AiThread {
@@ -78,25 +78,18 @@ function toSource(m: Message, thread: Thread, contacts: Record<string, Contact>,
 }
 
 /** "What are my tasks for today?": a question the task list answers better than a search. */
-export const asksAboutTasks = (question: string) => /\b(tasks?|to-?dos?|to do)\b/i.test(question)
+export const asksAboutTasks = (question: string) => /\b(tasks?|to-?dos?|to do list|(have|need|got) to do)\b/i.test(question)
 
 /**
- * Open tasks found in chats, as evidence for a question about tasks: each with the message it came
- * from, its title and its due date, soonest first. Only chats AI may read are included.
+ * Every open task, soonest due first, for a question about tasks: the ones added by hand, and
+ * those found in chats AI may read (a task's title comes from its chat).
  */
-export function taskSources(
-  tasks: Task[],
-  { threads, messages, contacts, me }: SourceInput,
-  canRead: (threadId: string) => boolean,
-): AiSearchSource[] {
-  const due = (t: Task) => (t.dueAt ? toMs(t.dueAt) : Number.POSITIVE_INFINITY)
+export function openTasks(tasks: Task[], threads: Record<string, Thread>, canRead: (threadId: string) => boolean): AiTask[] {
   return tasks
-    .filter((t) => !t.done && t.source && canRead(t.source.threadId))
-    .sort((a, b) => due(a) - due(b))
-    .slice(0, 15)
-    .flatMap((t) => {
-      const thread = threads[t.source!.threadId]
-      const message = messages[t.source!.threadId]?.find((m) => m.id === t.source!.messageId)
-      return thread && message ? [{ ...toSource(message, thread, contacts, me), task: { title: t.title, dueAt: t.dueAt } }] : []
+    .filter((t) => !t.done && (!t.source || canRead(t.source.threadId)))
+    .sort((a, b) => byDue(a.dueAt, b.dueAt))
+    .map((t) => {
+      const thread = t.source && threads[t.source.threadId]
+      return { title: t.title, dueAt: t.dueAt, ...(t.source && thread ? { threadTitle: thread.title, messageId: t.source.messageId } : {}) }
     })
 }

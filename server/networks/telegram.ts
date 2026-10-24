@@ -803,8 +803,9 @@ export function createTelegram(deps: TelegramDeps) {
   /** Gives a kept message the link to its sticker, photo or file, if it had none. */
   async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
     const stored = await store.message(s.userId, id)
-    if (!stored || stored.attachments?.some((a) => a.url)) return
-    await changeMessage(s.userId, id, { body, attachments })
+    // Deleted since, it stays deleted; edited since, it keeps the new text.
+    if (!stored || stored.deleted || stored.attachments?.some((a) => a.url)) return
+    await changeMessage(s.userId, id, { ...(stored.editedAt ? {} : { body }), attachments })
   }
 
   /**
@@ -812,12 +813,20 @@ export function createTelegram(deps: TelegramDeps) {
    * fetched from Telegram again, newest first, and gain their link. Once per connection.
    */
   async function repairFiles(s: Session) {
+    const asked: string[] = []
     for (const m of await store.missingFiles(s.userId, 'tga:', FILES_TO_REPAIR)) {
       const id = Number(m.ref?.id)
       if (!id || s.stopped) continue
-      const fresh = await s.client.message(m.threadId.slice('tga:'.length), id).catch(() => null)
+      let fresh
+      try {
+        fresh = await s.client.message(m.threadId.slice('tga:'.length), id)
+      } catch {
+        continue // Asked again next time.
+      }
+      asked.push(m.id)
       if (fresh) await saveMessage(s, fresh, { live: false })
     }
+    await store.markFilesAsked(s.userId, asked)
   }
 
   /** A message's attachment, linked so it can be opened when Telegram has it as a file. */
@@ -905,16 +914,18 @@ export function createTelegram(deps: TelegramDeps) {
         kind: d.chat.kind,
         title: d.chat.name || 'Telegram chat',
         ...(d.chat.kind === 'direct' ? { participantIds: [threadId] } : {}),
-        unreadCount: d.unreadCount,
         archived: !!d.archived,
         lastAt: new Date(d.date * 1000),
       })
       if (d.chat.kind === 'direct') await upsertContact(s, d.chat)
       fetchPicture(s, d.chat)
-      if (latest && latest.getTime() >= d.date * 1000) continue
-      for (const m of await s.client.history(d.chat.id, MESSAGES_PER_CHAT)) {
-        if ((await saveMessage(s, m, { live: false, readOutboxMaxId: d.readOutboxMaxId }))?.added) added++
+      if (!latest || latest.getTime() < d.date * 1000) {
+        for (const m of await s.client.history(d.chat.id, MESSAGES_PER_CHAT)) {
+          if ((await saveMessage(s, m, { live: false, readOutboxMaxId: d.readOutboxMaxId }))?.added) added++
+        }
       }
+      // Counted once the new messages are in, so those since an Incognito read all count.
+      await store.setUnread(s.userId, threadId, d.unreadCount)
     }
     if (s.stopped) return
     if (announce || added) publish(s, { type: 'reloaded' })
@@ -1238,7 +1249,10 @@ export function createTelegram(deps: TelegramDeps) {
       const ref = Number(target?.ref?.id) || refFromId(threadId, messageId)
       if (!ref) throw new HttpError(404, 'That message is gone.')
       const mine = (target?.senderId ?? (hint?.id === messageId ? hint.senderId : undefined)) === 'me'
-      if (!target && hint?.id === messageId) await store.keepFlagged(userId, threadId, hint, action, { id: ref })
+      // A pin or star of a message the server no longer keeps keeps it again, once it's done.
+      const keepCopy = async () => {
+        if (!target && hint?.id === messageId) await store.keepFlagged(userId, threadId, hint, action, { id: ref })
+      }
       try {
         switch (action.type) {
           case 'edit':
@@ -1254,8 +1268,10 @@ export function createTelegram(deps: TelegramDeps) {
             return { message: null, removed: true }
           case 'pin':
             await s.client.pin(chatId, ref, action.pinned)
+            await keepCopy()
             return { message: await changeMessage(userId, messageId, { pinned: action.pinned }) }
           case 'star':
+            await keepCopy()
             return { message: await changeMessage(userId, messageId, { starred: action.starred }) }
         }
       } catch (error) {

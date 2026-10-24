@@ -111,6 +111,8 @@ export class FakeWaSocket implements WaSocket {
   read: WAMessageKey[] = []
   /** WhatsApp refuses read receipts (as when the connection drops mid-send). */
   failReads = false
+  /** WhatsApp refuses whatever is sent next (messages, edits, pins). */
+  failSends = false
   loggedOut = false
   ended = false
   /** Chats with a profile picture. */
@@ -149,6 +151,7 @@ export class FakeWaSocket implements WaSocket {
   }
 
   async sendMessage(jid: string, content: WaContent, options?: { quoted?: WAMessage }) {
+    if (this.failSends) throw new Error('Connection Closed')
     if ('react' in content) {
       this.reactions.push({ jid, emoji: content.react.text, targetId: content.react.key.id! })
       return { key: { remoteJid: jid, fromMe: true, id: `REACT${this.reactions.length}` } } as WAMessage
@@ -227,7 +230,11 @@ export class FakeWaSocket implements WaSocket {
     this.read.push(...keys)
   }
 
+  /** How long WhatsApp takes to say a group's name. */
+  groupDelayMs = 0
+
   async groupMetadata() {
+    if (this.groupDelayMs) await new Promise((r) => setTimeout(r, this.groupDelayMs))
     return { subject: 'Family' }
   }
 
@@ -266,6 +273,8 @@ export function fakeTelegram() {
     typing: [] as { chatId: string; typing: boolean }[],
     /** Chats in Telegram's Archive. */
     archived: new Set<string>(),
+    /** How many of Asha's messages Telegram counts unread. */
+    ashaUnread: 1,
     qrShown: 0,
     /** Scans the QR code shown, as Telegram on a phone would. */
     scanQr: () => {},
@@ -326,7 +335,7 @@ export function fakeTelegram() {
       },
       async dialogs() {
         return [
-          { chat: asha, unreadCount: 1, readOutboxMaxId: 11, date: ashaMessages[0]!.date },
+          { chat: asha, unreadCount: state.ashaUnread, readOutboxMaxId: 11, date: ashaMessages[0]!.date },
           { chat: trek, unreadCount: 0, readOutboxMaxId: 0, date: now - 3600 },
           { chat: { id: '-100999', kind: 'group' as const, name: 'News channel', skip: true }, unreadCount: 9, readOutboxMaxId: 0, date: now },
         ].map((d) => (state.archived.has(d.chat.id) ? { ...d, archived: true } : d))

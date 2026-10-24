@@ -226,17 +226,18 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
   needs the account connected.
 - **Stickers** show on their own, without a bubble: WebP images, Telegram's WebM video stickers,
   and animated Lottie stickers (Telegram's .tgs, WhatsApp's animated ones), which the app plays
-  with lottie-web's light build. It runs nothing from the file, fetches no pictures from
-  elsewhere, loads only when one is shown, and won't unpack a sticker past 8 MB.
+  with lottie-web's light build. It runs nothing from the file, fetches no pictures or fonts from
+  elsewhere, loads only when one is shown, and stops unpacking a sticker once it passes 8 MB.
 - **Voice messages** play in the chat: a play button, the waveform WhatsApp or Telegram sends
   with it (tap or drag it to jump), how long it is, and 1× / 1.5× / 2× speed. One plays at a
   time. Audio files (music, recordings) play the same way, with their name and a download link.
   A voice message is fetched whole the first time it's played (they're small), so it can be
   scrubbed at once. Browsers that can't play WhatsApp's Ogg Opus offer it as a download instead.
 - **Kept before this existed?** Stickers, voice messages, photos and files kept by earlier
-  versions had no link (a sticker or voice message was only named). Each time the server
-  reconnects, it asks again for the latest 40 of them: WhatsApp's phone sends each one again (it
-  must be online), and Telegram is asked by message id. They then open like new ones.
+  versions had no link (a sticker or voice message was only named). When the server reconnects
+  (at most hourly), it asks again for the latest 40 of them: WhatsApp's phone sends each one again
+  (it must be online), and Telegram is asked by message id. They then open like new ones; any
+  that don't come are asked for again a day later. One deleted or edited since stays that way.
 
 ### Edit, delete, pin, star and search
 
@@ -441,7 +442,8 @@ The "Needs reply" queue is derived (`store/selectors.ts`). A chat is in it when:
 - the other person wrote last;
 - it expects a response (AI decides when allowed, simple on-device rules otherwise);
 - their last message is from the past week: after 7 days without a reply it's let go, badge and
-  all (`NEEDS_REPLY_FOR` in `src/config.ts`), and comes back when they write again;
+  all (`NEEDS_REPLY_FOR` in `src/config.ts`), and comes back when they write again (a chat snoozed
+  for longer gets its week from when the snooze ends);
 - it isn't done, snoozed or scheduled.
 
 Ids carry their source (`wa:…` and `tga:…` from the server, `tg:…`, `mx:…`, none for demo chats),

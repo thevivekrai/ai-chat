@@ -1,7 +1,7 @@
 import express, { Router, type Request, type Response } from 'express'
 import type { ObjectId } from 'mongodb'
 import { MAX_CAPTION, type MessageHint } from '../../src/data/server/types.ts'
-import type { Attachment, MessageAction } from '../../src/data/types.ts'
+import type { Attachment, MessageAction, MessageStatus, QuotedMessage, Reaction } from '../../src/data/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
 import { field, HttpError, requireUser, userIdOf } from '../http.ts'
@@ -34,11 +34,49 @@ const MAX_EMOJI_LENGTH = 16
  */
 export function hintOf(value: unknown, id: string | undefined): MessageHint | undefined {
   if (!value || typeof value !== 'object' || !id) return undefined
-  const { id: hintId, senderId, sentAt, body, attachments } = value as Record<string, unknown>
+  const { id: hintId, senderId, sentAt, body, attachments, replyTo, reactions, editedAt, status } = value as Record<string, unknown>
   if (hintId !== id || typeof senderId !== 'string' || senderId.length > 300) return undefined
-  if (typeof sentAt !== 'string' || Number.isNaN(Date.parse(sentAt))) return undefined
+  if (!isDate(sentAt)) return undefined
   const files = attachmentsOf(attachments)
-  return { id, senderId, sentAt, ...(typeof body === 'string' ? { body: body.slice(0, 4096) } : {}), ...(files ? { attachments: files } : {}) }
+  const quote = quoteOf(replyTo)
+  const reacted = reactionsOf(reactions)
+  return {
+    id,
+    senderId,
+    sentAt,
+    ...(typeof body === 'string' ? { body: body.slice(0, 4096) } : {}),
+    ...(files ? { attachments: files } : {}),
+    ...(quote ? { replyTo: quote } : {}),
+    ...(reacted ? { reactions: reacted } : {}),
+    ...(isDate(editedAt) ? { editedAt } : {}),
+    ...(senderId === 'me' && STATUSES.has(status as MessageStatus) ? { status: status as MessageStatus } : {}),
+  }
+}
+
+const isDate = (value: unknown): value is string => typeof value === 'string' && value.length < 40 && !Number.isNaN(Date.parse(value))
+
+/** Delivery states a message kept again can have (not one still on its way, or failed). */
+const STATUSES = new Set<MessageStatus>(['sent', 'delivered', 'read'])
+
+/** The message a reply quotes, as the device shows it. */
+function quoteOf(value: unknown): QuotedMessage | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { id, senderId, body } = value as Record<string, unknown>
+  if (typeof id !== 'string' || typeof senderId !== 'string' || typeof body !== 'string' || id.length > 300 || senderId.length > 300) return undefined
+  return { id, senderId, body: body.slice(0, 300) }
+}
+
+/** Everyone's reactions, as the device shows them. */
+function reactionsOf(value: unknown): Reaction[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const list = value.slice(0, 20).flatMap((item): Reaction[] => {
+    if (!item || typeof item !== 'object') return []
+    const { emoji, count, mine } = item as Record<string, unknown>
+    if (typeof emoji !== 'string' || !emoji || emoji.length > MAX_EMOJI_LENGTH) return []
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 1_000_000) return []
+    return [{ emoji, count, mine: mine === true }]
+  })
+  return list.length ? list : undefined
 }
 
 const ATTACHMENT_KINDS = new Set<Attachment['kind']>(['file', 'image', 'sticker', 'audio'])
@@ -69,6 +107,27 @@ function attachmentsOf(value: unknown): Attachment[] | undefined {
 
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
 
+/** The user's chats named in URLs, and the linked network each belongs to. */
+function chatLookup({ store, whatsapp, telegram }: Pick<InboxDeps, 'store' | 'whatsapp' | 'telegram'>) {
+  /** Which linked network a chat belongs to, by its id. */
+  function networkOf(threadId: string) {
+    if (threadId.startsWith('wa:')) return whatsapp
+    if (threadId.startsWith('tga:')) return telegram
+    throw new HttpError(404, 'No such chat.')
+  }
+
+  /** The user's chat named in the URL, and its network. */
+  async function chatOf(req: Request, res: Response) {
+    const userId = userIdOf(res)
+    const threadId = String(req.params.id)
+    const network = networkOf(threadId)
+    if (!(await store.thread(userId, threadId))) throw new HttpError(404, 'No such chat.')
+    return { userId, threadId, network }
+  }
+
+  return { networkOf, chatOf }
+}
+
 /** An edit, deletion, pin or star, as the browser sent it; anything else is refused. */
 export function actionOf(value: unknown): MessageAction {
   const action = (value ?? {}) as Record<string, unknown>
@@ -97,21 +156,7 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
   const router = Router()
   const signedIn = requireUser(tokens, col.users)
 
-  /** Which linked network a chat belongs to, by its id. */
-  function networkOf(threadId: string) {
-    if (threadId.startsWith('wa:')) return whatsapp
-    if (threadId.startsWith('tga:')) return telegram
-    throw new HttpError(404, 'No such chat.')
-  }
-
-  /** The user's chat named in the URL, and its network. */
-  async function chatOf(req: Request, res: Response) {
-    const userId = userIdOf(res)
-    const threadId = String(req.params.id)
-    const network = networkOf(threadId)
-    if (!(await store.thread(userId, threadId))) throw new HttpError(404, 'No such chat.')
-    return { userId, threadId, network }
-  }
+  const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram })
 
   router.get('/inbox', signedIn, async (_req, res) => {
     const userId = userIdOf(res)
@@ -243,6 +288,7 @@ export function uploadRoutes({
   const signedIn = requireUser(tokens, col.users)
   const readFile = express.raw({ type: () => true, limit: maxFileBytes })
   const limitText = `${Math.round(maxFileBytes / 1024 / 1024)} MB`
+  const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram })
 
   router.post(
     '/threads/:id/files',
@@ -250,9 +296,8 @@ export function uploadRoutes({
     async (req, res, next) => {
       if (!req.headers['x-file-name']) return next(new HttpError(400, 'Missing the file name.'))
       // Before reading up to 50 MB: is there such a chat, and can its network take the file now?
-      const threadId = String(req.params.id)
-      const network = threadId.startsWith('wa:') ? whatsapp : threadId.startsWith('tga:') ? telegram : null
-      if (!network || !(await store.thread(userIdOf(res), threadId))) return next(new HttpError(404, 'No such chat.'))
+      // (Node reads off and drops what's still being sent, so the browser gets this answer.)
+      const { network } = await chatOf(req, res)
       if (!network.isConnected(userIdOf(res))) {
         const name = network === whatsapp ? 'WhatsApp' : 'Telegram'
         return next(new HttpError(409, `${name} isn't connected right now, so the file can't be sent. Try again in a minute.`))
@@ -264,7 +309,7 @@ export function uploadRoutes({
     async (req, res) => {
       const userId = userIdOf(res)
       const threadId = String(req.params.id)
-      const network = threadId.startsWith('wa:') ? whatsapp : telegram
+      const network = networkOf(threadId)
       const upload = uploadOf(req.headers, req.body)
       const caption = decodedHeader(req.headers, 'x-caption', MAX_CAPTION)?.trim() ?? ''
       const replyToId = decodedHeader(req.headers, 'x-reply-to', 300)

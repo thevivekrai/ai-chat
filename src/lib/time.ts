@@ -6,6 +6,9 @@ export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
 
 export const toMs = (iso: string) => new Date(iso).getTime()
 
+/** For sorting by due date: soonest first, those with none last. */
+export const byDue = (a: string | null, b: string | null) => (a ? toMs(a) : Infinity) - (b ? toMs(b) : Infinity)
+
 export function startOfDay(ts: number): number {
   const d = new Date(ts)
   d.setHours(0, 0, 0, 0)

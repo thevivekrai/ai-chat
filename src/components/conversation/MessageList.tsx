@@ -36,10 +36,10 @@ import { downloadUrl } from '@/lib/files'
 import { isAnimatedSticker } from '@/lib/lottie'
 import { hashString } from '@/lib/format'
 import { MINUTE, formatClock, formatDayLabel, formatWhen, toMs } from '@/lib/time'
-import { messageAction, startEdit, startReply, toggleReaction } from '@/store/actions'
+import { messageAction, removeUnsent, startEdit, startReply, toggleReaction } from '@/store/actions'
 import { useAi } from '@/store/ai'
 import { useClock } from '@/store/clock'
-import { useInbox } from '@/store/inbox'
+import { canRetry, isUnsentHere, useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
@@ -341,7 +341,7 @@ function MessageGroup({
         )}
         {messages.map((m, i) => {
           const flashing = flash?.messageId === m.id
-          const settled = m.status !== 'sending' && m.status !== 'failed' && !m.id.startsWith('pending-')
+          const settled = m.status !== 'sending' && m.status !== 'failed' && !isUnsentHere(m.id)
           const bare = isStickerOnly(m) && !m.deleted
           const actions =
             settled && (capabilities.reply || capabilities.react || capabilities.delete || capabilities.pin || capabilities.star)
@@ -419,18 +419,22 @@ function MessageGroup({
               {m.status === 'failed' && (
                 <p role="alert" className="max-w-full px-1 text-right text-[11px] leading-snug text-rose-600 dark:text-rose-400">
                   Not sent{m.error ? `: ${m.error}` : ''}{' '}
+                  {canRetry(m) && (
+                    <>
+                      <button
+                        type="button"
+                        className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
+                        onClick={() => void useInbox.getState().retryMessage(m.threadId, m.id)}
+                      >
+                        Try again
+                      </button>{' '}
+                      ·{' '}
+                    </>
+                  )}
                   <button
                     type="button"
                     className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
-                    onClick={() => void useInbox.getState().retryMessage(m.threadId, m.id)}
-                  >
-                    Try again
-                  </button>{' '}
-                  ·{' '}
-                  <button
-                    type="button"
-                    className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
-                    onClick={() => useInbox.getState().discardMessage(m.threadId, m.id)}
+                    onClick={() => removeUnsent(m.threadId, m.id)}
                   >
                     Remove
                   </button>
@@ -471,7 +475,7 @@ const isStickerOnly = (m: Message) => !m.body && !m.replyTo && m.attachments?.le
 
 function Attachments({ message, fromMe }: { message: Message; fromMe: boolean }) {
   return message.attachments?.map((a, index) => (
-    <AttachmentView key={`${a.name}-${index}`} attachment={a} fromMe={fromMe} sending={message.status === 'sending'} />
+    <AttachmentView key={`${a.name}-${index}`} attachment={a} fromMe={fromMe} sending={message.status === 'sending'} bare={isStickerOnly(message)} />
   ))
 }
 
@@ -480,7 +484,7 @@ function Attachments({ message, fromMe }: { message: Message; fromMe: boolean })
  * Linked chats' files come from WhatsApp or Telegram as they're opened, so one that can't be
  * fetched right now shows as a card instead of a broken image.
  */
-function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attachment; fromMe: boolean; sending: boolean }) {
+function AttachmentView({ attachment: a, fromMe, sending, bare }: { attachment: Attachment; fromMe: boolean; sending: boolean; bare: boolean }) {
   const [broken, setBroken] = useState(false)
   const [attempt, setAttempt] = useState(0)
   if (a.kind === 'sticker') {
@@ -494,6 +498,8 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
         <img src={a.url} alt={a.name} loading="lazy" onError={() => setBroken(true)} className={look} />
       )
     }
+    // Its name instead: as a bubble of its own when it's the whole message, else as a line in one.
+    if (!bare) return <span className="mb-1 block text-[14.5px]">{a.name}</span>
     return (
       <span className={cn('inline-block rounded-2xl px-3.5 py-2 text-[14.5px]', fromMe ? 'accent-gloss' : 'bg-bubble-in text-fg shadow-bubble')}>
         {a.name}

@@ -57,13 +57,20 @@ const hintOf = (m: Message, withBody = false): MessageHint => ({
   ...(withBody ? { body: m.body || m.attachments?.[0]?.name || '' } : {}),
 })
 
-/** All the server needs to keep its own copy of a message it no longer has (to pin or star it). */
+/**
+ * All the server needs to keep its own copy of a message it no longer has (to pin or star it).
+ * Links to anything but the server's own files only work on this device, so they're left out.
+ */
 const copyOf = (m: Message): MessageHint => ({
   id: m.id,
   senderId: m.senderId,
   sentAt: m.sentAt,
   body: m.body,
-  ...(m.attachments?.length ? { attachments: m.attachments.filter((a) => !a.url || a.url.startsWith('/api/files/')) } : {}),
+  ...(m.attachments?.length ? { attachments: m.attachments.map(({ url, ...a }) => (url?.startsWith('/api/files/') ? { ...a, url } : a)) } : {}),
+  ...(m.replyTo ? { replyTo: m.replyTo } : {}),
+  ...(m.reactions?.length ? { reactions: m.reactions } : {}),
+  ...(m.editedAt ? { editedAt: m.editedAt } : {}),
+  ...(m.status ? { status: m.status } : {}),
 })
 
 /**
