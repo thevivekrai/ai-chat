@@ -101,7 +101,7 @@ export function buildAnswerPrompt(question: string, sources: AiSearchSource[], n
   const listed = tasks.slice(0, TASKS_IN_ANSWER)
   const open = listed
     .map((t) => {
-      const from = t.messageId ? `[${t.messageId}] from "${t.threadTitle}"` : 'added by hand'
+      const from = t.messageId ? `[${t.messageId}] from ${t.threadTitle ? `"${t.threadTitle}"` : 'a chat'}` : 'added by hand'
       return `- ${t.title} · ${t.dueAt ? `due ${t.dueAt}` : 'no due date'} · ${from}`
     })
     .join('\n')

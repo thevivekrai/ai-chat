@@ -11,14 +11,17 @@
  *   POST /whatsapp/pin {"id"}         Ravi pins a message in the chat
  *   POST /whatsapp/typing             Ravi starts typing
  *   POST /whatsapp/older              the phone sends older messages (after "Load earlier")
- *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once
+ *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once ("react": with a reaction
+ *                                     to the last one, sent first in the batch)
+ *   POST /whatsapp/failed {"id"}      WhatsApp says one of my messages failed to send
  *   POST /whatsapp/photo {"caption"}  Ravi sends a photo
  *   POST /whatsapp/file               Ravi sends a PDF
- *   POST /whatsapp/sticker {"webp"}   Ravi sends a sticker (base64 WebP)
+ *   POST /whatsapp/sticker {"webp"}   Ravi sends a sticker (base64 WebP, or another "mimetype")
  *   POST /whatsapp/animated-sticker   Ravi sends an animated (Lottie) sticker: a bouncing ball
  *   POST /whatsapp/voice              Ravi sends a 3-second voice message (a tone)
  *   POST /whatsapp/archived {"archived"} Ravi's chat is archived (or not) on the phone
- *   POST /whatsapp/sent-to-phone      what reached WhatsApp: read receipts (message ids) and typing
+ *   POST /whatsapp/sent-to-phone      what reached WhatsApp: read receipts (message ids), typing,
+ *                                     messages sent and changes (edits, deletions…)
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /trim                        the server trims chats to what it keeps, now
@@ -219,14 +222,17 @@ createServer(async (req, res) => {
       } as never)
     } else if (req.url === '/whatsapp/burst') {
       const base = now() - Number(input.count)
-      server.sockets.at(-1)!.emit('messages.upsert', {
-        type: 'notify',
-        messages: Array.from({ length: Number(input.count) }, (_, i) => ({
-          key: { remoteJid: RAVI, fromMe: false, id: `B${Date.now()}-${i}` },
-          message: { conversation: `Update ${i + 1}` },
-          messageTimestamp: base + i,
-        })),
-      } as never)
+      const batch = Date.now()
+      const messages = Array.from({ length: Number(input.count) }, (_, i) => ({
+        key: { remoteJid: RAVI, fromMe: false, id: `B${batch}-${i}` },
+        message: { conversation: `Update ${i + 1}` },
+        messageTimestamp: base + i,
+      }))
+      const last = messages.at(-1)!.key
+      const reaction = { key: { remoteJid: RAVI, fromMe: false, id: `R${batch}` }, message: { reactionMessage: { key: last, text: '🔥' } }, messageTimestamp: now() }
+      server.sockets.at(-1)!.emit('messages.upsert', { type: 'notify', messages: input.react ? [reaction, ...messages] : messages } as never)
+    } else if (req.url === '/whatsapp/failed') {
+      server.sockets.at(-1)!.emit('messages.update', [{ key: { remoteJid: RAVI, fromMe: true, id: String(input.id) }, update: { status: 0 } }] as never)
     } else if (req.url === '/whatsapp/photo') {
       server.sockets.at(-1)!.emit('messages.upsert', {
         type: 'notify',
@@ -256,7 +262,7 @@ createServer(async (req, res) => {
         messages: [
           {
             key: { remoteJid: RAVI, fromMe: false, id: `S${Date.now()}` },
-            message: mediaMessage('stickerMessage', Buffer.from(String(input.webp), 'base64'), { mimetype: 'image/webp' }),
+            message: mediaMessage('stickerMessage', Buffer.from(String(input.webp), 'base64'), { mimetype: typeof input.mimetype === 'string' ? input.mimetype : 'image/webp' }),
             messageTimestamp: now(),
           },
         ],
@@ -292,7 +298,12 @@ createServer(async (req, res) => {
     } else if (req.url === '/whatsapp/sent-to-phone') {
       const socket = server.sockets.at(-1)!
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(
-        JSON.stringify({ read: socket.read.map((k) => k.id), typing: socket.presence.filter((p) => p.type !== 'subscribe').map((p) => p.type) }),
+        JSON.stringify({
+          read: socket.read.map((k) => k.id),
+          typing: socket.presence.filter((p) => p.type !== 'subscribe').map((p) => p.type),
+          sent: socket.sent,
+          changes: socket.changes,
+        }),
       )
       return
     } else if (req.url === '/trim') {

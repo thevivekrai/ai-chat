@@ -65,6 +65,22 @@ describe.each([
     expect(copy.messages).toEqual([{ ...message(RAVI, 1), reactions: [{ emoji: '👍', count: 1, mine: true }] }])
     expect(await store.older(ASHA, at(59), 10)).toEqual([])
   })
+
+  it("starts a chat's copy afresh, keeping only what's asked, and remembers when it was last here", async () => {
+    const store = await open()
+    store.put({ threads: [thread(RAVI, 'Ravi'), thread(ASHA, 'Asha')], messages: [message(RAVI, 1), message(RAVI, 2), message(RAVI, 3), message(ASHA, 1)] })
+    await store.forget(RAVI, new Set([message(RAVI, 3).id]))
+    // Put afterwards: kept.
+    store.put({ messages: [message(RAVI, 4)] })
+    await store.flush()
+    const copy = await store.load(10)
+    expect(copy.messages.map((m) => m.id).sort()).toEqual([message(ASHA, 1).id, message(RAVI, 3).id, message(RAVI, 4).id].sort())
+
+    expect(await store.lastHere()).toBeNull()
+    store.setLastHere(at(5))
+    await store.flush()
+    expect(await store.lastHere()).toBe(at(5))
+  })
 })
 
 describe('the IndexedDB copy', () => {

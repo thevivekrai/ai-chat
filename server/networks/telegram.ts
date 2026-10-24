@@ -659,7 +659,7 @@ type VerifyResult = TelegramVerifyResult
 
 export function createTelegram(deps: TelegramDeps) {
   const { sealer, store, accounts, hub, avatars, files, api } = deps
-  const { changeMessage, removeForMe } = messageChanges({ store, hub })
+  const { changeMessage, removeForMe, addFileLinks } = messageChanges({ store, hub })
   const createClient = deps.createClient ?? createGramClient
   const pending = new Map<string, PendingLogin>()
   const pictures = createQueue()
@@ -790,7 +790,7 @@ export function createTelegram(deps: TelegramDeps) {
     void ref
     const added = await store.addMessage(s.userId, message)
     // Already kept, but without a link to its sticker, photo or file (kept before they could be opened).
-    if (!added && message.attachments?.some((a) => a.url)) await addFileLinks(s, message.id, message.body, message.attachments)
+    if (!added && message.attachments?.some((a) => a.url)) await addFileLinks(s.userId, message.id, message.body, message.attachments)
     if (!added || !live) return { message: wire, added }
 
     if (!m.out) await store.incrementUnread(s.userId, threadId)
@@ -800,33 +800,26 @@ export function createTelegram(deps: TelegramDeps) {
     return { message: wire, added }
   }
 
-  /** Gives a kept message the link to its sticker, photo or file, if it had none. */
-  async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
-    const stored = await store.message(s.userId, id)
-    // Deleted since, it stays deleted; edited since, it keeps the new text.
-    if (!stored || stored.deleted || stored.attachments?.some((a) => a.url)) return
-    await changeMessage(s.userId, id, { ...(stored.editedAt ? {} : { body }), attachments })
-  }
-
   /**
    * Stickers, photos and files kept before they could be opened (a sticker was only named) are
    * fetched from Telegram again, newest first, and gain their link. Once per connection.
    */
   async function repairFiles(s: Session) {
+    // Each is asked for at most once a day, found or not (a chat left since may refuse every
+    // time), so the ones after it get their turn.
     const asked: string[] = []
-    for (const m of await store.missingFiles(s.userId, 'tga:', FILES_TO_REPAIR)) {
-      const id = Number(m.ref?.id)
-      if (!id || s.stopped) continue
-      let fresh
-      try {
-        fresh = await s.client.message(m.threadId.slice('tga:'.length), id)
-      } catch {
-        continue // Asked again next time.
+    try {
+      for (const m of await store.missingFiles(s.userId, 'tga:', FILES_TO_REPAIR)) {
+        if (s.stopped) break
+        asked.push(m.id)
+        const id = Number(m.ref?.id)
+        if (!id) continue
+        const fresh = await s.client.message(m.threadId.slice('tga:'.length), id).catch(() => null)
+        if (fresh) await saveMessage(s, fresh, { live: false }).catch(report)
       }
-      asked.push(m.id)
-      if (fresh) await saveMessage(s, fresh, { live: false })
+    } finally {
+      await store.markFilesAsked(s.userId, asked)
     }
-    await store.markFilesAsked(s.userId, asked)
   }
 
   /** A message's attachment, linked so it can be opened when Telegram has it as a file. */

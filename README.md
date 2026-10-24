@@ -227,7 +227,8 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
 - **Stickers** show on their own, without a bubble: WebP images, Telegram's WebM video stickers,
   and animated Lottie stickers (Telegram's .tgs, WhatsApp's animated ones), which the app plays
   with lottie-web's light build. It runs nothing from the file, fetches no pictures or fonts from
-  elsewhere, loads only when one is shown, and stops unpacking a sticker once it passes 8 MB.
+  elsewhere, and stops unpacking a sticker once it passes 8 MB. Animated and video stickers load
+  as they scroll into view, and only play while they're on screen.
 - **Voice messages** play in the chat: a play button, the waveform WhatsApp or Telegram sends
   with it (tap or drag it to jump), how long it is, and 1× / 1.5× / 2× speed. One plays at a
   time. Audio files (music, recordings) play the same way, with their name and a download link.
@@ -309,6 +310,8 @@ at the top:
   straight away when you open the app, even offline, and scrolling back reads it before asking
   the network. Further back, older messages come from Telegram, or from your phone for WhatsApp.
   If more came in while a device was away than the server keeps, the device fetches the gap.
+  Messages deleted for you elsewhere go from it too; the server remembers those for a month (50
+  per chat), so a device away longer starts those chats afresh from the server's copy.
   **Settings → Accounts** shows how much space it uses.
 - **Signing out** deletes the copy on that device (and closing the app with an expired session
   does on the next start). The links keep running on the server: messages keep coming in, and

@@ -129,6 +129,13 @@ export interface ServerInbox {
   messages: Message[]
   /** Messages deleted for me lately, for devices that were away when it happened. */
   deleted?: string[]
+  /**
+   * Chats whose deletions from before a time are no longer all listed (too many, or too long
+   * ago): a device last here before then starts its copy of that chat afresh from this one.
+   */
+  deletedSince?: Record<string, string>
+  /** The server's time when this was taken, for the device to remember (see deletedSince). */
+  at?: string
   accounts: PublicAccount[]
 }
 

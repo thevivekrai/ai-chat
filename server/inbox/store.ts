@@ -6,24 +6,35 @@ import type { Sealer } from '../crypto.ts'
 import type { Collections, MessageDoc, MessagePayload, ThreadDoc } from '../db.ts'
 
 /**
- * Reaction totals with one person's reaction changed: mine replaces the one I gave before; someone
- * else's adds to them (theirs before, if any, isn't known, so a removal changes nothing).
+ * Messages deleted for me lately, for devices that were away then; and, of the chats sent
+ * (`sent`), those where some from before a time aren't listed any more (more than DELETIONS_KEPT,
+ * or older than a month), so a device away since then knows to start that chat afresh from them.
  */
-function withReaction(totals: Reaction[], mine: boolean, emoji: string | null): Reaction[] {
-  let next = mine ? totals.map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r)) : totals
-  if (emoji) {
-    next = next.some((r) => r.emoji === emoji)
-      ? next.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: r.mine || mine } : r))
-      : [...next, { emoji, count: 1, mine }]
+function deletions(threads: Pick<ThreadDoc, 'id' | 'deletedIds'>[], sent: Set<string>, now = Date.now()) {
+  const deleted: string[] = []
+  const deletedSince: Record<string, string> = {}
+  for (const t of threads) {
+    const list = t.deletedIds ?? []
+    let since = 0
+    // Full: older ones may have been let go (before the oldest with a date, at the latest).
+    const oldest = list.find((d) => typeof d !== 'string')
+    if (list.length >= DELETIONS_KEPT && oldest && typeof oldest !== 'string') since = oldest.at.getTime()
+    for (const d of list) {
+      if (typeof d === 'string') deleted.push(d)
+      else if (now - d.at.getTime() < DELETIONS_KEPT_MS) deleted.push(d.id)
+      // No longer listed: missed only by a device last here before it happened.
+      else since = Math.max(since, d.at.getTime())
+    }
+    if (since && sent.has(t.id)) deletedSince[t.id] = new Date(since).toISOString()
   }
-  return next.filter((r) => r.count > 0)
+  return { deleted, deletedSince, at: new Date(now).toISOString() }
 }
 
 /** How many chats the browser gets on load (each with every message the server keeps of it). */
 const SNAPSHOT_THREADS = 200
 /**
  * Messages deleted for me are remembered for devices that were away when it happened: the latest
- * few per chat, for a month (a device away longer starts afresh from the server's copy anyway).
+ * few per chat, for a month. A device away longer starts that chat afresh (see deletions).
  */
 const DELETIONS_KEPT = 50
 const DELETIONS_KEPT_MS = 30 * 86_400_000
@@ -49,12 +60,39 @@ function totals(by: Record<string, string>): Reaction[] {
 
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+/** Reactions from two lists added up, emoji by emoji. */
+function addedUp(a: Reaction[], b: Reaction[]): Reaction[] {
+  const byEmoji = new Map<string, Reaction>()
+  for (const r of [...a, ...b]) {
+    const sum = byEmoji.get(r.emoji)
+    byEmoji.set(r.emoji, sum ? { ...sum, count: sum.count + r.count, mine: sum.mine || r.mine } : r)
+  }
+  return [...byEmoji.values()]
+}
+
+/** Reactions without mine among them. */
+const withoutMine = (reactions: Reaction[]) =>
+  reactions.map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r)).filter((r) => r.count > 0)
+
+/**
+ * A sticker, voice message, photo or file kept without a link to it (earlier versions only named
+ * stickers and voice messages), which the network can be asked for again.
+ */
+function lacksFile(m: { body: string; attachments?: Message['attachments'] }): boolean {
+  if (m.attachments?.length) return m.attachments.some((a) => !a.url)
+  return /^(\S+ )?Sticker$/u.test(m.body) || m.body === '🎤 Voice message' || m.body === '🎵 Audio'
+}
+
 export interface InboxSnapshotPart {
   threads: Thread[]
   contacts: Contact[]
   messages: Message[]
   /** Messages deleted for me lately: devices that were away remove them too. */
   deleted: string[]
+  /** Chats a device away since an earlier time starts afresh (see deletions). */
+  deletedSince: Record<string, string>
+  /** When this was taken. */
+  at: string
 }
 
 /**
@@ -104,7 +142,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
 
   const toMessage = (doc: MessageDoc): Message => {
     const payload = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
-    const reactions = payload.reactionTotals ?? (payload.reactionsBy ? totals(payload.reactionsBy) : [])
+    const reactions = payload.reactionTotals ?? addedUp(payload.reactionBase ?? [], payload.reactionsBy ? totals(payload.reactionsBy) : [])
     return {
       id: doc.id,
       threadId: doc.threadId,
@@ -151,13 +189,20 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
   }
 
   /** Rewrites a message's sealed payload. */
-  async function updatePayload(userId: ObjectId, id: string, change: (payload: MessagePayload) => MessagePayload) {
+  /** Changes a message's sealed payload (`change` returns null to leave it), with `also` set beside it. */
+  async function updatePayload(
+    userId: ObjectId,
+    id: string,
+    change: (payload: MessagePayload) => MessagePayload | null,
+    also: Partial<MessageDoc> = {},
+  ) {
     const doc = await col.messages.findOne({ userId, id })
     if (!doc) return null
     const payload = change(openJson<MessagePayload>(doc.payload, { body: UNREADABLE }))
+    if (!payload) return null
     const updated = await col.messages.findOneAndUpdate(
       { userId, id },
-      { $set: { payload: sealer.sealJson(payload) } },
+      { $set: { payload: sealer.sealJson(payload), ...also } },
       { returnDocument: 'after' },
     )
     return updated && toMessage(updated)
@@ -317,6 +362,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
             ...(message.pinned ? { pinned: true } : {}),
             ...(message.pinned && message.pinnedUntil ? { pinnedUntil: new Date(message.pinnedUntil) } : {}),
             ...(message.starred ? { starred: true } : {}),
+            ...(lacksFile(message) ? {} : { filesOk: true as const }),
           },
         },
         { upsert: true },
@@ -366,6 +412,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         })
       }
       if (patch.status) set.status = patch.status
+      // New attachments may have files to fetch again, or no longer.
+      if (patch.attachments) {
+        if (patch.attachments.some((a) => !a.url)) unset.filesOk = ''
+        else set.filesOk = true
+      }
       for (const flag of ['pinned', 'starred'] as const) {
         if (patch[flag] === true) set[flag] = true
         else if (patch[flag] === false) unset[flag] = ''
@@ -423,27 +474,42 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     /** One person's reaction (`senderId` "me" for the user) changed; null removes it. */
     async setReaction(userId: ObjectId, id: string, senderId: string, emoji: string | null): Promise<Message | null> {
       return updatePayload(userId, id, (payload) => {
-        // Kept again with only the totals a device showed (who gave them isn't known): this one
-        // change is made to them.
-        if (payload.reactionTotals?.length && !payload.reactionsBy) {
-          return { ...payload, reactionTotals: withReaction(payload.reactionTotals, senderId === 'me', emoji) }
-        }
+        const { reactionTotals, reactionBase, ...rest } = payload
+        // Kept again with only the totals a device showed: those stay, and each person's own
+        // reaction goes on top, counted once however often it's said. Mine takes the place of my
+        // part of them. (Who gave the others isn't known, so one of them saying theirs again
+        // counts it twice, until they change it.)
+        let base = reactionBase ?? (!payload.reactionsBy && reactionTotals?.length ? reactionTotals : undefined)
+        if (base && senderId === 'me') base = withoutMine(base)
         const by = { ...payload.reactionsBy }
         if (emoji) by[senderId] = emoji
         else delete by[senderId]
-        const { reactionTotals, ...rest } = payload
-        void reactionTotals
-        return { ...rest, reactionsBy: by }
+        return { ...rest, reactionsBy: by, ...(base?.length ? { reactionBase: base } : {}) }
       })
     },
 
     /** The network reported new totals (Telegram doesn't always say who). */
     async setReactionTotals(userId: ObjectId, id: string, reactions: Reaction[]): Promise<Message | null> {
       return updatePayload(userId, id, (payload) => {
-        const { reactionsBy, ...rest } = payload
+        const { reactionsBy, reactionBase, ...rest } = payload
         void reactionsBy
+        void reactionBase
         return { ...rest, reactionTotals: reactions }
       })
+    },
+
+    /**
+     * Gives a kept message the links to its sticker, photo or file, if it had none. One deleted
+     * since stays deleted; one edited since keeps its new text. Returns it if it changed.
+     */
+    async linkFiles(userId: ObjectId, id: string, body: string, attachments: NonNullable<Message['attachments']>): Promise<Message | null> {
+      return updatePayload(
+        userId,
+        id,
+        (payload) =>
+          payload.deleted || payload.attachments?.some((a) => a.url) ? null : { ...payload, body: payload.editedAt ? payload.body : body, attachments },
+        lacksFile({ body, attachments }) ? {} : { filesOk: true },
+      )
     },
 
     /**
@@ -474,24 +540,25 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
      * ones get their turn.
      */
     async missingFiles(userId: ObjectId, idPrefix: string, limit = 40): Promise<{ id: string; threadId: string; ref?: Record<string, unknown> }[]> {
+      // Each is read (and opened) at most once to find out: those with nothing missing are marked.
       const docs = await col.messages
         .find({
           userId,
           id: { $regex: `^${escapeRegex(idPrefix)}` },
+          filesOk: { $ne: true },
           $or: [{ fileAskedAt: { $exists: false } }, { fileAskedAt: { $lt: new Date(Date.now() - FILE_ASKED_AGAIN_MS) } }],
         })
         .sort({ sentAt: -1 })
         .limit(2000)
         .toArray()
       const found: { id: string; threadId: string; ref?: Record<string, unknown> }[] = []
+      const ok: string[] = []
       for (const doc of docs) {
-        const m = toMessage(doc)
-        const namedSticker = !m.attachments?.length && /^(\S+ )?Sticker$/u.test(m.body)
-        // Voice messages and audio were only named, too, before they could be played.
-        const namedAudio = !m.attachments?.length && (m.body === '🎤 Voice message' || m.body === '🎵 Audio')
-        if (namedSticker || namedAudio || m.attachments?.some((a) => !a.url)) found.push({ id: doc.id, threadId: doc.threadId, ...(doc.ref ? { ref: doc.ref } : {}) })
+        if (lacksFile(toMessage(doc))) found.push({ id: doc.id, threadId: doc.threadId, ...(doc.ref ? { ref: doc.ref } : {}) })
+        else ok.push(doc.id)
         if (found.length >= limit) break
       }
+      if (ok.length) await col.messages.updateMany({ userId, id: { $in: ok } }, { $set: { filesOk: true } })
       return found
     },
 
@@ -564,8 +631,10 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         threads: threadDocs.map(toThread),
         contacts: contactDocs.map(toContact),
         messages: [...latest, ...flagged.filter((d) => !seen.has(d.id))].map(toMessage),
-        deleted: threadDocs.flatMap((t) =>
-          (t.deletedIds ?? []).flatMap((d) => (typeof d === 'string' ? [d] : Date.now() - d.at.getTime() < DELETIONS_KEPT_MS ? [d.id] : [])),
+        // Every chat's, not only those sent: a device remembers having them all.
+        ...deletions(
+          await col.threads.find({ userId, 'deletedIds.0': { $exists: true } }, { projection: { id: 1, deletedIds: 1 } }).toArray(),
+          new Set(ids),
         ),
       }
     },

@@ -282,20 +282,18 @@ export const useInbox = create<InboxState>()((set, get) => {
         await get().sendMessage(threadId, failed.body, { ...options, ...(file ? { file } : {}) })
         return
       }
-      // One the network kept: sending again in its place (once, however often it's tapped).
+      // One the network kept: deleted there for me first, then sent like a new message (so never
+      // twice, however often it's tapped, and none is left behind if sending fails again).
       const { error, ...rest } = failed
       void error
       putMessage({ ...rest, status: 'sending' })
       try {
-        putMessage(await api.sendMessage(threadId, failed.body, options))
+        await get().actOnMessage(threadId, messageId, { type: 'delete', forEveryone: false })
       } catch (error) {
         putMessage({ ...failed, error: error instanceof Error ? error.message : 'Not sent' })
         return
       }
-      await get()
-        .actOnMessage(threadId, messageId, { type: 'delete', forEveryone: false })
-        // Still there on the network: shown as it is there.
-        .catch(() => putMessage(failed))
+      await get().sendMessage(threadId, failed.body, options)
     },
 
     discardMessage(threadId, messageId) {
