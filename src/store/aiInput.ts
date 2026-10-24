@@ -89,7 +89,12 @@ export function openTasks(tasks: Task[], threads: Record<string, Thread>, canRea
     .filter((t) => !t.done && (!t.source || canRead(t.source.threadId)))
     .sort((a, b) => byDue(a.dueAt, b.dueAt))
     .map((t) => {
-      const thread = t.source && threads[t.source.threadId]
-      return { title: t.title, dueAt: t.dueAt, ...(t.source && thread ? { threadTitle: thread.title, messageId: t.source.messageId } : {}) }
+      // Its chat's name, where this device has the chat.
+      const title = t.source && threads[t.source.threadId]?.title
+      return {
+        title: t.title,
+        dueAt: t.dueAt,
+        ...(t.source ? { threadId: t.source.threadId, messageId: t.source.messageId, ...(title ? { threadTitle: title } : {}) } : {}),
+      }
     })
 }

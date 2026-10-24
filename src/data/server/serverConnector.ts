@@ -46,6 +46,8 @@ const IN_MEMORY_PER_CHAT = 50
 const OLDER_PAGE = 30
 /** How far a gap left while this device was away is filled in by itself, per chat. */
 const GAP_PAGES = 3
+/** How often being here is noted while events come in (a deletion is noted at once). */
+const NOTE_HERE_EVERY_MS = 5 * 60_000
 const GAP_CHATS = 20
 
 const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:' }
@@ -90,6 +92,9 @@ export class ServerConnector implements Connector {
   private contacts = new Map<string, Contact>()
   private linked = new Map<LinkedNetwork, PublicAccount>()
   private readonly events = new Emitter<ConnectorEvent>()
+  /** The server's clock less this device's, as of the last load (see noteHere). */
+  private serverOffset: number | null = null
+  private notedHere = 0
   private readonly statusEvents = new Emitter<ConnectorStatus>()
   private readonly accountEvents = new Emitter<PublicAccount[]>()
   private readonly qrEvents = new Emitter<{ network: LinkedNetwork; qr: string }>()
@@ -454,12 +459,34 @@ export class ServerConnector implements Connector {
     const deleted = inbox.deleted ?? []
     for (const id of deleted) this.messages.delete(id)
     if (deleted.length) store.remove({ messageIds: deleted })
+    // Away longer than the server remembers a chat's deletions: this device's copy of it may still
+    // show some, so it starts afresh from the server's (older messages come back as the user
+    // scrolls, from the network).
+    // (A device that doesn't know when it was last here, as after updating to this version, keeps
+    // what it has: it was most likely here lately.)
+    const lastHere = await store.lastHere()
+    if (this.forgotten) return
+    const afresh = new Map<string, Set<string>>()
+    for (const [threadId, since] of Object.entries(inbox.deletedSince ?? {})) {
+      if (lastHere && lastHere < since) afresh.set(threadId, new Set())
+    }
+    if (afresh.size) {
+      for (const m of inbox.messages) afresh.get(m.threadId)?.add(m.id)
+      for (const [id, m] of this.messages) if (afresh.get(m.threadId) && !afresh.get(m.threadId)!.has(id)) this.messages.delete(id)
+      for (const [threadId, keep] of afresh) void store.forget(threadId, keep)
+    }
+    if (this.forgotten) return
 
     const gaps = this.findGaps(inbox)
     for (const t of inbox.threads) this.threads.set(t.id, t)
     for (const c of inbox.contacts) this.contacts.set(c.id, c)
     for (const m of inbox.messages) this.messages.set(m.id, m)
     store.put({ threads: inbox.threads, contacts: inbox.contacts, messages: inbox.messages })
+    if (inbox.at) {
+      this.serverOffset = Date.parse(inbox.at) - Date.now()
+      this.notedHere = 0
+      this.noteHere()
+    }
 
     this.linked = new Map(inbox.accounts.map((a) => [a.network, a]))
     this.accountEvents.emit(this.accounts())
@@ -508,7 +535,19 @@ export class ServerConnector implements Connector {
     if (added && !this.forgotten) this.events.emit({ type: 'reloaded' })
   }
 
+  /**
+   * This device has everything the server told it up to now (in the server's time): remembered,
+   * so being here, with every deletion as it happened, never counts as having been away. Noted
+   * on load and as events come in (at most every few minutes, but at once for a deletion).
+   */
+  private noteHere(now = false) {
+    if (this.serverOffset === null || (!now && Date.now() - this.notedHere < NOTE_HERE_EVERY_MS)) return
+    this.notedHere = Date.now()
+    void this.device().then((store) => store.setLastHere(new Date(Date.now() + this.serverOffset!).toISOString()))
+  }
+
   private onEvent(event: ServerEvent) {
+    this.noteHere(event.type === 'message.deleted')
     switch (event.type) {
       case 'message.created':
       case 'message.updated': {

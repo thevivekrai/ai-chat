@@ -83,6 +83,7 @@ export interface AiTask {
   title: string
   dueAt: string | null
   /** The chat it was found in, and the message, when it came from one (not added by hand). */
+  threadId?: string
   threadTitle?: string
   messageId?: string
 }

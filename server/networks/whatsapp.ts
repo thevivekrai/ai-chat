@@ -260,6 +260,9 @@ function messageForFile(ref: Extract<FileRef, { n: 'wa' }>): WAMessage {
 
 const mimeOf = (m: WaMediaFields | null | undefined, fallback?: string) => m?.mimetype?.split(';')[0]?.trim() || fallback
 
+/** Where something WhatsApp sent belongs: the chat's id, and its other id where WhatsApp gives it. */
+type ChatRef = { remoteJid?: string | null; remoteJidAlt?: string | null }
+
 /** A pin, edit, deletion or reaction: a message that changes another one rather than adding to the chat. */
 function pointsAtAnother(m: WAMessage): boolean {
   const content = normalizeMessageContent(m.message)
@@ -362,6 +365,10 @@ const PIN_LASTS_S = 2_592_000 as const
 const UNSEND_WINDOW_MS = 2 * 24 * 3600_000
 /** How long a new group's name is waited for before its chat is made without one. */
 const GROUP_TITLE_WAIT_MS = 5_000
+/** A group's name that hasn't come by then is asked for again (with a later message). */
+const GROUP_LOOKUP_GIVE_UP_MS = 120_000
+/** How many chats' WhatsApp events are handled at once (each chat's in order). */
+const CHATS_AT_ONCE = 4
 
 /**
  * The WhatsApp key of a message from what a device knows about it, for messages the server no
@@ -397,8 +404,16 @@ interface Session {
   historyAsked: Map<string, string>
   /** Chats archived or not on the phone, remembered for chats that have no messages here yet. */
   archived: Map<string, boolean>
-  /** What WhatsApp sent (new messages, and changes to them), handled in turn: each waits for the one before. */
-  incoming: Promise<void>
+  /** Each chat's WhatsApp events still being handled, the latest last (see inChat). */
+  chats: Map<string, Promise<void>>
+  /** Whose chat each event is, worked out in turn (see inChat). */
+  intake: Promise<void>
+  /** People WhatsApp's own record has no other id for (yet). */
+  noAlias: Set<string>
+  /** Chats whose events are being handled at once, a few at a time. */
+  chatSlots: ReturnType<typeof createLimiter>
+  /** Groups whose name is being asked of WhatsApp. */
+  groupLookups: Map<string, Promise<string | undefined>>
   repairTimer?: ReturnType<typeof setTimeout>
   /** When old stickers, photos and files without a link were last asked for again. */
   filesAskedAt?: number
@@ -419,16 +434,19 @@ export interface WhatsAppDeps {
   downloadMedia?: DownloadWaMedia
   /** How long after connecting old stickers, photos and files are asked for again. */
   filesRepairDelayMs?: number
+  /** How long a new group's name is waited for before its chat is made without one. */
+  groupTitleWaitMs?: number
   /** How long to wait for WhatsApp to offer a code or QR. */
   linkTimeoutMs?: number
 }
 
 export function createWhatsApp(deps: WhatsAppDeps) {
   const { col, sealer, store, accounts, hub, avatars, files } = deps
-  const { changeMessage, removeForMe } = messageChanges({ store, hub })
+  const { changeMessage, removeForMe, addFileLinks } = messageChanges({ store, hub })
   const createSocket = deps.createSocket ?? createBaileysSocket
   const downloadMedia = deps.downloadMedia ?? downloadWithBaileys
   const filesRepairDelayMs = deps.filesRepairDelayMs ?? 20_000
+  const groupTitleWaitMs = deps.groupTitleWaitMs ?? GROUP_TITLE_WAIT_MS
   const sessions = new Map<string, Session>()
   /** Files (by message id) that weren't the size WhatsApp said: sent without one. */
   const wrongSizes = new Set<string>()
@@ -471,38 +489,102 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     })
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       const kind = type === 'notify' ? 'live' : 'history'
-      // One message at a time, batch after batch: a new chat is made once, and counts stay right.
-      // A pin, edit, deletion or reaction goes after the batch's messages, so it finds the one it
-      // points at whatever the order within the batch (or in an earlier batch).
-      const [added, pointers] = [[], []] as [WAMessage[], WAMessage[]]
-      for (const m of messages) (pointsAtAnother(m) ? pointers : added).push(m)
-      inOrder(s, async () => {
-        for (const m of [...added, ...pointers]) await onMessage(s, m, kind).catch(report)
-      })
+      // Chat by chat (see inChat). In each, a pin, edit, deletion or reaction goes after the
+      // batch's messages, so it finds the one it points at whatever their order.
+      for (const chat of byChat(messages, (m) => m.key)) {
+        const [added, pointers] = [[], []] as [WAMessage[], WAMessage[]]
+        for (const m of chat) (pointsAtAnother(m) ? pointers : added).push(m)
+        void inChat(s, chat[0]!.key, async () => {
+          for (const m of [...added, ...pointers]) await onMessage(s, m, kind).catch(report)
+        })
+      }
     })
     socket.ev.on('presence.update', (update) => void onPresence(s, update).catch(report))
-    // Changes to messages and chats wait for the messages that came before them, too: a status,
-    // edit or deletion finds its message, and an unread count isn't overtaken by what it counted.
+    // Changes to messages and chats wait for what came before them in the same chat, too: a
+    // status, edit or deletion finds its message, and an unread count isn't overtaken.
     socket.ev.on('messages.update', (updates) => {
-      inOrder(s, async () => {
-        for (const u of updates) await onMessageUpdate(s, u.key, u.update).catch(report)
-      })
+      for (const chat of byChat(updates, (u) => u.key)) {
+        void inChat(s, chat[0]!.key, async () => {
+          for (const u of chat) await onMessageUpdate(s, u.key, u.update).catch(report)
+        })
+      }
     })
     socket.ev.on('messages.delete', (deleted) => {
-      if ('keys' in deleted) inOrder(s, () => onMessagesDeleted(s, deleted.keys))
+      if (!('keys' in deleted)) return
+      for (const keys of byChat(deleted.keys, (k) => k)) void inChat(s, keys[0], () => onMessagesDeleted(s, keys))
     })
     socket.ev.on('contacts.upsert', (contacts) => void onContacts(s, contacts).catch(report))
     socket.ev.on('contacts.update', (contacts) => void onContacts(s, contacts as WaContact[]).catch(report))
-    socket.ev.on('chats.upsert', (chats) => inOrder(s, () => onChats(s, chats)))
-    socket.ev.on('chats.update', (chats) => inOrder(s, () => onChats(s, chats as WaChat[])))
+    const onChatChanges = (chats: WaChat[]) => {
+      for (const chat of chats) void inChat(s, { remoteJid: chat.id, remoteJidAlt: chat.pnJid }, () => onChats(s, [chat]))
+    }
+    socket.ev.on('chats.upsert', onChatChanges)
+    socket.ev.on('chats.update', (chats) => onChatChanges(chats as WaChat[]))
     socket.ev.on('groups.update', (groups) => {
       for (const g of groups) if (g.id && g.subject) void setGroupTitle(s, g.id, g.subject).catch(report)
     })
   }
 
-  /** Handled once everything WhatsApp sent before it is (see Session.incoming). */
-  function inOrder(s: Session, task: () => Promise<unknown>) {
-    s.incoming = s.incoming.then(task).then(() => undefined, report)
+  /** Things WhatsApp sent, by the chat id they came under, each chat's in the order given. */
+  function byChat<T>(items: T[], keyOf: (item: T) => ChatRef | null | undefined): T[][] {
+    const chats = new Map<string, T[]>()
+    for (const item of items) {
+      const k = keyOf(item)
+      const key = `${k?.remoteJid ?? ''} ${k?.remoteJidAlt ?? ''}`
+      const chat = chats.get(key)
+      if (chat) chat.push(item)
+      else chats.set(key, [item])
+    }
+    return [...chats.values()]
+  }
+
+  /**
+   * Which chat something belongs to: the same under either of a person's ids, once both are known
+   * (WhatsApp's own record is asked when they aren't yet).
+   */
+  async function chatKey(s: Session, ref: ChatRef | null | undefined): Promise<string> {
+    const jid = ref?.remoteJid
+    if (!jid || !isChatJid(jid)) return ''
+    if (isJidGroup(jid)) return jid
+    const id = personId(s, jid, ref.remoteJidAlt)
+    if (!s.aliases.has(id) && !s.noAlias.has(id)) {
+      await lookUpAlias(s, id)
+      // Not asked again (a mapping that comes later is learned all the same).
+      if (!s.aliases.has(id)) {
+        if (s.noAlias.size >= 5000) s.noAlias.clear()
+        s.noAlias.add(id)
+      }
+    }
+    return personId(s, jid, ref.remoteJidAlt)
+  }
+
+  /**
+   * Runs `task` once everything WhatsApp sent before it for the same chat is handled, so a
+   * reaction, edit or status finds its message, a new chat is made once, and counts stay right.
+   * Different chats go at once, a few at a time: a busy or slow one doesn't hold up the rest.
+   * Whose chat it is is worked out in the order things came, so a person's two ids end up in one
+   * line once they're known.
+   */
+  function inChat(s: Session, ref: ChatRef | null | undefined, task: () => Promise<unknown>): Promise<void> {
+    const key = s.intake.then(() => chatKey(s, ref))
+    const done = key.then((k) => inLine(s, k, task))
+    s.intake = key.then(
+      () => undefined,
+      () => undefined,
+    )
+    return done.catch(report)
+  }
+
+  function inLine(s: Session, key: string, task: () => Promise<unknown>): Promise<void> {
+    // Also after anything still in line under the person's other id (from before both were known).
+    const other = s.aliases.get(key)
+    const before = Promise.all([s.chats.get(key), other ? s.chats.get(other) : undefined])
+    const done = before.then(() => s.chatSlots(task)).then(() => undefined, report)
+    s.chats.set(key, done)
+    void done.then(() => {
+      if (s.chats.get(key) === done) s.chats.delete(key)
+    })
+    return done
   }
 
   async function onConnection(s: Session, socket: WaSocket, update: BaileysEventMap['connection.update']) {
@@ -708,14 +790,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       title = s.groupTitles.get(chatJid)
       // A group already named here isn't asked about again (renames come as their own updates).
       if (!title && existing && nameRank(existing.title) > 0) s.groupTitles.set(chatJid, (title = existing.title))
-      if (!title && s.socket) {
-        // Not for long: new messages wait on this one (the title comes with a later one otherwise).
-        title = await Promise.race([
-          s.socket.groupMetadata(chatJid).then((m) => m.subject),
-          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), GROUP_TITLE_WAIT_MS).unref()),
-        ]).catch(() => undefined)
-        if (title) s.groupTitles.set(chatJid, title)
-      }
+      if (!title) title = await groupTitle(s, chatJid)
     } else {
       title = nameFor(s, chatJid)
     }
@@ -730,6 +805,35 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       ...(!existing && s.archived.get(chatJid) ? { archived: true } : {}),
       lastAt,
     })
+  }
+
+  /**
+   * A group's name, asked of WhatsApp once at a time per group, and waited for only briefly (the
+   * chat's messages wait on it): an answer that comes later names the chat then.
+   */
+  async function groupTitle(s: Session, jid: string): Promise<string | undefined> {
+    if (!s.socket || s.groupLookups.has(jid)) return undefined
+    const lookup = s.socket.groupMetadata(jid).then(
+      (m) => m.subject || undefined,
+      () => undefined,
+    )
+    s.groupLookups.set(jid, lookup)
+    // One that never answers is let go after a while, so a later message asks again.
+    setTimeout(() => s.groupLookups.get(jid) === lookup && s.groupLookups.delete(jid), GROUP_LOOKUP_GIVE_UP_MS).unref()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<undefined>((resolve) => (timer = setTimeout(() => resolve(undefined), groupTitleWaitMs).unref()))
+    const inTime = Promise.race([lookup, late]).finally(() => clearTimeout(timer))
+    // An answer too late for the message that asked names the chat then, unless something else
+    // (a rename) did meanwhile.
+    void Promise.all([lookup, inTime])
+      .then(async ([subject, answered]) => {
+        if (s.groupLookups.get(jid) === lookup) s.groupLookups.delete(jid)
+        if (subject && !answered && !s.groupTitles.has(jid)) await setGroupTitle(s, jid, subject)
+      })
+      .catch(report)
+    const title = await inTime
+    if (title) s.groupTitles.set(jid, title)
+    return title
   }
 
   /** Checks a person's or group's picture, in the background. */
@@ -879,7 +983,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     }
     if (!(await store.addMessage(s.userId, message))) {
       // Already kept: this may be the phone sending again a sticker, photo or file that had no link.
-      if (attachments?.some((a) => a.url)) await addFileLinks(s, message.id, parts.body, attachments)
+      if (attachments?.some((a) => a.url)) await addFileLinks(s.userId, message.id, parts.body, attachments)
       return
     }
     if (live && !fromMe) await store.incrementUnread(s.userId, thread.id)
@@ -888,14 +992,6 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     const { ref, ...wire } = message
     void ref
     publish(s, { type: 'message.created', message: wire })
-  }
-
-  /** Gives a kept message the link to its sticker, photo or file, if it had none. */
-  async function addFileLinks(s: Session, id: string, body: string, attachments: Attachment[]) {
-    const stored = await store.message(s.userId, id)
-    // Deleted since, it stays deleted; edited since, it keeps the new text.
-    if (!stored || stored.deleted || stored.attachments?.some((a) => a.url)) return
-    await changeMessage(s.userId, id, { ...(stored.editedAt ? {} : { body }), attachments })
   }
 
   /**
@@ -907,14 +1003,29 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     if (s.stopped || s.socket !== socket || !socket.requestPlaceholderResend) return
     if (s.filesAskedAt && Date.now() - s.filesAskedAt < FILES_REPAIR_EVERY_MS) return
     s.filesAskedAt = Date.now()
-    const missing = (await store.missingFiles(s.userId, 'wa:', FILES_TO_REPAIR)).flatMap((m) => {
-      const key = (m.ref as { key?: WAMessageKey } | undefined)?.key
-      return key?.id ? [{ id: m.id, key }] : []
-    })
-    if (s.stopped || s.socket !== socket) return
-    await Promise.all(missing.map(({ key }) => socket.requestPlaceholderResend!(key).catch(report)))
-    await store.markFilesAsked(s.userId, missing.map((m) => m.id))
+    const missing = await store.missingFiles(s.userId, 'wa:', FILES_TO_REPAIR)
+    if (s.stopped || s.socket !== socket) {
+      s.filesAskedAt = undefined // Nothing was asked: the next connection does.
+      return
+    }
+    // Each is asked for at most once a day, answered or not (or, with no key to ask by, given up on
+    // for the day too), so the ones after it get their turn.
+    const asked = await Promise.all(
+      missing.map(async (m) => {
+        const key = (m.ref as { key?: WAMessageKey } | undefined)?.key
+        if (!key?.id) return m.id
+        try {
+          await socket.requestPlaceholderResend!(key)
+          return m.id
+        } catch (error) {
+          report(error)
+          return null
+        }
+      }),
+    )
+    await store.markFilesAsked(s.userId, asked.filter((id): id is string => !!id))
   }
+
 
   /** The message's attachments, the photo or file among them linked so it can be opened. */
   function withFileLink(
@@ -1084,16 +1195,33 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       perChat.set(jid, n + 1)
       return n < 40
     })
-    for (const m of picked.reverse()) await onMessage(s, m, requested ? 'requested' : 'history')
-    if (requested) return
-    for (const chat of chats) {
-      if (!isChatJid(chat.id)) continue
-      const jid = await chatIdOf(s, chat.id, chat.pnJid)
-      if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
-        await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
-      }
-      if (typeof chat.archived === 'boolean') await setArchived(s, jid, chat.archived)
+    // Each chat's in its turn with what else WhatsApp sends about it (see inChat).
+    const mode = requested ? 'requested' : 'history'
+    const handled: Promise<void>[] = []
+    for (const chat of byChat(picked.reverse(), (m) => m.key)) {
+      handled.push(
+        inChat(s, chat[0]!.key, async () => {
+          for (const m of chat) await onMessage(s, m, mode).catch(report)
+        }),
+      )
     }
+    if (requested) return
+    // The chats' counts once their messages are in (whichever ids they came under).
+    await Promise.all(handled)
+    for (const chat of chats) {
+      const id = chat.id
+      if (!isChatJid(id)) continue
+      handled.push(
+        inChat(s, { remoteJid: id, remoteJidAlt: chat.pnJid }, async () => {
+          const jid = await chatIdOf(s, id, chat.pnJid)
+          if (typeof chat.unreadCount === 'number' && (await store.thread(s.userId, `wa:${jid}`))) {
+            await store.setUnread(s.userId, `wa:${jid}`, Math.max(0, chat.unreadCount))
+          }
+          if (typeof chat.archived === 'boolean') await setArchived(s, jid, chat.archived)
+        }),
+      )
+    }
+    await Promise.all(handled)
     for (const [jid] of s.names) if (!isJidGroup(jid)) await upsertContact(s, jid)
     reloadSoon(s)
     repairSoon(s)
@@ -1125,7 +1253,11 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       aliases: new Map(),
       historyAsked: new Map(),
       archived: new Map(),
-      incoming: Promise.resolve(),
+      chats: new Map(),
+      intake: Promise.resolve(),
+      noAlias: new Set(),
+      chatSlots: createLimiter(CHATS_AT_ONCE),
+      groupLookups: new Map(),
     }
     sessions.set(keyOf(userId), s)
     if (linking) await connect(s)

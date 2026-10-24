@@ -130,6 +130,8 @@ export interface MessageDoc {
   starred?: boolean
   /** When its sticker, photo or file (kept without a link) was last asked of the network again. */
   fileAskedAt?: Date
+  /** Has nothing to fetch again: every file in it has its link (or it has none). */
+  filesOk?: true
 }
 
 export interface MessagePayload {
@@ -143,6 +145,11 @@ export interface MessagePayload {
   reactionsBy?: Record<string, string>
   /** Totals only, where that's all the network gives (Telegram). */
   reactionTotals?: Reaction[]
+  /**
+   * Kept again from what a device showed (see keepFlagged), WhatsApp's reactions from before, whose
+   * givers aren't known: reactionsBy goes on top of them.
+   */
+  reactionBase?: Reaction[]
 }
 
 export interface Collections {

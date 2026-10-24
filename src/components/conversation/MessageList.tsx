@@ -45,6 +45,7 @@ import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
 import { AudioPlayer } from './AudioPlayer'
 import { LottieSticker } from './LottieSticker'
+import { VideoSticker } from './VideoSticker'
 import { RichText, type Highlight } from './RichText'
 
 const NO_MESSAGES: Message[] = []
@@ -493,7 +494,7 @@ function AttachmentView({ attachment: a, fromMe, sending, bare }: { attachment: 
       const look = 'block size-32 object-contain drop-shadow-sm'
       if (isAnimatedSticker(a.mime)) return <LottieSticker url={a.url} name={a.name} onFail={() => setBroken(true)} className={look} />
       return a.mime === 'video/webm' ? (
-        <video src={a.url} autoPlay loop muted playsInline aria-label={a.name} onError={() => setBroken(true)} className={look} />
+        <VideoSticker url={a.url} name={a.name} onFail={() => setBroken(true)} className={look} />
       ) : (
         <img src={a.url} alt={a.name} loading="lazy" onError={() => setBroken(true)} className={look} />
       )

@@ -23,6 +23,11 @@ export interface DeviceStore {
   put(change: Partial<DeviceCopy>): void
   /** Forgets chats, with their messages, and contacts. */
   remove(change: { threadIds?: string[]; contactIds?: string[]; messageIds?: string[] }): void
+  /** Forgets every message of a chat but `keep`: its copy here starts afresh. */
+  forget(threadId: string, keep: Set<string>): Promise<void>
+  /** When this device last had the server's copy (the server's time), if it has. */
+  lastHere(): Promise<string | null>
+  setLastHere(at: string): void
   /** Writes whatever is waiting to be written. */
   flush(): Promise<void>
   /** Deletes this device's copy. */
@@ -192,6 +197,46 @@ function indexedDbStore(db: IDBDatabase): DeviceStore {
       return newestFirst(db.transaction('messages').objectStore('messages'), threadId, beforeSentAt, limit)
     },
 
+    forget(threadId, keep) {
+      for (const [id, message] of pending.messages) if (message.threadId === threadId && !keep.has(id)) pending.messages.delete(id)
+      // After what's waiting is written; what's put afterwards is written after this.
+      void store.flush()
+      writing = writing
+        .then(async () => {
+          if (closed) return
+          const tx = db.transaction('messages', 'readwrite')
+          const cursor = tx.objectStore('messages').index('byThread').openKeyCursor(IDBKeyRange.bound([threadId, ''], [threadId, END]))
+          cursor.onsuccess = () => {
+            if (!cursor.result) return
+            if (!keep.has(cursor.result.primaryKey as string)) tx.objectStore('messages').delete(cursor.result.primaryKey)
+            cursor.result.continue()
+          }
+          await done(tx)
+        })
+        .catch((error) => console.warn('[device] Not forgotten:', error))
+      return writing
+    },
+
+    async lastHere() {
+      if (closed) return null
+      try {
+        return (await request<string | undefined>(db.transaction('meta').objectStore('meta').get('lastHere'))) ?? null
+      } catch {
+        return null // Closed meanwhile (signing out).
+      }
+    },
+
+    setLastHere(at) {
+      writing = writing
+        .then(async () => {
+          if (closed) return
+          const tx = db.transaction('meta', 'readwrite')
+          tx.objectStore('meta').put(at, 'lastHere')
+          await done(tx)
+        })
+        .catch((error) => console.warn('[device] Not saved:', error))
+    },
+
     put(change) {
       for (const thread of change.threads ?? []) {
         removed.threads.delete(thread.id)
@@ -247,6 +292,7 @@ export function memoryDeviceStore(): DeviceStore {
   let threads = new Map<string, Thread>()
   let contacts = new Map<string, Contact>()
   let messages = new Map<string, Message>()
+  let lastHere: string | null = null
   const byNewest = (list: Message[]) => list.sort((a, b) => (a.sentAt < b.sentAt ? 1 : a.sentAt > b.sentAt ? -1 : 0))
 
   return {
@@ -273,6 +319,15 @@ export function memoryDeviceStore(): DeviceStore {
       }
       for (const id of contactIds) contacts.delete(id)
       for (const id of messageIds) messages.delete(id)
+    },
+    async forget(threadId, keep) {
+      for (const [id, message] of messages) if (message.threadId === threadId && !keep.has(id)) messages.delete(id)
+    },
+    async lastHere() {
+      return lastHere
+    },
+    setLastHere(at) {
+      lastHere = at
     },
     async flush() {},
     async clear() {

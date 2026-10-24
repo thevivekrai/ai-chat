@@ -319,6 +319,52 @@ describe('chats linked on the server', () => {
     stop()
   })
 
+  it("starts a chat afresh when this device was away longer than the server remembers its deletions", async () => {
+    const seed = async (lastHere: string | null) => {
+      await wipeDeviceStore()
+      const store = await openDeviceStore('u1')
+      store.put({ threads: inbox.threads, messages: [messageAt(7, 60), messageAt(8, 50)] })
+      if (lastHere) store.setLastHere(lastHere)
+      await store.flush()
+    }
+    inbox.deletedSince = { [RAVI]: at(60 * 24) }
+    inbox.at = at(0)
+
+    // Not knowing when it was last here (as after updating), it keeps what it has.
+    await seed(null)
+    const unknown = await signedIn()
+    expect((await unknown.api.loadInbox()).messages.map((m) => m.body)).toEqual(expect.arrayContaining(['Message 7', 'Message 8']))
+    unknown.stop()
+
+    // Here since: nothing it shows can have been deleted unseen.
+    await seed(at(60))
+    const recent = await signedIn()
+    expect((await recent.api.loadInbox()).messages.map((m) => m.body)).toEqual(expect.arrayContaining(['Message 7', 'Message 8']))
+    recent.stop()
+
+    // Away for longer: only what the server has is kept (older comes back from the network).
+    await seed(at(60 * 24 * 40))
+    const away = await signedIn()
+    const bodies = (await away.api.loadInbox()).messages.map((m) => m.body)
+    expect(bodies).not.toContain('Message 7')
+    expect(bodies).toContain('Did the parcel arrive?')
+    await eventually(async () => expect((await deviceCopy()).messages.map((m) => m.id)).toEqual([`${RAVI}:M1`]))
+    // And it remembers being here now.
+    await eventually(async () => expect(Math.abs(Date.parse((await (await openDeviceStore('u1')).lastHere())!) - Date.parse(inbox.at!))).toBeLessThan(1000))
+    away.stop()
+  })
+
+  it('remembers being here as a deletion comes in, so it never counts as having missed it', async () => {
+    inbox.at = at(60)
+    const { api, stop } = await signedIn()
+    await api.loadInbox()
+    await eventually(async () => expect(await (await openDeviceStore('u1')).lastHere()).not.toBeNull())
+    const before = (await (await openDeviceStore('u1')).lastHere())!
+    FakeEventSource.instances.at(-1)!.push({ type: 'message.deleted', threadId: RAVI, messageId: `${RAVI}:M1` })
+    await eventually(async () => expect((await (await openDeviceStore('u1')).lastHere())! > before).toBe(true))
+    stop()
+  })
+
   it("pages back through this device's copy before asking the server", async () => {
     const store = await openDeviceStore('u1')
     store.put({ threads: inbox.threads, messages: Array.from({ length: 5 }, (_, i) => messageAt(i, 60 * (i + 1))) })

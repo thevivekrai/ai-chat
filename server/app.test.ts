@@ -1091,13 +1091,28 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(after[`${thread}:DELPIC`]).toMatchObject({ deleted: true, body: '' })
       expect(after[`${thread}:DELPIC`].attachments).toBeUndefined()
 
+      // Looked at once: a message with nothing to fetch isn't read again to find out.
+      const docs = server.database.col.messages
+      expect(await docs.findOne({ userId, id: `${thread}:OLDTXT` })).toMatchObject({ filesOk: true })
+      expect(await docs.findOne({ userId, id: `${thread}:NEVER` })).toMatchObject({ fileAskedAt: expect.any(Date) })
+
+      // The connection coming back within the hour doesn't ask again, even for one new since.
+      await keep('LATER', 'Sticker')
+      reopened.emit('connection.update', { connection: 'close', lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() } })
+      await waitFor(() => expect(server.sockets.at(-1)).not.toBe(reopened))
+      const resumed = server.sockets.at(-1)!
+      resumed.user = { id: '919876543210:4@s.whatsapp.net' }
+      resumed.emit('connection.update', { connection: 'open' })
+      await new Promise((r) => setTimeout(r, 300))
+      expect(resumed.resendRequests).toEqual([])
+
       // Reconnecting soon after, what was just asked for isn't asked for again (some never come).
       await server.restart()
       const again = server.sockets.at(-1)!
       again.user = { id: '919876543210:4@s.whatsapp.net' }
       again.emit('connection.update', { connection: 'open' })
-      await new Promise((r) => setTimeout(r, 300))
-      expect(again.resendRequests).toEqual([])
+      // (Only the one new since, from a new start of the server.)
+      await waitFor(() => expect(again.resendRequests.map((k) => k.id)).toEqual(['LATER']))
       await browser.delete('/api/link/whatsapp')
     }, 20_000)
 
@@ -1113,10 +1128,18 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       await server.current().store.updateMessage(userId, 'tga:-100777:7', { attachments: [{ kind: 'image', name: 'Photo' }] })
       expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7'].attachments[0].url).toBeUndefined()
 
-      await server.restart()
-      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7'].attachments[0].url).toMatch(FILE_LINK), {
-        timeout: 8000,
-      })
+      // And one Telegram refuses (a chat left since, say): asked once, then left for a day.
+      await server.current().store.updateMessage(userId, 'tga:5001:11', { attachments: [{ kind: 'image', name: 'Photo' }] })
+      tg.state.unreachable.add(11)
+      try {
+        await server.restart()
+        await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7'].attachments[0].url).toMatch(FILE_LINK), {
+          timeout: 8000,
+        })
+        await waitFor(async () => expect(await server.database.col.messages.findOne({ userId, id: 'tga:5001:11' })).toMatchObject({ fileAskedAt: expect.any(Date) }))
+      } finally {
+        tg.state.unreachable.delete(11)
+      }
       await browser.delete('/api/link/telegram')
     })
 
@@ -1225,9 +1248,19 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       await threads.updateOne({ ...deletedBy, 'deletedIds.id': `${thread}:OTHER` }, { $set: { 'deletedIds.$.at': new Date(Date.now() - 31 * 86_400_000) } })
       // (Kept as a bare id at first.)
       await threads.updateOne(deletedBy, { $push: { deletedIds: `${thread}:EARLIER` } })
-      const remembered = (await browser.get('/api/inbox')).json.deleted
-      expect(remembered).not.toContain(`${thread}:OTHER`)
-      expect(remembered).toContain(`${thread}:EARLIER`)
+      const remembered = (await browser.get('/api/inbox')).json
+      expect(remembered.deleted).not.toContain(`${thread}:OTHER`)
+      expect(remembered.deleted).toContain(`${thread}:EARLIER`)
+      // A device away since before the one no longer listed starts that chat afresh.
+      const DAY = 86_400_000
+      expect(Date.parse(remembered.at) - Date.parse(remembered.deletedSince[thread])).toBeGreaterThan(31 * DAY - 60_000)
+      expect(Date.parse(remembered.at) - Date.parse(remembered.deletedSince[thread])).toBeLessThan(31 * DAY + 60_000)
+      // So does one away since before the oldest still listed, once there are too many to list them all.
+      const many = Array.from({ length: 60 }, (_, i) => ({ id: `${thread}:MANY${i}`, at: new Date(Date.now() - (60 - i) * 60_000) }))
+      await threads.updateOne(deletedBy, { $push: { deletedIds: { $each: many, $slice: -50 } } })
+      const full = (await browser.get('/api/inbox')).json
+      expect(full.deleted).not.toContain(`${thread}:MANY9`)
+      expect(full.deletedSince[thread]).toBe(many[10].at.toISOString())
 
       // Starring a message the server no longer keeps: it keeps a copy, from what the device says.
       const old = { id: `${thread}:ANCIENT`, senderId: thread, sentAt: new Date((ts - 90 * 86400) * 1000).toISOString(), body: 'Here is the warranty card' }
@@ -1278,6 +1311,15 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       } as never)
       const reacted = await events.next((e) => e.type === 'message.updated' && e.message.id === older.id && (e.message.reactions?.length ?? 0) > 1)
       expect(reacted.message.reactions).toEqual([{ emoji: '👍', count: 1, mine: false }, { emoji: '❤️', count: 1, mine: false }])
+      // Said again (as a history replay does), it still counts once; changed, it moves.
+      const ravisReaction = (id: string, text: string) => ({
+        key: { remoteJid: RAVI, fromMe: false, id },
+        message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'OLDER' }, text } },
+        messageTimestamp: ts,
+      })
+      socket.emit('messages.upsert', { type: 'append', messages: [ravisReaction('R-OLDER', '❤️'), ravisReaction('R-OLDER2', '😂')] } as never)
+      const changed = await events.next((e) => e.type === 'message.updated' && e.message.id === older.id && !!e.message.reactions?.some((r: { emoji: string }) => r.emoji === '😂'))
+      expect(changed.message.reactions).toEqual([{ emoji: '👍', count: 1, mine: false }, { emoji: '😂', count: 1, mine: false }])
 
       // The same, done on the phone.
       socket.emit('messages.upsert', {
@@ -1378,6 +1420,25 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         messages: [{ key: { remoteJid: GROUP, fromMe: false, id: 'R-G1', participant: ASHA }, message: { reactionMessage: { key: { remoteJid: GROUP, fromMe: false, id: 'G1', participant: DEV }, text: '🎉' } }, messageTimestamp: ts + 7 }],
       } as never)
       await waitFor(async () => expect(byId((await inbox()).messages)[`wa:${GROUP}:G1`]?.reactions).toEqual([{ emoji: '🎉', count: 1, mine: false }]))
+
+      // A group WhatsApp is slow to name: its messages wait for the name briefly, and once, and
+      // other chats not at all; the name comes when it does.
+      const SLOW = '120363666666@g.us'
+      socket.groupDelayMs = 1500
+      const lookupsBefore = socket.groupLookups
+      const inGroup = (id: string, body: string) => ({ key: { remoteJid: SLOW, fromMe: false, id, participant: DEV }, message: { conversation: body }, messageTimestamp: ts + 8 })
+      socket.emit('messages.upsert', { type: 'notify', messages: [inGroup('S1', 'Hello group')] } as never)
+      socket.emit('messages.upsert', { type: 'notify', messages: [inGroup('S2', 'Anyone?')] } as never)
+      socket.emit('messages.upsert', { type: 'notify', messages: [text(ASHA, 'A3', 'Also, gift wrap please', ts + 9)] } as never)
+      await waitFor(async () => expect(byId((await inbox()).messages)[`wa:${ASHA}:A3`]).toBeDefined(), { timeout: 300 })
+      expect(byId((await inbox()).messages)[`wa:${SLOW}:S1`]).toBeUndefined()
+      await waitFor(async () => {
+        const { messages } = await inbox()
+        expect(byId(messages)[`wa:${SLOW}:S1`]).toBeDefined()
+        expect(byId(messages)[`wa:${SLOW}:S2`]).toBeDefined()
+      })
+      expect(socket.groupLookups - lookupsBefore).toBe(1)
+      await waitFor(async () => expect(byId((await inbox()).threads)[`wa:${SLOW}`].title).toBe('Family'), { timeout: 3000 })
       socket.groupDelayMs = 0
       await browser.delete('/api/link/whatsapp')
     })

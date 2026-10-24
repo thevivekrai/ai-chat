@@ -80,12 +80,19 @@ export async function readLottie(bytes: Uint8Array): Promise<LottieAnimation> {
       list: fonts.map((font: Record<string, unknown>) => {
         const { fPath, fFamily, ...rest } = font ?? {}
         void fPath
-        return { ...rest, fFamily: typeof fFamily === 'string' ? fFamily.replace(/[^\w -]/g, '') : 'sans-serif', origin: 0 }
+        return { ...rest, fFamily: familyName(fFamily), origin: 0 }
       }),
     }
   }
+  // Glyphs name their font the same way, to be found.
+  if (Array.isArray(animation.chars)) {
+    animation.chars = animation.chars.map((char: Record<string, unknown>) => (char && typeof char === 'object' && 'fFamily' in char ? { ...char, fFamily: familyName(char.fFamily) } : char))
+  }
   return animation
 }
+
+/** A font's name, as nothing but a name (it ends up in CSS). */
+const familyName = (name: unknown) => (typeof name === 'string' ? name.replace(/[^\w -]/g, '') : 'sans-serif')
 
 function join(pieces: Uint8Array[], size: number): Uint8Array {
   const out = new Uint8Array(size)

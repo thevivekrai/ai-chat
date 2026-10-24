@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message, MessageAction } from '@/data/types'
 import { ME_ID } from '@/data/types'
-import { api, type SendOptions } from '@/data/api'
+import type { SendOptions } from '@/data/api'
 import { cancelEdit, removeUnsent, sendReply, startEdit, startReply } from './actions'
 import { canRetry, useInbox } from './inbox'
 import { useUi } from './ui'
@@ -77,41 +77,43 @@ describe("a message that wasn't sent", () => {
     const keptFailed: Message = { id: 'wa:1:ABC', threadId: 't1', senderId: ME_ID, body: 'On my way', sentAt: '2026-10-21T10:00:00.000Z', status: 'failed' }
     const photo: Message = { ...keptFailed, id: 'wa:1:PHOTO', body: '', attachments: [{ kind: 'image', name: 'Photo' }] }
     const acted: [string, MessageAction][] = []
-    let sends = false
-    const send = vi.spyOn(api, 'sendMessage').mockImplementation(async (threadId, body) => {
-      if (!sends) throw new Error('No connection')
-      return { id: 'wa:1:NEW', threadId, senderId: ME_ID, body, sentAt: '2026-10-21T10:05:00.000Z', status: 'sent' }
-    })
+    const sent: string[] = []
+    let deletes = false
     const realAct = useInbox.getState().actOnMessage
+    const realSend = useInbox.getState().sendMessage
     useInbox.setState({
       messages: { t1: [mine, keptFailed, photo] },
-      actOnMessage: async (_threadId, messageId, action) => void acted.push([messageId, action]),
+      actOnMessage: async (threadId, messageId, action) => {
+        acted.push([messageId, action])
+        if (!deletes) throw new Error('No connection')
+        useInbox.setState((s) => ({ messages: { ...s.messages, [threadId]: s.messages[threadId].filter((m) => m.id !== messageId) } }))
+      },
+      sendMessage: async (_threadId, body) => void sent.push(body),
     })
-    const ids = () => useInbox.getState().messages.t1.map((m) => `${m.id}:${m.status ?? ''}`)
+    const statusOf = (id: string) => useInbox.getState().messages.t1.find((m) => m.id === id)
     // Only on this device: not dropped from here alone (it would come back).
     useInbox.getState().discardMessage('t1', 'wa:1:ABC')
     expect(useInbox.getState().messages.t1).toHaveLength(3)
     removeUnsent('t1', 'wa:1:ABC')
     await vi.waitFor(() => expect(acted).toEqual([['wa:1:ABC', { type: 'delete', forEveryone: false }]]))
+    expect(statusOf('wa:1:ABC')).toBeDefined()
 
-    // Sent again in its place: failing again, it stays as it was (with the new reason).
+    // Sent again: it can't be taken off the network, so nothing is sent (and it says why).
     acted.length = 0
     await useInbox.getState().retryMessage('t1', 'wa:1:ABC')
-    expect(acted).toEqual([])
-    expect(useInbox.getState().messages.t1.find((m) => m.id === 'wa:1:ABC')).toMatchObject({ status: 'failed', error: 'No connection' })
-    expect(ids().sort()).toEqual(['m1:', 'wa:1:ABC:failed', 'wa:1:PHOTO:failed'])
-    // Going, it's sent once however often it's tapped, and the copy that went takes its place.
-    sends = true
+    expect(sent).toEqual([])
+    expect(statusOf('wa:1:ABC')).toMatchObject({ status: 'failed', error: 'No connection' })
+    // Taken off, it's sent like a new message, once however often it's tapped.
+    deletes = true
     await Promise.all([useInbox.getState().retryMessage('t1', 'wa:1:ABC'), useInbox.getState().retryMessage('t1', 'wa:1:ABC')])
-    expect(send).toHaveBeenCalledTimes(2)
-    expect(acted).toEqual([['wa:1:ABC', { type: 'delete', forEveryone: false }]])
-    expect(ids()).toContain('wa:1:NEW:sent')
+    expect(sent).toEqual(['On my way'])
+    expect(statusOf('wa:1:ABC')).toBeUndefined()
     // A photo's file is only on the device that sent it: nothing to send again.
     expect(canRetry(photo)).toBe(false)
     await useInbox.getState().retryMessage('t1', 'wa:1:PHOTO')
-    expect(send).toHaveBeenCalledTimes(2)
-    send.mockRestore()
-    useInbox.setState({ actOnMessage: realAct })
+    expect(sent).toHaveLength(1)
+    useInbox.setState({ actOnMessage: realAct, sendMessage: realSend })
   })
+
 
 })

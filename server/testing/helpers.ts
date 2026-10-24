@@ -232,8 +232,11 @@ export class FakeWaSocket implements WaSocket {
 
   /** How long WhatsApp takes to say a group's name. */
   groupDelayMs = 0
+  /** How many times a group's name was asked for. */
+  groupLookups = 0
 
   async groupMetadata() {
+    this.groupLookups++
     if (this.groupDelayMs) await new Promise((r) => setTimeout(r, this.groupDelayMs))
     return { subject: 'Family' }
   }
@@ -275,6 +278,8 @@ export function fakeTelegram() {
     archived: new Set<string>(),
     /** How many of Asha's messages Telegram counts unread. */
     ashaUnread: 1,
+    /** Messages Telegram refuses to fetch again (from a chat left since, say). */
+    unreachable: new Set<number>(),
     qrShown: 0,
     /** Scans the QR code shown, as Telegram on a phone would. */
     scanQr: () => {},
@@ -348,6 +353,7 @@ export function fakeTelegram() {
         return [trekPhoto]
       },
       async message(chatId, id) {
+        if (state.unreachable.has(id)) throw new Error('CHANNEL_PRIVATE')
         if (chatId === trek.id) return id === trekPhoto.id ? trekPhoto : null
         return chatId === asha.id ? (ashaMessages.find((m) => m.id === id) ?? null) : null
       },
@@ -457,6 +463,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       files,
       downloadMedia: downloadFakeMedia,
       filesRepairDelayMs: 50,
+      groupTitleWaitMs: 400,
       createSocket: (auth) => {
         const socket = new FakeWaSocket(auth)
         sockets.push(socket)

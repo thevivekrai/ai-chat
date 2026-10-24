@@ -18,6 +18,15 @@ export function messageChanges({ store, hub }: { store: InboxStore; hub: Hub }) 
       return message
     },
 
+    /**
+     * Gives a kept message the links to its sticker, photo or file (sent again by the network), if
+     * it had none, and tells the user's devices. See store.linkFiles.
+     */
+    async addFileLinks(userId: ObjectId, id: string, body: string, attachments: NonNullable<Message['attachments']>) {
+      const message = await store.linkFiles(userId, id, body, attachments)
+      if (message) hub.publish(userId.toHexString(), { type: 'message.updated', message })
+    },
+
     /** Gone from the chat (deleted for me, say): from the server, and from every device. */
     async removeForMe(userId: ObjectId, threadId: string, messageId: string) {
       await store.deleteMessage(userId, threadId, messageId)

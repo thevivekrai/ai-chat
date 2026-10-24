@@ -21,8 +21,10 @@ const animation = {
     list: [
       { fName: 'Linked', fFamily: 'Linked', origin: 1, fPath: 'https://evil.example/x.css' },
       { fName: 'Styled', fFamily: "x; } body { display: none } @font-face { font-family: 'y", origin: 3, fPath: "https://evil.example/f.woff');}" },
+      { fName: 'Gilroy', fFamily: 'Gilroy.Bold', origin: 0 },
     ],
   },
+  chars: [{ ch: 'A', fFamily: 'Gilroy.Bold', size: 40, data: {} }, 'stray'],
 }
 const bytes = (value: unknown) => strToU8(JSON.stringify(value))
 
@@ -48,8 +50,12 @@ describe('animated stickers', () => {
       list: [
         { fName: 'Linked', fFamily: 'Linked', origin: 0 },
         { fName: 'Styled', fFamily: 'x  body  display none  font-face  font-family y', origin: 0 },
+        { fName: 'Gilroy', fFamily: 'GilroyBold', origin: 0 },
       ],
     })
+    // Its glyphs still find it.
+    const { chars } = await readLottie(gzipSync(bytes(animation)))
+    expect(chars).toEqual([{ ch: 'A', fFamily: 'GilroyBold', size: 40, data: {} }, 'stray'])
   })
 
   it('refuses what is not an animation, or would unpack into something huge', async () => {

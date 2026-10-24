@@ -14,7 +14,8 @@ import type { AiSearchSource, AiTask, SearchAnswer } from './types'
  * question about tasks, `tasks` are the open ones (see openTasks), soonest due first.
  */
 export async function answerQuestion(question: string, sources: AiSearchSource[], tasks: AiTask[] = []): Promise<SearchAnswer> {
-  for (const threadId of new Set(sources.map((s) => s.threadId))) assertAiCanRead(threadId)
+  const threadIds = [...sources.map((s) => s.threadId), ...tasks.flatMap((t) => (t.threadId ? [t.threadId] : []))]
+  for (const threadId of new Set(threadIds)) assertAiCanRead(threadId)
 
   if (llmConfigured()) {
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone

@@ -164,6 +164,8 @@ describe('answerQuestion', () => {
       // Added by hand, and one from a message this device no longer has loaded.
       { id: 't5', title: 'Renew the domain', dueAt: at(3), done: false, createdAt: at(-5) },
       { id: 't6', title: 'Call the bank', dueAt: null, done: false, createdAt: at(-5), source: { threadId: 'sharma', messageId: 'sharma-gone' } },
+      // From a chat this device doesn't have loaded: listed, from "a chat".
+      { id: 't7', title: 'Ask about the refund', dueAt: at(48), done: false, createdAt: at(-5), source: { threadId: 'unloaded', messageId: 'unloaded-1' } },
     ]
     expect(asksAboutTasks('What are my tasks for today?')).toBe(true)
     expect(asksAboutTasks('What do I have to do today?')).toBe(true)
@@ -174,8 +176,9 @@ describe('answerQuestion', () => {
 
     // Open ones only (from chats AI may read, or added by hand), soonest first.
     const open = openTasks(tasks, state.threads, (id) => id !== 'divya')
-    expect(open.map((t) => t.title)).toEqual(['Send the invoice', 'Renew the domain', 'Ship the planters', 'Call the bank'])
-    expect(open[0]).toMatchObject({ threadTitle: state.threads.sharma.title, messageId: 'sharma-5' })
+    expect(open.map((t) => t.title)).toEqual(['Send the invoice', 'Renew the domain', 'Ask about the refund', 'Ship the planters', 'Call the bank'])
+    expect(open[2]).toEqual({ title: 'Ask about the refund', dueAt: at(48), threadId: 'unloaded', messageId: 'unloaded-1' })
+    expect(open[0]).toMatchObject({ threadId: 'sharma', threadTitle: state.threads.sharma.title, messageId: 'sharma-5' })
     expect(open[1]).toEqual({ title: 'Renew the domain', dueAt: at(3) })
 
     const { answer, citedMessageIds } = await answerQuestion('What are my tasks for today?', [], open)
@@ -187,14 +190,15 @@ describe('answerQuestion', () => {
 
     // Nothing due today: what's open, counted in full.
     const later = open.slice(2)
-    expect((await answerQuestion('What are my tasks for today?', [], later)).answer).toMatch(/Nothing is due today\. You have 2 tasks open/)
+    expect((await answerQuestion('What are my tasks for today?', [], later)).answer).toMatch(/Nothing is due today\. You have 3 tasks open/)
     const many = Array.from({ length: 12 }, (_, i) => ({ title: `Task ${i}`, dueAt: null }))
     expect((await answerQuestion('my tasks?', [], many)).answer).toMatch(/12 tasks open: .*, and 7 more\./)
 
     // Claude gets them too, with the user's time zone to tell what "today" is.
     const prompt = buildAnswerPrompt('What are my tasks for today?', [], new Date(NOW), 'Asia/Kolkata', open)
     expect(prompt.user).toContain("(the user's time zone: Asia/Kolkata)")
-    expect(prompt.user).toContain('Open tasks (4 in all)')
+    expect(prompt.user).toContain('Open tasks (5 in all)')
+    expect(prompt.user).toContain(`- Ask about the refund · due ${at(48)} · [unloaded-1] from a chat`)
     expect(prompt.user).toContain(`- Renew the domain · due ${at(3)} · added by hand`)
     expect(prompt.user).toContain(`- Send the invoice · due ${at(2)} · [sharma-5] from "${state.threads.sharma.title}"`)
   })
