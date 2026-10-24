@@ -13,7 +13,8 @@ import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
 import { countViews, useThreadViews } from '@/store/selectors'
 import { useAi } from '@/store/ai'
-import { usesClaude, useSettings } from '@/store/settings'
+import { useAiEngine } from '@/store/aiEngine'
+import { useSettings } from '@/store/settings'
 import { useUi, type View } from '@/store/ui'
 
 const NAV: { id: View; label: string; icon: LucideIcon }[] = [
@@ -205,9 +206,8 @@ function AccountsStatus() {
 }
 
 function AiStatusCard() {
-  const { aiEnabled, selected, claude } = useSettings(
-    useShallow((s) => ({ aiEnabled: s.aiEnabled, selected: s.aiThreadIds.length, claude: usesClaude(s) })),
-  )
+  const { aiEnabled, selected } = useSettings(useShallow((s) => ({ aiEnabled: s.aiEnabled, selected: s.aiThreadIds.length })))
+  const engine = useAiEngine()
   const total = useInbox((s) => Object.keys(s.threads).length)
   const problem = useAi((s) => s.problem)
 
@@ -235,7 +235,7 @@ function AiStatusCard() {
     >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span className={cn('size-2 rounded-full', problem ? 'bg-rose-500' : 'bg-emerald-500')} aria-hidden />
-        {claude ? 'Claude' : 'Demo AI'} is on
+        {engine.name} is on
       </p>
       <p className="mt-1 text-xs text-muted">
         {problem ? 'Needs attention' : `Reads ${Math.min(selected, total)} of ${total} chats`} ·{' '}

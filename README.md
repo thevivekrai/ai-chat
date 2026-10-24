@@ -24,8 +24,9 @@ Nothing is ever sent automatically.
   without showing "typing…".
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
-- **Real AI.** Add your **Claude API key** and every AI feature calls Claude. Without one, a
-  built-in demo AI runs on the device.
+- **Real AI.** Signed in, everyone gets the free **shared AI** (Google's Gemini, with the
+  server's key). Or bring your own key: **Claude, Gemini, ChatGPT, OpenRouter, Groq, Mistral,
+  DeepSeek, Grok** or any OpenAI-compatible service. A built-in demo AI runs on the device too.
 - **Demo inbox.** 15 sample conversations across five networks, generated relative to now, in
   English and Hinglish. Try it without an account, too.
 
@@ -78,6 +79,7 @@ variable. The service's log says which file it read and which features are on:
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Your own profile photo. (Photos and files in chats don't need it.) |
+| `AI_API` | A Google Gemini API key: turns on the shared AI for everyone signed in. `AI_MODEL` and `AI_TRIAGE_MODEL` pick its models. |
 | `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
 | `TEMPORARY_STORAGE` | `off` stops the server keeping accounts in temporary storage while the database can't be reached (see below). |
 
@@ -114,7 +116,7 @@ Things to know about hosting:
 **Try this:** click **Turn on AI** · press `J`/`K` to move through the queue · `R` for drafts,
 `1`–`3` to pick one, edit, `Enter` to send · `E` to mark done · `⌘K`/`Ctrl+K` and ask *"what are
 my tasks for today?"*, *"have I ordered anything?"* or *"when is my flight?"* · then open
-**Settings** to connect your own accounts and a Claude key. Questions about tasks are answered from
+**Settings** to connect your own accounts and choose an AI. Questions about tasks are answered from
 your open tasks (with their due dates) as well as your chats.
 
 | Key | Action | Key | Action |
@@ -369,10 +371,21 @@ chats** shows or hides them, and while they're shown you can simulate an incomin
 them. Once you're signed in they never show: your inbox is only your own chats (the setting is
 kept for when you sign out).
 
-## AI with Claude
+## AI
 
-Add a key in **Settings → AI** (create one in the [Claude Console](https://platform.claude.com/settings/keys)).
-It is checked with Anthropic, stored only in this browser, and sent only to `api.anthropic.com`.
+Choose the AI in **Settings → AI**:
+
+- **Shared AI · free** (the default when signed in). The server calls Google's Gemini with its own
+  key (`AI_API`), so nobody needs a key. The key never reaches a browser. Each user gets up to 30
+  requests a minute; a few run at once and the rest wait their turn. If a model isn't available
+  to the key, the next one is tried.
+- **Your own API key**: Claude, Gemini, ChatGPT (OpenAI), OpenRouter, Groq, Mistral, DeepSeek,
+  Grok (xAI), or any OpenAI-compatible service by its address. The key is checked with the
+  provider, stored only in this browser, and sent only to that provider. Models can be typed in
+  freely; each provider suggests a few.
+- **Built-in demo AI**: simple rules on the device; no chat leaves it.
+
+### With Claude
 
 | Feature | Model (default) | Effort |
 | --- | --- | --- |
@@ -383,7 +396,7 @@ It is checked with Anthropic, stored only in this browser, and sent only to `api
 Both models can be changed in Settings. Sorting gets the fast model by default because it runs
 for every allowed chat whenever that chat changes.
 
-How it's called (`src/ai/llm.ts`, `src/ai/claude.ts`):
+How Claude is called (`src/ai/llm.ts`, `src/ai/claude.ts`):
 
 - **SDK.** The official `@anthropic-ai/sdk`, from the browser
   (`dangerouslyAllowBrowser`). That's appropriate here because it's your own key on your own
@@ -399,15 +412,22 @@ How it's called (`src/ai/llm.ts`, `src/ai/claude.ts`):
 - **Errors.** A rejected key or unavailable model pauses automatic calls and says so. Other errors
   show their reason next to the result, with a retry.
 
-Results are cached per chat, keyed on its latest message, so Claude only runs again when a chat
-changes. Without a key, the same functions use the built-in demo AI (`src/ai/mock/`): canned
+### With other providers
+
+Gemini (`src/ai/gemini.ts`) is asked for JSON held to the same schemas (`responseJsonSchema`).
+OpenAI-compatible services (`src/ai/openai.ts`) get structured output where they support it, plain
+JSON mode or instructions where they don't; the first mode a service accepts is remembered. Every
+answer is checked against the schema (`src/ai/schemas.ts`) before it is used.
+
+Results are cached per chat, keyed on its latest message, so the AI only runs again when a chat
+(or the chosen AI) changes. Without a real AI, the same functions use the built-in demo AI (`src/ai/mock/`): canned
 results for the demo chats and simple rules elsewhere.
 
 **Privacy.** AI is off until you allow it, and then only for the chats you select (**Settings →
 AI**, or a single chat from its AI panel). New chats stay unselected until you allow them. The gate
 lives inside the AI module (`src/ai/access.ts`), not just the UI, so an unselected chat can't reach
-a model even by accident. With a Claude key, the allowed chats are sent to Anthropic when a feature
-needs them. Turning AI off clears AI results from the device.
+a model even by accident. The allowed chats are sent to the chosen AI when a feature needs them:
+through this app's server to Google for the shared AI, or straight to the provider for your own key. Turning AI off clears AI results from the device.
 
 ![Ask across chats: an AI answer with its source messages](docs/screenshots/ask-dark.jpg)
 
@@ -429,8 +449,13 @@ src/
   ai/
     index.ts          ← draftReply, summarizeThread, classifyPriority, extractTasks, answerQuestion
     access.ts         ← privacy gate every AI function checks
-    llm.ts            ← Claude config, request limiter, errors
-    claude.ts         ← Claude calls: schemas, structured output, fallbacks (loaded on demand)
+    llm.ts            ← the chosen AI, request limiter, errors
+    providers.ts      ← the providers you can bring a key for
+    schemas.ts        ← the shape of every result, checked for every provider
+    claude.ts         ← Claude: structured output, fallbacks (loaded on demand)
+    gemini.ts         ← Gemini, from the browser or the server (loaded on demand)
+    openai.ts         ← OpenAI and OpenAI-compatible services (loaded on demand)
+    shared.ts         ← the shared AI, through this app's server
     prompts.ts        ← the prompt for each function
     mock/             ← the built-in demo AI
   store/              ← Zustand stores (inbox cache, AI results, connections, UI, settings) and actions
@@ -470,6 +495,7 @@ server/
     accounts.ts       ← linked accounts and their status
     routes.ts         ← /api/link/…
   inbox/              ← per-user chat store (encrypted fields) and /api/inbox, /api/threads/…
+  ai.ts               ← the shared AI: /api/ai/generate, Gemini with the server's key (AI_API), limits
   realtime.ts         ← server-sent events (/api/events) to the user's open tabs
   crypto.ts           ← AES-256-GCM for data at rest
 ```
@@ -481,7 +507,7 @@ reconnects so nothing is missed. The wire types (`src/data/server/types.ts`) are
 sides.
 
 The Matrix SDK (~900 kB) and the Claude SDK are separate chunks, downloaded only once Matrix is
-connected or a key is saved.
+connected or Claude is chosen.
 
 ### Tests
 
@@ -506,8 +532,9 @@ connected or a key is saved.
   on sign-out.
 - **In a browser.** `server/testing/e2e.ts` runs the app against the same fakes, with a control
   port standing in for the phone, for clicking through linking end to end.
-- **Claude requests.** A stubbed `fetch` checks the request shape (model, effort, structured
-  output, fallbacks, no sampling parameters), refusals and error mapping.
+- **AI requests.** A stubbed `fetch` checks each provider's request shape (for Claude: model,
+  effort, structured output, fallbacks, no sampling parameters), refusals and error mapping; the
+  shared AI is tested against a stand-in Gemini, including its limits and model fallback.
 - **Telegram connector.** Tested against an in-memory Bot API.
 - **Unified inbox.** Merging, routing, local done/snooze state, scheduled sends, search and
   disconnecting.

@@ -30,7 +30,7 @@ export interface AiEntry<T> {
   error?: string
 }
 
-/** A problem with the Claude setup itself (bad key, unavailable model) rather than one chat. */
+/** A problem with the AI setup itself (bad key, unavailable model) rather than one chat. */
 export interface AiProblem {
   kind: 'auth' | 'permission' | 'model'
   message: string
@@ -85,9 +85,15 @@ function aiInputFor(threadId: string): { key: string; thread: AiThread } | null 
 export const useAi = create<AiState>()(
   persist(
     (set, get) => {
+      // Bumped when all results are forgotten (say, the AI changed): answers still on their way
+      // from before then are dropped.
+      let epoch = 0
+      // After a rate limit, background sorting waits a minute instead of retrying at every change.
+      let sortingPausedUntil = 0
       // A configuration problem is remembered until a call succeeds again.
       const noteSuccess = () => get().problem && set({ problem: null })
       const noteFailure = (error: unknown) => {
+        if (error instanceof LlmError && error.kind === 'rate_limit') sortingPausedUntil = Date.now() + 60_000
         if (error instanceof LlmError && (error.kind === 'auth' || error.kind === 'permission' || error.kind === 'model')) {
           if (get().problem?.message !== error.message) set({ problem: { kind: error.kind, message: error.message } })
         }
@@ -96,6 +102,7 @@ export const useAi = create<AiState>()(
       function ensure<K extends Slice>(slice: K, threadId: string, run: (thread: AiThread) => Promise<ResultTypes[K]>) {
         // These run automatically; while the setup is broken (say, a rejected key) they would only fail again.
         if (get().problem) return
+        if (slice === 'priority' && Date.now() < sortingPausedUntil) return
         const input = aiInputFor(threadId)
         if (!input) return
         const entries = () => get()[slice] as Entries<K>
@@ -109,16 +116,19 @@ export const useAi = create<AiState>()(
             else delete next[threadId]
             return { [slice]: next } as Partial<AiState>
           })
-        const stillCurrent = () => entries()[threadId]?.key === input.key
+        const started = epoch
+        const stillCurrent = () => started === epoch && entries()[threadId]?.key === input.key
 
         // Keep the previous result visible while recomputing, so tags don't flicker.
         write({ key: input.key, status: 'loading', result: current?.result })
         run(input.thread)
           .then((result) => {
+            if (started !== epoch) return
             noteSuccess()
             if (stillCurrent()) write({ key: input.key, status: 'ready', result })
           })
           .catch((error: unknown) => {
+            if (started !== epoch) return
             noteFailure(error)
             if (!stillCurrent()) return
             // Keep the last good result on screen; the error only says why it isn't fresh.
@@ -156,8 +166,10 @@ export const useAi = create<AiState>()(
             drafts: { ...s.drafts, [threadId]: { key, variant, items: { short: loading, friendly: loading, professional: loading } } },
           }))
 
+          const started = epoch
           const settle = (tone: Tone, entry: AiEntry<string>) =>
             set((s) => {
+              if (started !== epoch) return {}
               const drafts = s.drafts[threadId]
               if (!drafts || drafts.key !== key || drafts.variant !== variant) return {}
               return { drafts: { ...s.drafts, [threadId]: { ...drafts, items: { ...drafts.items, [tone]: entry } } } }
@@ -166,10 +178,12 @@ export const useAi = create<AiState>()(
           for (const tone of TONES) {
             draftReply(thread, tone, variant)
               .then(({ text }) => {
+                if (started !== epoch) return
                 noteSuccess()
                 settle(tone, { key, status: 'ready', result: text })
               })
               .catch((error: unknown) => {
+                if (started !== epoch) return
                 noteFailure(error)
                 settle(tone, { key, status: 'error', error: describeAiError(error) })
               })
@@ -190,7 +204,10 @@ export const useAi = create<AiState>()(
           }))
         },
 
-        forgetAll: () => set({ priority: {}, summary: {}, tasks: {}, drafts: {}, problem: null }),
+        forgetAll: () => {
+          epoch++
+          set({ priority: {}, summary: {}, tasks: {}, drafts: {}, problem: null })
+        },
         clearProblem: () => set({ problem: null }),
       }
     },

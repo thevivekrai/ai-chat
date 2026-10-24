@@ -17,7 +17,8 @@ import { useAi } from '@/store/ai'
 import { useClock } from '@/store/clock'
 import { settledLastMessageId, useInbox } from '@/store/inbox'
 import { useThreadViews } from '@/store/selectors'
-import { canAiReadThread, usesClaude, useSettings } from '@/store/settings'
+import { useAiEngine } from '@/store/aiEngine'
+import { canAiReadThread, useSettings } from '@/store/settings'
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -33,7 +34,7 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
 
 export function AiPanel({ threadId, onClose, className }: { threadId: string; onClose(): void; className?: string }) {
   const allowed = useSettings((s) => canAiReadThread(s, threadId))
-  const claude = useSettings(usesClaude)
+  const engine = useAiEngine()
   const { thread, contacts } = useInbox(useShallow((s) => ({ thread: s.threads[threadId], contacts: s.contacts })))
   if (!thread) return null
   const people = thread.participantIds.map((id) => contacts[id]).filter(Boolean)
@@ -61,9 +62,9 @@ export function AiPanel({ threadId, onClose, className }: { threadId: string; on
           </div>
           <p className="mt-1.5 pl-7 text-xs leading-relaxed text-muted">
             {allowed
-              ? claude
-                ? 'This chat is sent to Claude when a feature needs it. Results stay on this device.'
-                : 'Only this chat is read, and results stay on this device.'
+              ? engine.kind === 'demo'
+                ? 'Only this chat is read, and results stay on this device.'
+                : `This chat is sent to ${engine.name} when a feature needs it. Results stay on this device.`
               : 'Turn on to get a priority, summary, tasks and drafts for this chat.'}
           </p>
         </div>

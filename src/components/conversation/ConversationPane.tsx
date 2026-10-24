@@ -6,6 +6,7 @@ import { Kbd } from '@/components/ui/Kbd'
 import { Panel } from '@/components/ui/Panel'
 import { isMac, useBreakpoint } from '@/lib/media'
 import { useAi } from '@/store/ai'
+import { engineKey, useAiEngine } from '@/store/aiEngine'
 import { settledLastMessageId, useInbox } from '@/store/inbox'
 import { incognitoOn } from '@/store/privacy'
 import { canAiReadThread, useSettings } from '@/store/settings'
@@ -31,6 +32,7 @@ export function ConversationPane() {
 function Conversation({ threadId }: { threadId: string }) {
   const allowed = useSettings((s) => canAiReadThread(s, threadId))
   const lastKey = useInbox((s) => settledLastMessageId(s.messages[threadId]))
+  const engine = engineKey(useAiEngine())
   const unread = useInbox((s) => s.threads[threadId]?.unreadCount ?? 0)
   const draftsOpen = useUi((s) => s.draftsOpen)
   const aiPanelOpen = useUi((s) => s.aiPanelOpen)
@@ -46,12 +48,12 @@ function Conversation({ threadId }: { threadId: string }) {
     if (visible && unread > 0) useInbox.getState().markRead(threadId, incognitoOn() ? { receipt: false } : undefined)
   }, [visible, unread, threadId])
 
-  // Summary and tasks for the open chat, refreshed when it changes.
+  // Summary and tasks for the open chat, refreshed when it (or the AI) changes.
   useEffect(() => {
     if (!allowed) return
     useAi.getState().ensureSummary(threadId)
     useAi.getState().ensureTasks(threadId)
-  }, [allowed, threadId, lastKey])
+  }, [allowed, threadId, lastKey, engine])
 
   const closeSheet = () => useUi.getState().setAiSheetOpen(false)
 

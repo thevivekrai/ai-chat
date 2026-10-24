@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import express, { Router, type Express } from 'express'
 import type { DatabaseProblem, ServerFeatures } from '../src/data/server/types.ts'
+import { aiRoutes, type SharedAi } from './ai.ts'
 import { authRoutes } from './auth/routes.ts'
 import type { GoogleVerifier } from './auth/google.ts'
 import type { SessionTokens } from './auth/tokens.ts'
@@ -43,6 +44,8 @@ export interface AppDeps {
    * be reached; `problem` says why, as it stands now.
    */
   temporaryStorage?: { problem(): DatabaseProblem | undefined }
+  /** The shared AI (AI_API), when set. */
+  ai?: SharedAi | null
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -68,6 +71,7 @@ export function createApp(deps: AppDeps): Express {
       uploads: !!deps.media,
       database: true,
       storage: deps.temporaryStorage ? 'temporary' : 'database',
+      ai: !!deps.ai,
     }
     const problem = deps.temporaryStorage?.problem()
     res.json(problem ? { ...features, databaseProblem: problem } : features)
@@ -76,6 +80,7 @@ export function createApp(deps: AppDeps): Express {
     authRoutes({ col: deps.col, hub: deps.hub, tokens: deps.tokens, google: deps.google, media: deps.media, secureCookies: deps.secureCookies }),
   )
   api.use(linkRoutes(deps))
+  api.use(aiRoutes({ col: deps.col, tokens: deps.tokens, ai: deps.ai ?? null }))
   api.use(inboxRoutes(deps))
   api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')))
   api.use(errorHandler)

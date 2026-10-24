@@ -1,31 +1,31 @@
 /**
  * The one place a language model gets called.
  *
- * With a Claude API key configured (Settings → AI), every AI function sends its prompt to Claude
- * through `generate()`. Without one, the functions fall back to the built-in demo AI in ./mock,
- * which knows the demo chats and uses simple rules for everything else.
+ * Every AI function sends its prompt through `generate()` to the engine chosen in Settings → AI:
+ * the app's shared AI (Gemini, through this app's server), or a provider the user brought their
+ * own key for (Claude, Gemini, OpenAI or any OpenAI-compatible service). With neither, the
+ * functions fall back to the built-in demo AI in ./mock, which knows the demo chats and uses simple
+ * rules for everything else.
  *
- * The Claude client itself lives in ./claude.ts and is only downloaded once a key is set.
+ * Each provider's code is only downloaded once it is chosen.
  */
 import type { ExtractedTask, PriorityResult, SearchAnswer, ThreadSummary, Tone } from './types'
+import { keyProvider, type KeyProviderId } from './providers'
 
-export const CLAUDE_MODELS = [
-  { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', note: 'Most capable' },
-  { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', note: 'Balanced' },
-  { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest' },
-] as const
+export type LlmConfig =
+  | { provider: 'shared' }
+  | {
+      provider: KeyProviderId
+      apiKey: string
+      /** Drafts, summaries, tasks and answers. */
+      model: string
+      /** Sorting the queue, which runs for every allowed chat whenever it changes. */
+      triageModel: string
+      /** For "Other (OpenAI-compatible)": the service's address. */
+      baseUrl?: string
+    }
 
-export type ClaudeModel = (typeof CLAUDE_MODELS)[number]['id']
-
-export interface LlmConfig {
-  apiKey: string
-  /** Drafts, summaries, tasks and answers. */
-  model: ClaudeModel
-  /** Sorting the queue, which runs for every allowed chat whenever it changes. */
-  triageModel: ClaudeModel
-}
-
-/** What each kind of request returns. Claude is held to these shapes by structured outputs. */
+/** What each kind of request returns (see ./schemas). */
 export interface LlmOutputs {
   priority: PriorityResult
   summary: ThreadSummary
@@ -67,32 +67,63 @@ export class LlmError extends Error {
 
 let config: LlmConfig | null = null
 
-/** Set by the settings store whenever the key or model choice changes. */
+/** Set whenever the chosen engine, key or model changes; null means the built-in demo AI. */
 export function setLlmConfig(next: LlmConfig | null) {
-  config = next?.apiKey.trim() ? { ...next, apiKey: next.apiKey.trim() } : null
+  config = next?.provider === 'shared' || next?.apiKey.trim() ? withTrimmedKey(next) : null
 }
 
-/** Whether AI functions should call Claude (true) or use the built-in demo AI (false). */
+const withTrimmedKey = (next: LlmConfig): LlmConfig => (next.provider === 'shared' ? next : { ...next, apiKey: next.apiKey.trim() })
+
+/** Whether AI functions call a real model (true) or use the built-in demo AI (false). */
 export function llmConfigured(): boolean {
   return config !== null
 }
 
 export async function generate<K extends LlmTask>(request: LlmRequest<K>): Promise<LlmOutputs[K]> {
   const current = config
-  if (!current) throw new LlmError('auth', 'Add a Claude API key in Settings → AI to use Claude.')
-  const model = request.task === 'priority' ? current.triageModel : current.model
+  if (!current) throw new LlmError('auth', 'Choose an AI in Settings → AI.')
   // Typing in the chat or opening it beats re-sorting the whole queue in the background.
   const lane = request.task === 'priority' ? 'background' : 'interactive'
   return limiter.run(lane, async () => {
-    const { runClaude } = await import('./claude')
-    return runClaude({ apiKey: current.apiKey, model }, request)
+    if (current.provider === 'shared') {
+      const { runShared } = await import('./shared')
+      return runShared(request)
+    }
+    const model = request.task === 'priority' ? current.triageModel || current.model : current.model
+    const provider = keyProvider(current.provider)
+    if (current.provider === 'anthropic') {
+      const { runClaude } = await import('./claude')
+      return runClaude({ apiKey: current.apiKey, model }, request)
+    }
+    if (current.provider === 'google') {
+      const { runGemini } = await import('./gemini')
+      return runGemini({ apiKey: current.apiKey, model }, request)
+    }
+    const { runOpenAi } = await import('./openai')
+    return runOpenAi({ apiKey: current.apiKey, model, baseUrl: current.baseUrl || provider.baseUrl || '', name: provider.name }, request)
   })
 }
 
-/** Checks a key and model with one cheap call that generates nothing. */
-export async function testClaudeKey(apiKey: string, model: ClaudeModel): Promise<void> {
-  const { checkClaudeKey } = await import('./claude')
-  await checkClaudeKey(apiKey.trim(), model)
+/** Checks a key and model without generating anything. */
+export async function testKey(provider: KeyProviderId, apiKey: string, model: string, baseUrl?: string): Promise<void> {
+  const key = apiKey.trim()
+  const { name } = keyProvider(provider)
+  if (provider === 'anthropic') {
+    const { checkClaudeKey } = await import('./claude')
+    return checkClaudeKey(key, model)
+  }
+  if (provider === 'google') {
+    const { checkGeminiKey } = await import('./gemini')
+    return checkGeminiKey({ apiKey: key, model })
+  }
+  const { checkOpenAiKey } = await import('./openai')
+  return checkOpenAiKey({
+    apiKey: key,
+    model,
+    name,
+    baseUrl: baseUrl || keyProvider(provider).baseUrl || '',
+    keyPath: provider === 'openrouter' ? '/key' : undefined,
+  })
 }
 
 /**
