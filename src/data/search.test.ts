@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NOW, seedState } from '@/test/fixtures'
-import { parseQuery, searchMessages, stem } from './search'
+import { matchesInChat, parseQuery, searchMessages, stem } from './search'
 
 const { snapshot } = seedState()
 const search = (q: string) => searchMessages({ ...snapshot, now: NOW }, q)
@@ -34,5 +34,22 @@ describe('searchMessages', () => {
 
   it('returns nothing for stop words only', () => {
     expect(search('what is it')).toEqual([])
+  })
+})
+
+describe('search in a chat', () => {
+  const messages = [
+    { id: 'a', threadId: 't', senderId: 'c-1', body: 'The Pune order ships Friday', sentAt: '2026-10-20T10:00:00.000Z' },
+    { id: 'b', threadId: 't', senderId: 'c-1', body: 'ok', sentAt: '2026-10-20T11:00:00.000Z' },
+    { id: 'c', threadId: 't', senderId: 'c-1', body: 'Is the ORDER packed?', sentAt: '2026-10-20T12:00:00.000Z' },
+    { id: 'd', threadId: 't', senderId: 'c-1', body: '', deleted: true, sentAt: '2026-10-20T13:00:00.000Z' },
+  ]
+
+  it('finds exactly what was typed, ignoring case, oldest first', () => {
+    expect(matchesInChat(messages, 'order')).toEqual(['a', 'c'])
+    expect(matchesInChat(messages, '  Pune order ')).toEqual(['a'])
+    // Unlike the AI search, words aren't stemmed or widened.
+    expect(matchesInChat(messages, 'orders')).toEqual([])
+    expect(matchesInChat(messages, '   ')).toEqual([])
   })
 })

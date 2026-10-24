@@ -9,7 +9,7 @@ import { StringSession } from 'telegram/sessions/index.js'
 import QRCode from 'qrcode'
 import type { MessageHint, ServerOlderMessages, TelegramCodeResult, TelegramVerifyResult } from '../../src/data/server/types.ts'
 import { withMyReaction } from '../../src/data/reactions.ts'
-import type { Attachment, Message, QuotedMessage, Reaction } from '../../src/data/types.ts'
+import type { Attachment, Message, MessageAction, QuotedMessage, Reaction } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, type Avatars, type Picture } from '../inbox/avatars.ts'
@@ -58,6 +58,9 @@ export interface TgMessage {
   /** The message this one replies to, in the same chat. */
   replyToId?: number
   reactions?: Reaction[]
+  pinned?: boolean
+  /** Unix seconds, if it was edited. */
+  editDate?: number
 }
 
 export interface TgDialog {
@@ -83,6 +86,9 @@ export type TgUpdate =
   | { type: 'read-outbox'; chatId: string; maxId: number }
   | { type: 'reactions'; chatId: string; messageId: number; reactions: Reaction[] }
   | { type: 'typing'; chatId: string; senderId: string; active: boolean }
+  /** Deleted (for everyone, or for me on another device). Private chats' don't say which chat. */
+  | { type: 'deleted'; chatId?: string; ids: number[] }
+  | { type: 'pinned'; chatId: string; ids: number[]; pinned: boolean }
 
 /** The parts of a Telegram client this manager uses; tests pass a fake. */
 export interface TgClient {
@@ -108,6 +114,10 @@ export interface TgClient {
   send(chatId: string, text: string, replyToId?: number): Promise<{ id: number; date: number }>
   /** Sets my reaction; null removes it. */
   react(chatId: string, messageId: number, emoji: string | null): Promise<void>
+  edit(chatId: string, messageId: number, text: string): Promise<void>
+  /** Deletes for everyone in the chat, or only for me. */
+  remove(chatId: string, messageIds: number[], forEveryone: boolean): Promise<void>
+  pin(chatId: string, messageId: number, pinned: boolean): Promise<void>
   setTyping(chatId: string, typing: boolean): Promise<void>
   /** A small profile or chat picture, if there is one. */
   picture(chatId: string): Promise<Buffer | undefined>
@@ -254,6 +264,8 @@ export const createGramClient: CreateTgClient = (session, api) => {
       ...(media ? { media } : {}),
       ...(replyToId ? { replyToId } : {}),
       ...(reactions.length ? { reactions } : {}),
+      ...(m.pinned ? { pinned: true } : {}),
+      ...(m.editDate && !m.editHide ? { editDate: m.editDate } : {}),
     }
   }
 
@@ -369,6 +381,17 @@ export const createGramClient: CreateTgClient = (session, api) => {
         }),
       )
     },
+    async edit(chatId, messageId, text) {
+      await client.editMessage(await inputPeer(chatId), { message: messageId, text, parseMode: false })
+    },
+    async remove(chatId, messageIds, forEveryone) {
+      await client.deleteMessages(await inputPeer(chatId), messageIds, { revoke: forEveryone })
+    },
+    async pin(chatId, messageId, pinned) {
+      const peer = await inputPeer(chatId)
+      if (pinned) await client.pinMessage(peer, messageId, { notify: false })
+      else await client.unpinMessage(peer, messageId)
+    },
     async setTyping(chatId, typing) {
       await client.invoke(
         new Api.messages.SetTyping({
@@ -444,6 +467,16 @@ export const createGramClient: CreateTgClient = (session, api) => {
           } else if (update instanceof Api.UpdateChannelUserTyping) {
             const chatId = utils.getPeerId(new Api.PeerChannel({ channelId: update.channelId }))
             listener({ type: 'typing', chatId, senderId: utils.getPeerId(update.fromId), active: typingAction(update.action) })
+          } else if (update instanceof Api.UpdateDeleteMessages) {
+            listener({ type: 'deleted', ids: update.messages })
+          } else if (update instanceof Api.UpdateDeleteChannelMessages) {
+            const chatId = utils.getPeerId(new Api.PeerChannel({ channelId: update.channelId }))
+            listener({ type: 'deleted', chatId, ids: update.messages })
+          } else if (update instanceof Api.UpdatePinnedMessages) {
+            listener({ type: 'pinned', chatId: utils.getPeerId(update.peer), ids: update.messages, pinned: !!update.pinned })
+          } else if (update instanceof Api.UpdatePinnedChannelMessages) {
+            const chatId = utils.getPeerId(new Api.PeerChannel({ channelId: update.channelId }))
+            listener({ type: 'pinned', chatId, ids: update.messages, pinned: !!update.pinned })
           }
         },
         new Raw({
@@ -456,6 +489,10 @@ export const createGramClient: CreateTgClient = (session, api) => {
             Api.UpdateUserTyping,
             Api.UpdateChatUserTyping,
             Api.UpdateChannelUserTyping,
+            Api.UpdateDeleteMessages,
+            Api.UpdateDeleteChannelMessages,
+            Api.UpdatePinnedMessages,
+            Api.UpdatePinnedChannelMessages,
           ],
         }),
       )
@@ -524,6 +561,14 @@ function telegramError(error: unknown): HttpError {
       return new HttpError(400, 'This chat doesn\'t allow that reaction.')
     case 'CHAT_WRITE_FORBIDDEN':
       return new HttpError(403, 'You can\'t write in this chat.')
+    case 'MESSAGE_EDIT_TIME_EXPIRED':
+      return new HttpError(400, 'This message is too old to edit.')
+    case 'MESSAGE_NOT_MODIFIED':
+      return new HttpError(400, 'Nothing changed.')
+    case 'MESSAGE_DELETE_FORBIDDEN':
+      return new HttpError(403, 'Telegram doesn\'t let you delete this message.')
+    case 'CHAT_ADMIN_REQUIRED':
+      return new HttpError(403, 'Only the chat\'s admins can do that.')
   }
   report(error)
   return new HttpError(502, 'Telegram didn\'t accept that. Try again in a moment.')
@@ -696,6 +741,8 @@ export function createTelegram(deps: TelegramDeps) {
       ...(m.media?.attachment ? { attachments: [attachmentOf(s.userId, m.chat.id, m.id, m.media)] } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(m.reactions?.length ? { reactions: m.reactions } : {}),
+      ...(m.pinned ? { pinned: true } : {}),
+      ...(m.editDate ? { editedAt: new Date(m.editDate * 1000).toISOString() } : {}),
       ref: { id: m.id },
     }
     const { ref, ...wire } = message
@@ -741,8 +788,20 @@ export function createTelegram(deps: TelegramDeps) {
   }
 
   async function updateAndPublish(s: Session, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
-    const message = await store.updateMessage(s.userId, id, patch)
-    if (message) publish(s, { type: 'message.updated', message })
+    await changeMessage(s.userId, id, patch)
+  }
+
+  /** Changes a kept message and tells the user's devices; null when the server doesn't keep it. */
+  async function changeMessage(userId: ObjectId, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
+    const message = await store.updateMessage(userId, id, patch)
+    if (message) hub.publish(keyOf(userId), { type: 'message.updated', message })
+    return message
+  }
+
+  /** Deleted (for me, or for everyone, which on Telegram is gone too): from the server and every device. */
+  async function removeForMe(userId: ObjectId, threadId: string, messageId: string) {
+    await store.deleteMessage(userId, messageId)
+    hub.publish(keyOf(userId), { type: 'message.deleted', threadId, messageId })
   }
 
   async function onUpdate(s: Session, update: TgUpdate) {
@@ -753,8 +812,24 @@ export function createTelegram(deps: TelegramDeps) {
         return
       case 'edited': {
         const m = update.message
-        return updateAndPublish(s, `tga:${m.chat.id}:${m.id}`, { body: m.text || m.media?.body || '' })
+        // Telegram also reports changes that aren't edits (a link preview loading, say): those have no edit date.
+        return updateAndPublish(s, `tga:${m.chat.id}:${m.id}`, {
+          body: m.text || m.media?.body || '',
+          ...(m.editDate ? { editedAt: new Date(m.editDate * 1000).toISOString() } : {}),
+          pinned: !!m.pinned,
+        })
       }
+      case 'deleted': {
+        // Private chats' and small groups' deletions name only the messages (their ids are the account's own).
+        const gone = update.chatId
+          ? update.ids.map((id) => ({ id: `tga:${update.chatId}:${id}`, threadId: `tga:${update.chatId}` }))
+          : (await store.byRefIds(s.userId, 'tga:', update.ids)).filter((m) => !m.threadId.startsWith('tga:-100'))
+        for (const m of gone) await removeForMe(s.userId, m.threadId, m.id)
+        return
+      }
+      case 'pinned':
+        for (const id of update.ids) await updateAndPublish(s, `tga:${update.chatId}:${id}`, { pinned: update.pinned })
+        return
       case 'read': {
         const threadId = `tga:${update.chatId}`
         if (!(await store.thread(s.userId, threadId))) return
@@ -1115,6 +1190,44 @@ export function createTelegram(deps: TelegramDeps) {
       const { ref, ...wire } = message
       void ref
       return wire
+    },
+
+    /**
+     * Edits, deletes, pins or stars a message. Telegram has no stars: those are kept in Sytext.
+     * Deleted messages go, for everyone or only for me, as in Telegram's own apps. Returns the
+     * message as the server now keeps it (null when it doesn't: the device changes its own copy),
+     * or that it was removed.
+     */
+    async act(userId: ObjectId, threadId: string, messageId: string, action: MessageAction, hint?: MessageHint): Promise<{ message: Message | null; removed?: true }> {
+      const s = connected(userId)
+      const chatId = threadId.slice('tga:'.length)
+      const target = await store.message(userId, messageId)
+      if (target && target.threadId !== threadId) throw new HttpError(404, 'That message is gone.')
+      const ref = Number(target?.ref?.id) || refFromId(threadId, messageId)
+      if (!ref) throw new HttpError(404, 'That message is gone.')
+      const mine = (target?.senderId ?? (hint?.id === messageId ? hint.senderId : undefined)) === 'me'
+      try {
+        switch (action.type) {
+          case 'edit':
+            if (!mine) throw new HttpError(403, 'Only your own messages can be edited.')
+            await s.client.edit(chatId, ref, action.body)
+            return { message: await changeMessage(userId, messageId, { body: action.body, editedAt: new Date().toISOString() }) }
+          case 'delete':
+            if (action.forEveryone && !mine) throw new HttpError(403, 'Only your own messages can be deleted for everyone.')
+            // Supergroups and channels have no "delete for me" (deleting there deletes for everyone), so
+            // there it's only removed from Sytext.
+            if (action.forEveryone || !chatId.startsWith('-100')) await s.client.remove(chatId, [ref], action.forEveryone)
+            await removeForMe(userId, threadId, messageId)
+            return { message: null, removed: true }
+          case 'pin':
+            await s.client.pin(chatId, ref, action.pinned)
+            return { message: await changeMessage(userId, messageId, { pinned: action.pinned }) }
+          case 'star':
+            return { message: await changeMessage(userId, messageId, { starred: action.starred }) }
+        }
+      } catch (error) {
+        throw telegramError(error)
+      }
     },
 
     /** Sends a photo or file, with the text as its caption. Telegram keeps it; Sytext only passes it on. */

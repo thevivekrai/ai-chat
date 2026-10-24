@@ -48,7 +48,7 @@ describe('mock api', () => {
 
     const seeded = (await api.loadInbox()).messages.find((m) => m.id === 'divya-4')
     expect(seeded?.replyTo).toMatchObject({ id: 'divya-3', senderId: 'c-divya' })
-    expect(api.capabilities('divya')).toEqual({ reply: true, react: true, typing: true, history: false, files: false })
+    expect(api.capabilities('divya')).toMatchObject({ reply: true, react: true, typing: true, history: false, files: false })
   })
 
   it('sends scheduled messages once they are due', async () => {
@@ -62,5 +62,25 @@ describe('mock api', () => {
   it('keeps future scheduled messages queued', async () => {
     const snapshot = await (await freshApi()).loadInbox()
     expect(snapshot.scheduled.map((s) => s.threadId)).toEqual(['arjun'])
+  })
+
+  it('edits, pins, stars and deletes messages, and remembers it', async () => {
+    const api = await freshApi()
+    const sent = await api.sendMessage('rohan', 'A set of 6 is ₹2,400')
+    const edited = await api.actOnMessage('rohan', sent.id, { type: 'edit', body: 'A set of 6 is ₹2,200' })
+    expect(edited).toMatchObject({ body: 'A set of 6 is ₹2,200' })
+    expect(edited?.editedAt).toBeTruthy()
+    // Only my own messages can be edited, or deleted for everyone.
+    await expect(api.actOnMessage('rohan', 'rohan-1', { type: 'edit', body: 'hi' })).rejects.toThrow(/own messages/)
+    await expect(api.actOnMessage('rohan', 'rohan-1', { type: 'delete', forEveryone: true })).rejects.toThrow(/own messages/)
+    expect(await api.actOnMessage('rohan', 'rohan-2', { type: 'pin', pinned: true })).toMatchObject({ pinned: true })
+    expect(await api.actOnMessage('rohan', 'rohan-2', { type: 'star', starred: true })).toMatchObject({ starred: true })
+    expect(await api.actOnMessage('rohan', sent.id, { type: 'delete', forEveryone: true })).toMatchObject({ body: '', deleted: true })
+    expect(await api.actOnMessage('rohan', 'rohan-1', { type: 'delete', forEveryone: false })).toBeNull()
+
+    const messages = (await createMockApi().loadInbox()).messages
+    expect(messages.find((m) => m.id === 'rohan-1')).toBeUndefined()
+    expect(messages.find((m) => m.id === 'rohan-2')).toMatchObject({ pinned: true, starred: true })
+    expect(messages.find((m) => m.id === sent.id)).toMatchObject({ body: '', deleted: true })
   })
 })

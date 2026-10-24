@@ -9,7 +9,7 @@ import type {
   TelegramVerifyResult,
   WhatsAppLinkResult,
 } from './types'
-import type { Message } from '../types'
+import type { Message, MessageAction } from '../types'
 
 /**
  * The Sytext server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
@@ -136,6 +136,13 @@ export const serverApi = {
     if (!res.ok || data === null) throw new ServerError(res.status, data?.error ?? `The server answered with an error (${res.status}).`)
     return data
   },
+  /** The message as the server now has it (null when it no longer keeps it), and whether it's gone. */
+  messageAction: (threadId: string, messageId: string, action: MessageAction, message?: MessageHint) =>
+    request<{ message: Message | null; removed?: boolean }>('POST', `/threads/${segment(threadId)}/message-actions`, {
+      messageId,
+      action,
+      ...(message ? { message } : {}),
+    }),
   typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
   older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
     const query = new URLSearchParams({ before: before.id })

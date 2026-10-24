@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Attachment, Message } from '@/data/types'
+import { ME_ID, type Attachment, type Message } from '@/data/types'
 import { messagePreview } from './format'
 
 const message = (attachments: Attachment[], body = ''): Message => ({
@@ -18,5 +18,10 @@ describe('chat list preview', () => {
     expect(messagePreview(message([{ kind: 'file', name: 'Invoice.pdf' }]), {}, false)).toBe('📎 Invoice.pdf')
     // A caption wins.
     expect(messagePreview(message([{ kind: 'image', name: 'Photo' }], 'The new planters'), {}, false)).toBe('The new planters')
+  })
+
+  it('says when the last message was deleted for everyone', () => {
+    expect(messagePreview({ ...message([]), deleted: true }, {}, true)).toBe('This message was deleted')
+    expect(messagePreview({ ...message([]), senderId: ME_ID, deleted: true }, {}, false)).toBe('You deleted this message')
   })
 })

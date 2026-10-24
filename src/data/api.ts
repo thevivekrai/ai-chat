@@ -20,6 +20,7 @@ import type {
   InboxEvent,
   InboxSnapshot,
   Message,
+  MessageAction,
   NewTask,
   ScheduledMessage,
   SearchHit,
@@ -43,6 +44,12 @@ export interface InboxApi {
 
   /** Sets my reaction to a message (one per person, as on WhatsApp); null removes it. */
   react(threadId: string, messageId: string, emoji: string | null): Promise<Message>
+
+  /**
+   * Edits, deletes (for everyone, or for me), pins or stars a message. Resolves with it as it is
+   * now, or null once it's deleted for me.
+   */
+  actOnMessage(threadId: string, messageId: string, action: MessageAction): Promise<Message | null>
 
   /** Tells the chat I'm typing, or stopped. Best effort: never fails. */
   setTyping(threadId: string, typing: boolean): Promise<void>

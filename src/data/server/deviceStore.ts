@@ -22,7 +22,7 @@ export interface DeviceStore {
   /** Saves changes; they're written shortly after, together. */
   put(change: Partial<DeviceCopy>): void
   /** Forgets chats, with their messages, and contacts. */
-  remove(change: { threadIds?: string[]; contactIds?: string[] }): void
+  remove(change: { threadIds?: string[]; contactIds?: string[]; messageIds?: string[] }): void
   /** Writes whatever is waiting to be written. */
   flush(): Promise<void>
   /** Deletes this device's copy. */
@@ -128,7 +128,7 @@ const END = '￿'
 
 function indexedDbStore(db: IDBDatabase): DeviceStore {
   const pending = { threads: new Map<string, Thread>(), contacts: new Map<string, Contact>(), messages: new Map<string, Message>() }
-  const removed = { threads: new Set<string>(), contacts: new Set<string>() }
+  const removed = { threads: new Set<string>(), contacts: new Set<string>(), messages: new Set<string>() }
   let timer: ReturnType<typeof setTimeout> | null = null
   let writing: Promise<void> = Promise.resolve()
   let closed = false
@@ -144,12 +144,14 @@ function indexedDbStore(db: IDBDatabase): DeviceStore {
       messages: [...pending.messages.values()],
       removedThreads: [...removed.threads],
       removedContacts: [...removed.contacts],
+      removedMessages: [...removed.messages],
     }
     pending.threads.clear()
     pending.contacts.clear()
     pending.messages.clear()
     removed.threads.clear()
     removed.contacts.clear()
+    removed.messages.clear()
     if (closed || Object.values(change).every((list) => list.length === 0)) return
 
     const tx = db.transaction(['threads', 'contacts', 'messages'], 'readwrite')
@@ -158,6 +160,7 @@ function indexedDbStore(db: IDBDatabase): DeviceStore {
     for (const contact of change.contacts) contacts.put(contact)
     for (const message of change.messages) messages.put(message)
     for (const id of change.removedContacts) contacts.delete(id)
+    for (const id of change.removedMessages) messages.delete(id)
     for (const id of change.removedThreads) {
       threads.delete(id)
       const cursor = messages.index('byThread').openKeyCursor(IDBKeyRange.bound([id, ''], [id, END]))
@@ -202,7 +205,7 @@ function indexedDbStore(db: IDBDatabase): DeviceStore {
       schedule()
     },
 
-    remove({ threadIds = [], contactIds = [] }) {
+    remove({ threadIds = [], contactIds = [], messageIds = [] }) {
       for (const id of threadIds) {
         pending.threads.delete(id)
         removed.threads.add(id)
@@ -211,6 +214,10 @@ function indexedDbStore(db: IDBDatabase): DeviceStore {
       for (const id of contactIds) {
         pending.contacts.delete(id)
         removed.contacts.add(id)
+      }
+      for (const id of messageIds) {
+        pending.messages.delete(id)
+        removed.messages.add(id)
       }
       schedule()
     },
@@ -259,12 +266,13 @@ export function memoryDeviceStore(): DeviceStore {
       for (const contact of change.contacts ?? []) contacts.set(contact.id, contact)
       for (const message of change.messages ?? []) messages.set(message.id, message)
     },
-    remove({ threadIds = [], contactIds = [] }) {
+    remove({ threadIds = [], contactIds = [], messageIds = [] }) {
       for (const id of threadIds) {
         threads.delete(id)
         for (const [messageId, message] of messages) if (message.threadId === id) messages.delete(messageId)
       }
       for (const id of contactIds) contacts.delete(id)
+      for (const id of messageIds) messages.delete(id)
     },
     async flush() {},
     async clear() {

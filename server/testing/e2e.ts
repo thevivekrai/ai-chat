@@ -5,7 +5,10 @@
  *
  * The app is on http://127.0.0.1:5180. A control port (5181) plays the phone's part:
  *   POST /whatsapp/linked             the code was entered: the link opens and history arrives
- *   POST /whatsapp/message {"text"}   a new WhatsApp message
+ *   POST /whatsapp/message {"text"}   a new WhatsApp message (optionally with its "id")
+ *   POST /whatsapp/edit {"id","text"} Ravi edits one of his messages
+ *   POST /whatsapp/unsend {"id"}      Ravi deletes one of his messages for everyone
+ *   POST /whatsapp/pin {"id"}         Ravi pins a message in the chat
  *   POST /whatsapp/typing             Ravi starts typing
  *   POST /whatsapp/older              the phone sends older messages (after "Load earlier")
  *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once
@@ -21,6 +24,7 @@
 import { createServer } from 'node:http'
 import { resolve } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
+import { proto } from '@whiskeysockets/baileys'
 import { strToU8, zipSync } from 'fflate'
 import { mediaMessage, startTestServer, TEST_MONGODB_URI } from './helpers.ts'
 
@@ -170,7 +174,20 @@ createServer(async (req, res) => {
     else if (req.url === '/whatsapp/message') {
       server.sockets.at(-1)!.emit('messages.upsert', {
         type: 'notify',
-        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: `L${Date.now()}` }, message: { conversation: input.text }, messageTimestamp: now() }],
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: input.id ?? `L${Date.now()}` }, message: { conversation: input.text }, messageTimestamp: now() }],
+      } as never)
+    } else if (req.url === '/whatsapp/edit' || req.url === '/whatsapp/unsend' || req.url === '/whatsapp/pin') {
+      // As the phone reports them: a message pointing at the one changed.
+      const key = { remoteJid: RAVI, fromMe: false, id: String(input.id) }
+      const message =
+        req.url === '/whatsapp/pin'
+          ? { pinInChatMessage: { key, type: proto.PinInChat.Type.PIN_FOR_ALL } }
+          : req.url === '/whatsapp/edit'
+            ? { protocolMessage: { key, type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT, editedMessage: { conversation: input.text } } }
+            : { protocolMessage: { key, type: proto.Message.ProtocolMessage.Type.REVOKE } }
+      server.sockets.at(-1)!.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: `C${Date.now()}` }, message, messageTimestamp: now() }],
       } as never)
     } else if (req.url === '/whatsapp/burst') {
       const base = now() - Number(input.count)

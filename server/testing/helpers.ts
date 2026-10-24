@@ -103,6 +103,8 @@ export class FakeWaSocket implements WaSocket {
   pairingPhone?: string
   sent: { jid: string; text: string; quotedId?: string }[] = []
   files: { jid: string; kind: 'image' | 'video' | 'document'; mimetype: string; fileName?: string; caption?: string; size: number; quotedId?: string }[] = []
+  /** Edits, deletions for everyone and pins sent; deletions for me and stars synced. */
+  changes: { jid: string; change: string; id: string; text?: string; pinned?: boolean; starred?: boolean }[] = []
   reactions: { jid: string; emoji: string; targetId: string }[] = []
   presence: { type: string; jid?: string }[] = []
   historyRequests: { count: number; oldestId: string }[] = []
@@ -149,6 +151,18 @@ export class FakeWaSocket implements WaSocket {
       this.reactions.push({ jid, emoji: content.react.text, targetId: content.react.key.id! })
       return { key: { remoteJid: jid, fromMe: true, id: `REACT${this.reactions.length}` } } as WAMessage
     }
+    if ('text' in content && content.edit) {
+      this.changes.push({ jid, change: 'edit', id: content.edit.id!, text: content.text })
+      return { key: { remoteJid: jid, fromMe: true, id: `EDIT${this.changes.length}` } } as WAMessage
+    }
+    if ('delete' in content) {
+      this.changes.push({ jid, change: 'delete', id: content.delete.id! })
+      return { key: { remoteJid: jid, fromMe: true, id: `DEL${this.changes.length}` } } as WAMessage
+    }
+    if ('pin' in content) {
+      this.changes.push({ jid, change: 'pin', id: content.pin.id!, pinned: content.type === 1 })
+      return { key: { remoteJid: jid, fromMe: true, id: `PIN${this.changes.length}` } } as WAMessage
+    }
     if (!('text' in content)) {
       // Uploaded to WhatsApp's servers; the message carries the keys to fetch it again.
       const [kind, data] = 'image' in content ? (['image', content.image] as const) : 'video' in content ? (['video', content.video] as const) : (['document', content.document] as const)
@@ -180,6 +194,16 @@ export class FakeWaSocket implements WaSocket {
   async profilePictureUrl(jid: string) {
     if (!this.pictures.has(jid)) throw new Error('item-not-found')
     return `data:image/png;base64,${PIXEL.toString('base64')}`
+  }
+
+  async chatModify(
+    change:
+      | { deleteForMe: { deleteMedia: boolean; key: WAMessageKey; timestamp: number } }
+      | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } },
+    jid: string,
+  ) {
+    if ('deleteForMe' in change) this.changes.push({ jid, change: 'delete-for-me', id: change.deleteForMe.key.id! })
+    else for (const m of change.star.messages) this.changes.push({ jid, change: 'star', id: m.id, starred: change.star.star })
   }
 
   async requestPlaceholderResend(key: WAMessageKey) {
@@ -233,6 +257,7 @@ export function fakeTelegram() {
     sessions: [] as string[],
     listeners: [] as ((update: TgUpdate) => void)[],
     reactions: [] as { chatId: string; messageId: number; emoji: string | null }[],
+    changes: [] as { chatId: string; change: 'edit' | 'delete' | 'delete-for-me' | 'pin' | 'unpin'; id: number; text?: string }[],
     typing: [] as { chatId: string; typing: boolean }[],
     qrShown: 0,
     /** Scans the QR code shown, as Telegram on a phone would. */
@@ -317,6 +342,16 @@ export function fakeTelegram() {
       async react(chatId, messageId, emoji) {
         if (emoji === '🦄') throw rpc('REACTION_INVALID')
         state.reactions.push({ chatId, messageId, emoji })
+      },
+      async edit(chatId, id, text) {
+        if (text === 'too late') throw rpc('MESSAGE_EDIT_TIME_EXPIRED')
+        state.changes.push({ chatId, change: 'edit', id, text })
+      },
+      async remove(chatId, ids, forEveryone) {
+        for (const id of ids) state.changes.push({ chatId, change: forEveryone ? 'delete' : 'delete-for-me', id })
+      },
+      async pin(chatId, id, pinned) {
+        state.changes.push({ chatId, change: pinned ? 'pin' : 'unpin', id })
       },
       async setTyping(chatId, typing) {
         state.typing.push({ chatId, typing })

@@ -11,6 +11,7 @@ import makeWASocket, {
   isLidUser,
   isPnUser,
   jidNormalizedUser,
+  WAMessageStubType,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   proto,
@@ -30,7 +31,7 @@ import type { Readable } from 'node:stream'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
 import type { MessageHint, ServerOlderMessages, WhatsAppLinkResult } from '../../src/data/server/types.ts'
-import type { Attachment, Message, MessageStatus, QuotedMessage } from '../../src/data/types.ts'
+import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
@@ -58,6 +59,13 @@ export interface WaSocket {
   authState: { creds: AuthenticationCreds }
   requestPairingCode(phoneNumber: string): Promise<string>
   sendMessage(jid: string, content: WaContent, options?: { quoted?: WAMessage }): Promise<WAMessage | undefined>
+  /** Changes kept in sync across the account's devices: deleting a message for me, starring it. */
+  chatModify?(
+    change:
+      | { deleteForMe: { deleteMedia: boolean; key: WAMessageKey; timestamp: number } }
+      | { star: { messages: { id: string; fromMe?: boolean }[]; star: boolean } },
+    jid: string,
+  ): Promise<void>
   readMessages(keys: WAMessageKey[]): Promise<void>
   groupMetadata(jid: string): Promise<{ subject: string }>
   sendPresenceUpdate(type: 'composing' | 'paused', jid?: string): Promise<void>
@@ -81,8 +89,10 @@ export interface WaSocket {
 
 /** What this manager sends: text, a reaction, or a photo, video or file (uploaded by Baileys). */
 export type WaContent =
-  | { text: string }
+  | { text: string; edit?: WAMessageKey }
   | { react: { text: string; key: WAMessageKey } }
+  | { delete: WAMessageKey }
+  | { pin: WAMessageKey; type: proto.PinInChat.Type; time?: 86400 | 604800 | 2592000 }
   | { image: Buffer; mimetype: string; caption?: string }
   | { video: Buffer; mimetype: string; caption?: string }
   | { document: Buffer; mimetype: string; fileName: string; caption?: string }
@@ -204,6 +214,9 @@ const PLACEHOLDERS = new Set(['Chat', 'WhatsApp', UNNAMED])
 /** How good a name is: a real name beats a phone number, which beats a placeholder. */
 const nameRank = (name: string | undefined) => (!name || PLACEHOLDERS.has(name) ? 0 : /^\+\d+$/.test(name) ? 1 : 2)
 
+/** When a message was sent, as WhatsApp says (or now, if it doesn't). */
+const sentAtOf = (msg: WAMessage) => new Date((toNumber(msg.messageTimestamp) || Date.now() / 1000) * 1000).toISOString()
+
 const STATUS: Record<number, MessageStatus> = { 0: 'failed', 1: 'sending', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'read' }
 
 /** A photo, video or file in a message, and what WhatsApp needs to fetch it again. */
@@ -316,6 +329,13 @@ const OLDER_PAGE = 30
 const REPLACED_GRACE_MS = 10 * 60_000
 
 /**
+ * How long after sending WhatsApp lets a message be edited, and deleted for everyone. Phones
+ * ignore later requests, so they're refused here rather than shown as done when they aren't.
+ */
+const EDIT_WINDOW_MS = 15 * 60_000
+const UNSEND_WINDOW_MS = 2 * 24 * 3600_000
+
+/**
  * The WhatsApp key of a message from what a device knows about it, for messages the server no
  * longer keeps. Ids are "wa:<chat jid>:<message id>".
  */
@@ -415,11 +435,17 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       repairSoon(s)
     })
     socket.ev.on('messages.upsert', ({ messages, type }) => {
-      for (const m of messages) void onMessage(s, m, type === 'notify' ? 'live' : 'history').catch(report)
+      // In order: a pin, edit or reaction can come in the same batch as the message it points at.
+      void (async () => {
+        for (const m of messages) await onMessage(s, m, type === 'notify' ? 'live' : 'history').catch(report)
+      })()
     })
     socket.ev.on('presence.update', (update) => void onPresence(s, update).catch(report))
     socket.ev.on('messages.update', (updates) => {
       for (const u of updates) void onMessageUpdate(s, u.key, u.update).catch(report)
+    })
+    socket.ev.on('messages.delete', (deleted) => {
+      if ('keys' in deleted) void onMessagesDeleted(s, deleted.keys).catch(report)
     })
     socket.ev.on('contacts.upsert', (contacts) => void onContacts(s, contacts).catch(report))
     socket.ev.on('contacts.update', (contacts) => void onContacts(s, contacts as WaContact[]).catch(report))
@@ -740,15 +766,23 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       return
     }
 
+    // Pinning and unpinning point at the message too.
+    const pin = content?.pinInChatMessage
+    if (pin?.key?.id) {
+      const pinned = pin.type === proto.PinInChat.Type.PIN_FOR_ALL
+      await updateAndPublish(s, `wa:${chatJid}:${pin.key.id}`, { pinned })
+      return
+    }
+
     // Edits and deletions arrive as protocol messages pointing at the original.
     const protocol = content?.protocolMessage
     if (protocol?.key?.id) {
       const target = `wa:${chatJid}:${protocol.key.id}`
       if (protocol.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT) {
         const edited = describe(protocol.editedMessage)
-        if (edited) await updateAndPublish(s, target, { body: edited.body })
+        if (edited) await updateAndPublish(s, target, { body: edited.body, editedAt: sentAtOf(msg) })
       } else if (protocol.type === proto.Message.ProtocolMessage.Type.REVOKE) {
-        await updateAndPublish(s, target, { body: '🚫 This message was deleted', attachments: [] })
+        await updateAndPublish(s, target, { deleted: true })
       }
       return
     }
@@ -876,8 +910,36 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     if (typeof update.status === 'number' && key.fromMe && STATUS[update.status]) {
       await updateAndPublish(s, id, { status: STATUS[update.status] })
     }
+    if (update.messageStubType === WAMessageStubType.REVOKE) {
+      await updateAndPublish(s, id, { deleted: true })
+      return
+    }
     const edited = update.message ? describe(update.message.editedMessage?.message ?? update.message) : null
-    if (edited) await updateAndPublish(s, id, { body: edited.body })
+    if (edited) await updateAndPublish(s, id, { body: edited.body, ...(update.message?.editedMessage ? { editedAt: new Date().toISOString() } : {}) })
+    // Starred or unstarred on the phone (or another linked device).
+    if (typeof update.starred === 'boolean') await updateAndPublish(s, id, { starred: update.starred })
+  }
+
+  /** Deleted for me on the phone (or another linked device): gone here too. */
+  async function onMessagesDeleted(s: Session, keys: WAMessageKey[]) {
+    for (const key of keys) {
+      if (!isChatJid(key.remoteJid) || !key.id) continue
+      const threadId = `wa:${await chatIdOf(s, key.remoteJid, key.remoteJidAlt)}`
+      await removeForMe(s.userId, threadId, `${threadId}:${key.id}`)
+    }
+  }
+
+  /** Deleted for me: gone from the server and, as they're told, from every device. */
+  async function removeForMe(userId: ObjectId, threadId: string, messageId: string) {
+    await store.deleteMessage(userId, messageId)
+    hub.publish(keyOf(userId), { type: 'message.deleted', threadId, messageId })
+  }
+
+  /** Changes a kept message and tells the user's devices; null when the server doesn't keep it. */
+  async function changeMessage(userId: ObjectId, id: string, patch: Parameters<InboxStore['updateMessage']>[2]) {
+    const message = await store.updateMessage(userId, id, patch)
+    if (message) hub.publish(keyOf(userId), { type: 'message.updated', message })
+    return message
   }
 
   async function upsertContact(s: Session, jid: string) {
@@ -1125,6 +1187,61 @@ export function createWhatsApp(deps: WhatsAppDeps) {
         size: a.size ?? sizeLabel(upload.data.length),
       }))
       return saveSent(userId, threadId, sent.key.id, { body: caption, ...(attachments ? { attachments } : {}), ...(replyTo ? { replyTo } : {}) })
+    },
+
+    /**
+     * Edits, deletes, pins or stars a message, on WhatsApp as on the phone. Returns it as the
+     * server now keeps it (null when it doesn't: the device changes its own copy), or that it was
+     * removed (deleted for me). `hint` is what the device knows of it.
+     */
+    async act(userId: ObjectId, threadId: string, messageId: string, action: MessageAction, hint?: MessageHint): Promise<{ message: Message | null; removed?: true }> {
+      const socket = connected(userId)
+      const jid = threadId.slice('wa:'.length)
+      const target = await store.message(userId, messageId)
+      if (target && target.threadId !== threadId) throw new HttpError(404, 'That message is gone.')
+      const key = (target?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint?.id === messageId ? keyFromHint(threadId, hint) : null)
+      if (!key?.id) throw new HttpError(404, 'That message is gone.')
+      if (target?.deleted && action.type !== 'delete') throw new HttpError(409, 'That message was deleted.')
+      const mine = !!key.fromMe
+      const sentAt = Date.parse(target?.sentAt ?? hint?.sentAt ?? '') || Date.now()
+      try {
+        switch (action.type) {
+          case 'edit':
+            if (!mine) throw new HttpError(403, 'Only your own messages can be edited.')
+            if (Date.now() - sentAt > EDIT_WINDOW_MS) throw new HttpError(400, 'WhatsApp only lets you edit a message for 15 minutes after sending it.')
+            await socket.sendMessage(jid, { text: action.body, edit: key })
+            return { message: await changeMessage(userId, messageId, { body: action.body, editedAt: new Date().toISOString() }) }
+          case 'delete':
+            if (action.forEveryone) {
+              if (!mine) throw new HttpError(403, 'Only your own messages can be deleted for everyone.')
+              if (Date.now() - sentAt > UNSEND_WINDOW_MS) {
+                throw new HttpError(400, 'WhatsApp only lets you delete a message for everyone for about 2 days after sending it. You can still delete it for yourself.')
+              }
+              await socket.sendMessage(jid, { delete: key })
+              return { message: await changeMessage(userId, messageId, { deleted: true }) }
+            }
+            // On the phone and other linked devices too, where WhatsApp syncs it.
+            await socket.chatModify?.({ deleteForMe: { deleteMedia: true, key, timestamp: sentAt } }, jid).catch(report)
+            await removeForMe(userId, threadId, messageId)
+            return { message: null, removed: true }
+          case 'pin':
+            // Pinned for 30 days, the longest WhatsApp offers; unpinned in Sytext when asked here or there.
+            await socket.sendMessage(jid, {
+              pin: key,
+              type: action.pinned ? proto.PinInChat.Type.PIN_FOR_ALL : proto.PinInChat.Type.UNPIN_FOR_ALL,
+              time: 2592000,
+            })
+            return { message: await changeMessage(userId, messageId, { pinned: action.pinned }) }
+          case 'star':
+            // Starred on the phone too; kept in Sytext even if that sync doesn't go through.
+            await socket.chatModify?.({ star: { messages: [{ id: key.id, fromMe: mine }], star: action.starred } }, jid).catch(report)
+            return { message: await changeMessage(userId, messageId, { starred: action.starred }) }
+        }
+      } catch (error) {
+        if (error instanceof HttpError) throw error
+        report(error)
+        throw new HttpError(502, "WhatsApp didn't accept that. Try again in a moment.")
+      }
     },
 
     /** A photo or file from a link, fetched from WhatsApp now. */

@@ -1,6 +1,6 @@
 import { useId, useMemo } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
-import { CalendarClock, Hourglass, Inbox, Keyboard, ListTodo, MessagesSquare, Sparkles, type LucideIcon } from 'lucide-react'
+import { CalendarClock, Hourglass, Inbox, Keyboard, ListTodo, MessagesSquare, Sparkles, Star, type LucideIcon } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
@@ -22,6 +22,7 @@ const NAV: { id: View; label: string; icon: LucideIcon }[] = [
   { id: 'waiting', label: 'Waiting on them', icon: Hourglass },
   { id: 'scheduled', label: 'Scheduled', icon: CalendarClock },
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
+  { id: 'starred', label: 'Starred', icon: Star },
 ]
 
 export function Sidebar({ className }: { className?: string }) {
@@ -34,9 +35,12 @@ export function Sidebar({ className }: { className?: string }) {
       clearNetworks: s.clearNetworks,
     })),
   )
-  const { tasks, scheduled } = useInbox(useShallow((s) => ({ tasks: s.tasks, scheduled: s.scheduled })))
+  const { tasks, scheduled, messages } = useInbox(useShallow((s) => ({ tasks: s.tasks, scheduled: s.scheduled, messages: s.messages })))
   const views = useThreadViews()
-  const counts = useMemo(() => countViews(views, { networks, tasks, scheduled }), [views, networks, tasks, scheduled])
+  const counts = useMemo(
+    () => countViews(views, { networks, tasks, scheduled, messages }),
+    [views, networks, tasks, scheduled, messages],
+  )
   // Only networks that have chats (or are filtered on) get a chip.
   const shownNetworks = useInbox(
     useShallow((s) => {

@@ -1,34 +1,46 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
-  Download,
   AlertCircle,
+  Ban,
   CalendarClock,
   Check,
   CheckCheck,
   Clock3,
+  Copy,
   CornerUpLeft,
+  Download,
   FileText,
   History,
   ImageIcon,
   Loader2,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
   SmilePlus,
+  Star,
+  StarOff,
+  Trash2,
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
+import { Menu, type MenuItem } from '@/components/ui/Popover'
 import { api } from '@/data/api'
-import type { Attachment, ChatCapabilities, Contact, Message, MessageStatus, QuotedMessage, Reaction } from '@/data/types'
+import type { Attachment, ChatCapabilities, Contact, Message, MessageAction, MessageStatus, QuotedMessage, Reaction } from '@/data/types'
 import { ME_ID } from '@/data/types'
+import { matchesInChat } from '@/data/search'
 import { cn } from '@/lib/cn'
 import { downloadUrl } from '@/lib/files'
 import { isAnimatedSticker } from '@/lib/lottie'
 import { hashString } from '@/lib/format'
 import { MINUTE, formatClock, formatDayLabel, formatWhen, toMs } from '@/lib/time'
-import { startReply, toggleReaction } from '@/store/actions'
+import { messageAction, startEdit, startReply, toggleReaction } from '@/store/actions'
 import { useAi } from '@/store/ai'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
+import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
 import { LottieSticker } from './LottieSticker'
 import { RichText, type Highlight } from './RichText'
@@ -107,18 +119,28 @@ export function MessageList({ threadId }: { threadId: string }) {
   const [activeId, setActiveId] = useState<string | null>(null)
   // The message whose reaction picker is open, if any.
   const [pickerId, setPickerId] = useState<string | null>(null)
+  // The message whose menu (edit, pin, star, delete…) is open, if any.
+  const [menuId, setMenuId] = useState<string | null>(null)
+  const search = useUi((s) => (s.chatSearch?.threadId === threadId ? s.chatSearch : null))
 
   const days = useMemo(() => buildDays(messages, now), [messages, now])
+  const query = search?.query.trim() ?? ''
   const highlights = useMemo(() => {
     const map = new Map<string, Highlight[]>()
-    if (!aiAllowed) return map
-    for (const t of tasks ?? []) {
-      if (!t.dueText) continue
-      const title = t.dueAt ? `${t.title} · ${formatWhen(t.dueAt, now)}` : t.title
-      map.set(t.sourceMessageId, [...(map.get(t.sourceMessageId) ?? []), { phrase: t.dueText, title }])
+    const add = (id: string, h: Highlight) => map.set(id, [...(map.get(id) ?? []), h])
+    if (aiAllowed) {
+      for (const t of tasks ?? []) {
+        if (!t.dueText) continue
+        const title = t.dueAt ? `${t.title} · ${formatWhen(t.dueAt, now)}` : t.title
+        add(t.sourceMessageId, { phrase: t.dueText, title, kind: 'date' })
+      }
+    }
+    // What's searched for in this chat, marked wherever it appears.
+    if (query) {
+      for (const id of matchesInChat(messages, query)) add(id, { phrase: query, title: 'Search', kind: 'search' })
     }
     return map
-  }, [tasks, aiAllowed, now])
+  }, [tasks, aiAllowed, now, query, messages])
 
   // Open at the latest message.
   useLayoutEffect(() => {
@@ -153,6 +175,14 @@ export function MessageList({ threadId }: { threadId: string }) {
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240
     if (nearBottom || last.senderId === ME_ID) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [last, scheduled.length, typing.length])
+
+  // The in-chat search's current match, brought into view.
+  const searchCurrent = search?.current
+  useEffect(() => {
+    if (!searchCurrent) return
+    const node = scrollRef.current?.querySelector(`[data-message-id="${CSS.escape(searchCurrent)}"]`)
+    node?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [searchCurrent])
 
   // "Jump to message" from search, tasks, the AI panel or a quoted reply.
   useEffect(() => {
@@ -223,6 +253,9 @@ export function MessageList({ threadId }: { threadId: string }) {
                 onActivate={setActiveId}
                 pickerId={pickerId}
                 onPicker={setPickerId}
+                menuId={menuId}
+                onMenu={setMenuId}
+                searchMatch={search?.current ?? null}
               />
             ))}
           </section>
@@ -268,6 +301,10 @@ interface GroupProps {
   onActivate(id: string | null): void
   pickerId: string | null
   onPicker(id: string | null): void
+  menuId: string | null
+  onMenu(id: string | null): void
+  /** The current match of the in-chat search. */
+  searchMatch: string | null
 }
 
 function MessageGroup({
@@ -284,6 +321,9 @@ function MessageGroup({
   onActivate,
   pickerId,
   onPicker,
+  menuId,
+  onMenu,
+  searchMatch,
 }: GroupProps) {
   const lastMessage = messages[messages.length - 1]
   return (
@@ -300,8 +340,9 @@ function MessageGroup({
         {messages.map((m, i) => {
           const flashing = flash?.messageId === m.id
           const settled = m.status !== 'sending' && m.status !== 'failed' && !m.id.startsWith('pending-')
-          const bare = isStickerOnly(m)
-          const actions = settled && (capabilities.reply || capabilities.react)
+          const bare = isStickerOnly(m) && !m.deleted
+          const actions =
+            settled && (capabilities.reply || capabilities.react || capabilities.delete || capabilities.pin || capabilities.star)
           return (
             <Fragment key={m.id}>
               <div className={cn('group/msg flex max-w-full items-center gap-1', fromMe ? 'flex-row-reverse' : 'flex-row')}>
@@ -324,21 +365,35 @@ function MessageGroup({
                         ),
                     m.status === 'sending' && 'opacity-70',
                     m.status === 'failed' && 'ring-2 ring-rose-500/60',
+                    searchMatch === m.id && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-transparent',
                     flashing && 'animate-flash',
                   )}
                 >
-                  {m.replyTo && <Quote quote={m.replyTo} contacts={contacts} onAccent={fromMe} />}
-                  <Attachments message={m} fromMe={fromMe} />
-                  <RichText text={m.body} highlights={highlights.get(m.id)} onAccent={fromMe} />
+                  {m.deleted ? (
+                    <span className={cn('inline-flex items-center gap-1.5 italic', fromMe ? 'text-white/80' : 'text-muted')}>
+                      <Ban className="size-3.5 shrink-0" aria-hidden />
+                      {fromMe ? 'You deleted this message' : 'This message was deleted'}
+                    </span>
+                  ) : (
+                    <>
+                      {m.replyTo && <Quote quote={m.replyTo} contacts={contacts} onAccent={fromMe} />}
+                      <Attachments message={m} fromMe={fromMe} />
+                      <RichText text={m.body} highlights={highlights.get(m.id)} onAccent={fromMe} />
+                    </>
+                  )}
+                  <MessageMarks message={m} fromMe={fromMe} bare={bare} />
                 </div>
                 {actions && (
                   <MessageActions
                     threadId={threadId}
                     message={m}
+                    fromMe={fromMe}
                     capabilities={capabilities}
-                    shown={activeId === m.id || pickerId === m.id}
+                    shown={activeId === m.id || pickerId === m.id || menuId === m.id}
                     pickerOpen={pickerId === m.id}
                     onPicker={(open) => onPicker(open ? m.id : null)}
+                    menuOpen={menuId === m.id}
+                    onMenu={(open) => onMenu(open ? m.id : null)}
                   />
                 )}
               </div>
@@ -492,21 +547,46 @@ function AttachmentView({ attachment: a, fromMe, sending }: { attachment: Attach
 }
 
 /** React and reply, next to a message: on hover, on keyboard focus, or after a tap. */
+/** Pinned, starred, edited: small marks at the end of a message. */
+function MessageMarks({ message: m, fromMe, bare }: { message: Message; fromMe: boolean; bare: boolean }) {
+  const edited = !!m.editedAt && !m.deleted
+  if (!edited && !m.pinned && !m.starred) return null
+  return (
+    <span
+      className={cn(
+        'ml-1.5 inline-flex translate-y-px items-center gap-1 align-baseline text-[10.5px] leading-none whitespace-nowrap',
+        bare ? 'mt-1 flex text-faint' : fromMe ? 'text-white/70' : 'text-faint',
+      )}
+    >
+      {m.pinned && <Pin className="size-3" aria-label="Pinned" />}
+      {m.starred && <Star className="size-3 fill-current" aria-label="Starred" />}
+      {edited && <span title={new Date(m.editedAt!).toLocaleString()}>edited</span>}
+    </span>
+  )
+}
+
 function MessageActions({
   threadId,
   message,
+  fromMe,
   capabilities,
   shown,
   pickerOpen,
   onPicker,
+  menuOpen,
+  onMenu,
 }: {
   threadId: string
   message: Message
+  fromMe: boolean
   capabilities: ChatCapabilities
   shown: boolean
   pickerOpen: boolean
   onPicker(open: boolean): void
+  menuOpen: boolean
+  onMenu(open: boolean): void
 }) {
+  const items = messageMenu(threadId, message, fromMe, capabilities)
   const button =
     'grid size-7 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
   return (
@@ -530,13 +610,75 @@ function MessageActions({
           <SmilePlus className="size-4" aria-hidden />
         </button>
       )}
-      {capabilities.reply && (
+      {capabilities.reply && !message.deleted && (
         <button type="button" aria-label="Reply" title="Reply" onClick={() => startReply(threadId, message.id)} className={button}>
           <CornerUpLeft className="size-4" aria-hidden />
         </button>
       )}
+      {items.length > 0 && (
+        <Menu
+          items={items}
+          open={menuOpen}
+          onOpenChange={onMenu}
+          // Up or down, whichever has room in the chat.
+          side="auto"
+          align={fromMe ? 'end' : 'start'}
+          panelClassName="min-w-52"
+          renderTrigger={(props) => (
+            <button {...props} type="button" aria-label="More" title="More" className={cn(button, menuOpen && 'bg-surface-2 text-fg')}>
+              <MoreHorizontal className="size-4" aria-hidden />
+            </button>
+          )}
+        />
+      )}
     </div>
   )
+}
+
+/** What can be done to a message from its menu: what the network allows, and makes sense for it. */
+function messageMenu(threadId: string, m: Message, fromMe: boolean, can: ChatCapabilities): MenuItem[] {
+  const items: MenuItem[] = []
+  const act = (action: MessageAction) => () => void messageAction(threadId, m.id, action)
+  if (m.body && !m.deleted) {
+    items.push({
+      id: 'copy',
+      label: 'Copy text',
+      icon: Copy,
+      onSelect: () => void navigator.clipboard?.writeText(m.body).then(() => toast({ title: 'Copied', group: 'message-action' })),
+    })
+  }
+  if (can.edit && fromMe && m.body && !m.attachments?.length && !m.deleted) {
+    items.push({ id: 'edit', label: 'Edit', icon: Pencil, onSelect: () => startEdit(threadId, m.id) })
+  }
+  if (can.pin && !m.deleted) {
+    items.push({ id: 'pin', label: m.pinned ? 'Unpin' : 'Pin', icon: m.pinned ? PinOff : Pin, onSelect: act({ type: 'pin', pinned: !m.pinned }) })
+  }
+  if (can.star && !m.deleted) {
+    items.push({ id: 'star', label: m.starred ? 'Unstar' : 'Star', icon: m.starred ? StarOff : Star, onSelect: act({ type: 'star', starred: !m.starred }) })
+  }
+  if (can.delete) {
+    items.push({
+      id: 'delete-me',
+      label: 'Delete for me',
+      icon: Trash2,
+      danger: true,
+      onSelect: () => {
+        if (window.confirm('Delete this message for you? It stays for everyone else.')) act({ type: 'delete', forEveryone: false })()
+      },
+    })
+    if (fromMe && !m.deleted) {
+      items.push({
+        id: 'delete-all',
+        label: 'Delete for everyone',
+        icon: Trash2,
+        danger: true,
+        onSelect: () => {
+          if (window.confirm('Delete this message for everyone in the chat?')) act({ type: 'delete', forEveryone: true })()
+        },
+      })
+    }
+  }
+  return items
 }
 
 /**

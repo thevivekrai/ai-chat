@@ -7,6 +7,7 @@ import type {
   InboxSnapshot,
   Me,
   Message,
+  MessageAction,
   NewTask,
   ScheduledMessage,
   Task,
@@ -46,6 +47,8 @@ interface InboxState {
   sendMessage(threadId: string, body: string, options?: SendOptions): Promise<void>
   /** Sets my reaction (null removes it); shown at once, undone if the network refuses. */
   react(threadId: string, messageId: string, emoji: string | null): Promise<void>
+  /** Edits, deletes, pins or stars a message, once the network has done it. Throws if it refuses. */
+  actOnMessage(threadId: string, messageId: string, action: MessageAction): Promise<void>
   /** Loads the page of messages before the earliest one loaded. */
   loadOlder(threadId: string): Promise<void>
   /** Sends a failed message again. */
@@ -122,6 +125,13 @@ export const useInbox = create<InboxState>()((set, get) => {
       messages: { ...s.messages, [message.threadId]: upsertMessage(s.messages[message.threadId], message, replaceId) },
     }))
 
+  const removeMessage = (threadId: string, messageId: string) =>
+    set((s) =>
+      s.messages[threadId]?.some((m) => m.id === messageId)
+        ? { messages: { ...s.messages, [threadId]: s.messages[threadId].filter((m) => m.id !== messageId) } }
+        : s,
+    )
+
   return {
     status: 'idle',
     error: null,
@@ -174,6 +184,9 @@ export const useInbox = create<InboxState>()((set, get) => {
           break
         case 'message.updated':
           putMessage(event.message)
+          break
+        case 'message.deleted':
+          removeMessage(event.threadId, event.messageId)
           break
         case 'typing':
           setTyping(event.threadId, event.senderId, event.active)
@@ -253,6 +266,12 @@ export const useInbox = create<InboxState>()((set, get) => {
         ...(failed.replyTo ? { replyToId: failed.replyTo.id } : {}),
         ...(file ? { file } : {}),
       })
+    },
+
+    async actOnMessage(threadId, messageId, action) {
+      const result = await api.actOnMessage(threadId, messageId, action)
+      if (result) putMessage(result)
+      else removeMessage(threadId, messageId)
     },
 
     async react(threadId, messageId, emoji) {

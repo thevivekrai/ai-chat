@@ -8,8 +8,8 @@ import {
   type SendOptions,
 } from '../connectors/types'
 import { withMyReaction } from '../reactions'
-import type { ChatCapabilities, Contact, Message, Thread } from '../types'
-import { ME_ID } from '../types'
+import type { ChatCapabilities, Contact, Message, MessageAction, Thread } from '../types'
+import { ME_ID, withAction } from '../types'
 import { openDeviceStore, wipeDeviceStore, type DeviceStore } from './deviceStore'
 import { isSignedOut, serverApi } from './serverApi'
 import { MESSAGES_KEPT_PER_CHAT, type LinkedNetwork, type MessageHint, type PublicAccount, type ServerEvent, type ServerInbox } from './types'
@@ -17,7 +17,17 @@ import { MESSAGES_KEPT_PER_CHAT, type LinkedNetwork, type MessageHint, type Publ
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
 
 /** WhatsApp and Telegram, linked on the server, both do all of it. */
-const LINKED_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: true, files: true }
+const LINKED_CAPABILITIES: ChatCapabilities = {
+  reply: true,
+  react: true,
+  typing: true,
+  history: true,
+  files: true,
+  edit: true,
+  delete: true,
+  pin: true,
+  star: true,
+}
 
 /** How many messages of each chat are read from the device on start; older ones as the user scrolls back. */
 const IN_MEMORY_PER_CHAT = 50
@@ -164,6 +174,26 @@ export class ServerConnector implements Connector {
         setTimeout(() => this.release(threadId), 0)
       }
     }
+  }
+
+  async actOnMessage(threadId: string, messageId: string, action: MessageAction): Promise<Message | null> {
+    const mine = this.messages.get(messageId)
+    const { message, removed } = await this.signedIn(serverApi.messageAction(threadId, messageId, action, mine && hintOf(mine)))
+    if (removed) {
+      this.forgetMessage(messageId)
+      return null
+    }
+    // The server no longer keeps it: only this device's copy changes.
+    const updated = message ?? (mine && withAction(mine, action))
+    if (!updated) throw new Error('That message is gone.')
+    this.keepMessages([updated])
+    return updated
+  }
+
+  /** Deleted for me: gone from this device's copy too. */
+  private forgetMessage(messageId: string) {
+    this.messages.delete(messageId)
+    void this.device().then((store) => store.remove({ messageIds: [messageId] }))
   }
 
   async react(threadId: string, messageId: string, emoji: string | null): Promise<Message> {
@@ -379,10 +409,12 @@ export class ServerConnector implements Connector {
       if ((newestHere.get(m.threadId) ?? '') < m.sentAt) newestHere.set(m.threadId, m.sentAt)
     }
     const gaps: { threadId: string; from: Message; until: string }[] = []
-    for (const [threadId, list] of fromServer) {
+    for (const [threadId, all] of fromServer) {
       const until = newestHere.get(threadId)
+      // The chat's latest: older pinned and starred messages come along, but aren't part of the run.
+      const list = [...all].sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1)).slice(0, MESSAGES_KEPT_PER_CHAT)
       if (!until || list.length < MESSAGES_KEPT_PER_CHAT) continue
-      const oldest = list.reduce((a, b) => (a.sentAt <= b.sentAt ? a : b))
+      const oldest = list[list.length - 1]!
       if (until < oldest.sentAt) gaps.push({ threadId, from: oldest, until })
     }
     return gaps.sort((a, b) => (a.from.sentAt < b.from.sentAt ? 1 : -1)).slice(0, GAP_CHATS)
@@ -418,6 +450,10 @@ export class ServerConnector implements Connector {
         this.events.emit(event)
         return
       }
+      case 'message.deleted':
+        this.forgetMessage(event.messageId)
+        this.events.emit(event)
+        return
       case 'thread.updated':
         this.keepThreads([event.thread])
         this.events.emit(event)

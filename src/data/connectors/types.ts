@@ -1,4 +1,4 @@
-import type { ChatCapabilities, Contact, Message, Thread } from '../types'
+import type { ChatCapabilities, Contact, Message, MessageAction, Thread } from '../types'
 
 /**
  * A connector brings one real account into the inbox: a Telegram bot, a Matrix account (and,
@@ -27,6 +27,8 @@ export type ConnectorEvent =
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
   | { type: 'typing'; threadId: string; senderId: string; active: boolean }
+  /** Deleted for me: it goes from the chat. */
+  | { type: 'message.deleted'; threadId: string; messageId: string }
   /** Many things changed at once (first sync, rooms joined or left): re-read the snapshot. */
   | { type: 'reloaded' }
 
@@ -55,6 +57,8 @@ export interface Connector {
   capabilities?(threadId: string): ChatCapabilities
   /** Sets my reaction to a message, replacing any I had; null removes it. */
   react?(threadId: string, messageId: string, emoji: string | null): Promise<Message>
+  /** Edits, deletes, pins or stars a message: the message as it is now, or null once deleted for me. */
+  actOnMessage?(threadId: string, messageId: string, action: MessageAction): Promise<Message | null>
   setTyping?(threadId: string, typing: boolean): Promise<void>
   /** Messages from before `beforeId`, oldest first. */
   loadOlder?(threadId: string, beforeId: string): Promise<OlderMessages>

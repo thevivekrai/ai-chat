@@ -109,12 +109,18 @@ export interface MessageDoc {
   payload: string
   /** Network-specific reference used to mark read or download media (e.g. a WhatsApp message key). */
   ref?: Record<string, unknown>
+  /** Pinned in the chat, or starred by the user: kept however old (the chat's latest are kept anyway). */
+  pinned?: boolean
+  starred?: boolean
 }
 
 export interface MessagePayload {
   body: string
   attachments?: Attachment[]
   replyTo?: QuotedMessage
+  editedAt?: string
+  /** Deleted for everyone: its text and attachments are gone. */
+  deleted?: boolean
   /** Who reacted with what, by sender id ("me" for the user), where the network says (WhatsApp). */
   reactionsBy?: Record<string, string>
   /** Totals only, where that's all the network gives (Telegram). */

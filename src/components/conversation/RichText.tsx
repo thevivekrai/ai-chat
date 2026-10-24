@@ -5,6 +5,8 @@ import { placeholderPattern } from '@/lib/format'
 export interface Highlight {
   phrase: string
   title: string
+  /** A date AI found (underlined), or what's being searched for in the chat (marked). */
+  kind?: 'date' | 'search'
 }
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -27,6 +29,15 @@ export function RichText({ text, highlights = [], onAccent = false }: { text: st
       )
     } else {
       const highlight = highlights.find((h) => h.phrase.toLowerCase() === match[0].toLowerCase())
+      if (highlight?.kind === 'search') {
+        parts.push(
+          <mark key={index} className="rounded-[3px] bg-amber-300/80 px-px text-inherit dark:bg-amber-400/60">
+            {match[0]}
+          </mark>,
+        )
+        last = index + match[0].length
+        continue
+      }
       parts.push(
         <span
           key={index}
