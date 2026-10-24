@@ -14,6 +14,10 @@
  *   POST /whatsapp/burst {"count"}    that many WhatsApp messages at once ("react": with a reaction
  *                                     to the last one, sent first in the batch)
  *   POST /whatsapp/failed {"id"}      WhatsApp says one of my messages failed to send
+ *   POST /whatsapp/legacy-sticker {"id"} a sticker from Ravi kept as an earlier version did (only
+ *                                     named, no link), which the phone still has
+ *   POST /whatsapp/reconnect          the connection drops and comes back (the same session)
+ *   POST /restart                     the server restarts, and WhatsApp connects again
  *   POST /whatsapp/photo {"caption"}  Ravi sends a photo
  *   POST /whatsapp/file               Ravi sends a PDF
  *   POST /whatsapp/sticker {"webp"}   Ravi sends a sticker (base64 WebP, or another "mimetype")
@@ -21,7 +25,8 @@
  *   POST /whatsapp/voice              Ravi sends a 3-second voice message (a tone)
  *   POST /whatsapp/archived {"archived"} Ravi's chat is archived (or not) on the phone
  *   POST /whatsapp/sent-to-phone      what reached WhatsApp: read receipts (message ids), typing,
- *                                     messages sent and changes (edits, deletions…)
+ *                                     messages sent, changes (edits, deletions…), and messages
+ *                                     asked of the phone again
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /trim                        the server trims chats to what it keeps, now
@@ -33,14 +38,21 @@ import { resolve } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
 import { proto } from '@whiskeysockets/baileys'
 import { strToU8, zipSync } from 'fflate'
-import { mediaMessage, startTestServer, TEST_MONGODB_URI } from './helpers.ts'
+import { mediaMessage, PIXEL, startTestServer, TEST_MONGODB_URI } from './helpers.ts'
 
 if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
 
-const server = await startTestServer({ port: 5180, staticDir: resolve('dist') })
+const server = await startTestServer({ port: 5180, staticDir: resolve('dist'), sharedPhone: true })
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'
 const KIRAN = '919800011122@s.whatsapp.net'
+
+/** The newest WhatsApp connection opens, as the linked phone's does. */
+function openLatest() {
+  const socket = server.sockets.at(-1)!
+  socket.user = { id: '919876543210:4@s.whatsapp.net' }
+  socket.emit('connection.update', { connection: 'open' })
+}
 
 async function whatsappLinked() {
   const socket = server.sockets.at(-1)!
@@ -231,6 +243,34 @@ createServer(async (req, res) => {
       const last = messages.at(-1)!.key
       const reaction = { key: { remoteJid: RAVI, fromMe: false, id: `R${batch}` }, message: { reactionMessage: { key: last, text: '🔥' } }, messageTimestamp: now() }
       server.sockets.at(-1)!.emit('messages.upsert', { type: 'notify', messages: input.react ? [reaction, ...messages] : messages } as never)
+    } else if (req.url === '/whatsapp/legacy-sticker') {
+      const user = await server.database.col.users.find().sort({ _id: -1 }).limit(1).next()
+      const id = String(input.id)
+      await server.current().store.addMessage(user!._id, {
+        id: `wa:${RAVI}:${id}`,
+        threadId: `wa:${RAVI}`,
+        senderId: `wa:${RAVI}`,
+        body: 'Sticker',
+        sentAt: new Date((now() - 3600) * 1000).toISOString(),
+        ref: { key: { remoteJid: RAVI, fromMe: false, id } },
+      })
+      server.sockets.at(-1)!.phone.set(id, {
+        key: { remoteJid: RAVI, fromMe: false, id },
+        message: mediaMessage('stickerMessage', PIXEL, { mimetype: 'image/webp' }),
+        messageTimestamp: now() - 3600,
+      } as never)
+    } else if (req.url === '/whatsapp/reconnect') {
+      const dropped = server.sockets.at(-1)!
+      dropped.emit('connection.update', { connection: 'close', lastDisconnect: { error: Object.assign(new Error('restart'), { output: { statusCode: 515 } }), date: new Date() } })
+      const deadline = Date.now() + 10_000
+      while (server.sockets.at(-1) === dropped) {
+        if (Date.now() > deadline) throw new Error('WhatsApp did not connect again')
+        await new Promise((r) => setTimeout(r, 20))
+      }
+      openLatest()
+    } else if (req.url === '/restart') {
+      await server.restart()
+      openLatest()
     } else if (req.url === '/whatsapp/failed') {
       server.sockets.at(-1)!.emit('messages.update', [{ key: { remoteJid: RAVI, fromMe: true, id: String(input.id) }, update: { status: 0 } }] as never)
     } else if (req.url === '/whatsapp/photo') {
@@ -303,6 +343,7 @@ createServer(async (req, res) => {
           typing: socket.presence.filter((p) => p.type !== 'subscribe').map((p) => p.type),
           sent: socket.sent,
           changes: socket.changes,
+          resends: server.sockets.flatMap((s) => s.resendRequests.map((k) => k.id)),
         }),
       )
       return

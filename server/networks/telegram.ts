@@ -1349,6 +1349,7 @@ export function createTelegram(deps: TelegramDeps) {
       if (target && target.threadId !== threadId) throw new HttpError(404, 'That message is gone.')
       const ref = Number(target?.ref?.id) || refFromId(threadId, messageId)
       if (!ref) throw new HttpError(404, 'That message is gone.')
+      if (target?.deleted) throw new HttpError(409, 'That message was deleted.')
       try {
         await s.client.react(threadId.slice('tga:'.length), ref, emoji)
       } catch (error) {

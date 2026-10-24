@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, type SendOptions } from '@/data/api'
-import { withMyReaction } from '@/data/reactions'
+import { withMyReactionOn } from '@/data/reactions'
 import type {
   Contact,
   InboxEvent,
@@ -314,14 +314,13 @@ export const useInbox = create<InboxState>()((set, get) => {
     async react(threadId, messageId, emoji) {
       const before = get().messages[threadId]?.find((m) => m.id === messageId)
       if (!before) return
-      const reactions = withMyReaction(before.reactions, emoji)
-      putMessage({ ...before, reactions })
+      putMessage({ ...before, ...withMyReactionOn(before, emoji) })
       try {
         putMessage(await api.react(threadId, messageId, emoji))
       } catch (error) {
         // Put it back the way it was; the caller says why.
         const now = get().messages[threadId]?.find((m) => m.id === messageId)
-        if (now) putMessage({ ...now, reactions: before.reactions })
+        if (now) putMessage({ ...now, reactions: before.reactions, reactedBy: before.reactedBy })
         throw error
       }
     },

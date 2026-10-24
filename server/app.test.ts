@@ -1235,6 +1235,27 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(unsent.json.message).toMatchObject({ deleted: true, body: '' })
       expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'delete', id: 'MINE' })
       expect((await act(browser, thread, `${thread}:MINE`, { type: 'edit', body: 'Back again' })).status).toBe(409)
+      // Nor reacted to.
+      const reactionsBefore = socket.reactions.length
+      expect((await browser.post(`/api/threads/${enc(thread)}/reactions`, { messageId: `${thread}:MINE`, emoji: '👍' })).status).toBe(409)
+      expect(socket.reactions.length).toBe(reactionsBefore)
+
+      // A message that can't be opened (sealed with another key) is never sealed over.
+      const userIdHere = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const sealedElsewhere = 'v1:c2VhbGVkIHdpdGggYW5vdGhlciBrZXk='
+      await server.database.col.messages.insertOne({
+        userId: userIdHere,
+        id: `${thread}:OTHERKEY`,
+        threadId: thread,
+        senderId: thread,
+        sentAt: new Date((ts - 3600) * 1000),
+        payload: sealedElsewhere,
+      })
+      const { store: storeHere } = server.current()
+      await storeHere.updateMessage(userIdHere, `${thread}:OTHERKEY`, { body: 'Edited', editedAt: new Date().toISOString() })
+      await storeHere.setReaction(userIdHere, `${thread}:OTHERKEY`, 'me', '👍', { at: Date.now() })
+      await storeHere.linkFiles(userIdHere, `${thread}:OTHERKEY`, '', [{ kind: 'image', name: 'Photo', url: '/api/files/x' }])
+      expect((await server.database.col.messages.findOne({ userId: userIdHere, id: `${thread}:OTHERKEY` }))?.payload).toBe(sealedElsewhere)
       const gone = await act(browser, thread, `${thread}:OTHER`, { type: 'delete', forEveryone: false })
       expect(gone.json).toEqual({ message: null, removed: true })
       // With the message's time in seconds, as WhatsApp keeps it.
@@ -1302,24 +1323,35 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         editedAt: older.editedAt,
         status: 'read',
       })
-      // Reacted to since, it keeps the reactions it had (WhatsApp says only who gave the new one).
+      // Reacted to since: in a chat with one other person, the ones it had that weren't mine were
+      // theirs, so their new one takes their place.
       socket.emit('messages.upsert', {
         type: 'notify',
         messages: [
           { key: { remoteJid: RAVI, fromMe: false, id: 'R-OLDER' }, message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'OLDER' }, text: '❤️' } }, messageTimestamp: ts },
         ],
       } as never)
-      const reacted = await events.next((e) => e.type === 'message.updated' && e.message.id === older.id && (e.message.reactions?.length ?? 0) > 1)
-      expect(reacted.message.reactions).toEqual([{ emoji: '👍', count: 1, mine: false }, { emoji: '❤️', count: 1, mine: false }])
+      const reacted = await events.next((e) => e.type === 'message.updated' && e.message.id === older.id && !!e.message.reactions?.some((r: { emoji: string }) => r.emoji === '❤️'))
+      expect(reacted.message.reactions).toEqual([{ emoji: '❤️', count: 1, mine: false }])
+      expect(reacted.message.reactedBy).toEqual({ [thread]: '❤️' })
       // Said again (as a history replay does), it still counts once; changed, it moves.
-      const ravisReaction = (id: string, text: string) => ({
+      const ravisReaction = (id: string, text: string, at = ts * 1000) => ({
         key: { remoteJid: RAVI, fromMe: false, id },
-        message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'OLDER' }, text } },
-        messageTimestamp: ts,
+        message: { reactionMessage: { key: { remoteJid: RAVI, fromMe: true, id: 'OLDER' }, text, senderTimestampMs: at } },
+        messageTimestamp: Math.floor(at / 1000),
       })
-      socket.emit('messages.upsert', { type: 'append', messages: [ravisReaction('R-OLDER', '❤️'), ravisReaction('R-OLDER2', '😂')] } as never)
+      socket.emit('messages.upsert', { type: 'append', messages: [ravisReaction('R-OLDER', '❤️'), ravisReaction('R-OLDER2', '😂', ts * 1000 + 5000)] } as never)
       const changed = await events.next((e) => e.type === 'message.updated' && e.message.id === older.id && !!e.message.reactions?.some((r: { emoji: string }) => r.emoji === '😂'))
-      expect(changed.message.reactions).toEqual([{ emoji: '👍', count: 1, mine: false }, { emoji: '😂', count: 1, mine: false }])
+      expect(changed.message.reactions).toEqual([{ emoji: '😂', count: 1, mine: false }])
+      // An older word of it, late (a replay), changes nothing; taking it back does.
+      socket.emit('messages.upsert', { type: 'append', messages: [ravisReaction('R-OLDER', '❤️')] } as never)
+      socket.emit('messages.upsert', { type: 'notify', messages: [ravisReaction('R-OLDER3', '', ts * 1000 + 9000)] } as never)
+      const takenBack = await events.next((e) => e.type === 'message.updated' && e.message.id === older.id && !e.message.reactions)
+      expect(takenBack.message.reactedBy).toBeUndefined()
+      // One given before that, arriving late, changes nothing either.
+      socket.emit('messages.upsert', { type: 'append', messages: [ravisReaction('R-OLDER4', '🙏', ts * 1000 + 7000)] } as never)
+      await new Promise((r) => setTimeout(r, 300))
+      expect(byId((await browser.get('/api/inbox')).json.messages)[older.id].reactions).toBeUndefined()
 
       // The same, done on the phone.
       socket.emit('messages.upsert', {
@@ -1440,8 +1472,163 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       expect(socket.groupLookups - lookupsBefore).toBe(1)
       await waitFor(async () => expect(byId((await inbox()).threads)[`wa:${SLOW}`].title).toBe('Family'), { timeout: 3000 })
       socket.groupDelayMs = 0
+
+      // Group messages kept again from a device's copy.
+      const sorted = <T extends { emoji: string }>(reactions: T[] = []) => [...reactions].sort((a, b) => a.emoji.localeCompare(b.emoji))
+      const keepAgain = (id: string, extra: object) =>
+        browser.post(`/api/threads/${enc(`wa:${GROUP}`)}/message-actions`, {
+          messageId: `wa:${GROUP}:${id}`,
+          action: { type: 'star', starred: true },
+          message: { id: `wa:${GROUP}:${id}`, senderId: 'me', sentAt: new Date((ts - 90 * 86400) * 1000).toISOString(), body: 'Trip on Saturday', ...extra },
+        })
+      const reactTo = (target: string, id: string, who: string, text: string, at: number) => ({
+        key: { remoteJid: GROUP, fromMe: false, id, participant: who },
+        message: { reactionMessage: { key: { remoteJid: GROUP, fromMe: true, id: target }, text, senderTimestampMs: at } },
+        messageTimestamp: Math.floor(at / 1000),
+      })
+      // Showing only totals (who gave them unknown): members' reactions go on top, each counted
+      // once however often it's told (until WhatsApp lists them all, below).
+      await keepAgain('OLDG', { reactions: [{ emoji: '👍', count: 2, mine: false }] })
+      socket.emit('messages.upsert', {
+        type: 'append',
+        messages: [reactTo('OLDG', 'RG1', DEV, '👍', Date.now()), reactTo('OLDG', 'RG2', ASHA, '❤️', Date.now()), reactTo('OLDG', 'RG1', DEV, '👍', Date.now())],
+      } as never)
+      await waitFor(async () =>
+        expect(sorted(byId((await inbox()).messages)[`wa:${GROUP}:OLDG`].reactions)).toEqual(
+          sorted([
+            { emoji: '👍', count: 3, mine: false },
+            { emoji: '❤️', count: 1, mine: false },
+          ]),
+        ),
+      )
+      // Knowing who gave which: exact, whoever changes theirs.
+      await keepAgain('OLDX', {
+        reactions: [
+          { emoji: '👍', count: 1, mine: false },
+          { emoji: '🙏', count: 1, mine: true },
+        ],
+        reactedBy: { [`wa:${DEV}`]: '👍', me: '🙏' },
+      })
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:OLDX`].reactedBy).toEqual({ [`wa:${DEV}`]: '👍', me: '🙏' })
+      // Givers that don't add up to what it shows (mine among them, but given by Dev) aren't believed.
+      await keepAgain('OLDY', { reactions: [{ emoji: '👍', count: 1, mine: true }], reactedBy: { [`wa:${DEV}`]: '👍' } })
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:OLDY`]).toMatchObject({ reactions: [{ emoji: '👍', count: 1, mine: true }] })
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:OLDY`].reactedBy).toBeUndefined()
+      socket.emit('messages.upsert', { type: 'notify', messages: [reactTo('OLDX', 'RX1', DEV, '🔥', Date.now())] } as never)
+      await waitFor(async () =>
+        expect(sorted(byId((await inbox()).messages)[`wa:${GROUP}:OLDX`].reactions)).toEqual(
+          sorted([
+            { emoji: '🔥', count: 1, mine: false },
+            { emoji: '🙏', count: 1, mine: true },
+          ]),
+        ),
+      )
+      // Mine changed here is newer than an older word of it arriving late from the phone.
+      expect((await browser.post(`/api/threads/${enc(`wa:${GROUP}`)}/reactions`, { messageId: `wa:${GROUP}:OLDX`, emoji: '❤️' })).status).toBe(200)
+      socket.emit('messages.upsert', {
+        type: 'append',
+        messages: [{ key: { remoteJid: GROUP, fromMe: true, id: 'RX-MINE' }, message: { reactionMessage: { key: { remoteJid: GROUP, fromMe: true, id: 'OLDX' }, text: '🙏', senderTimestampMs: Date.now() - 60_000 } }, messageTimestamp: ts }],
+      } as never)
+      await new Promise((r) => setTimeout(r, 300))
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:OLDX`].reactedBy.me).toBe('❤️')
+      // Many at once on one message: none lost.
+      const userIdHere = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      await Promise.all(
+        Array.from({ length: 8 }, (_, i) => server.current().store.setReaction(userIdHere, `wa:${GROUP}:OLDX`, `wa:9198000000${i}@s.whatsapp.net`, '👏', { at: Date.now() })),
+      )
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:OLDX`].reactions).toEqual(expect.arrayContaining([{ emoji: '👏', count: 8, mine: false }]))
+      // WhatsApp listing everyone's reactions with a message (as history does): in place of totals
+      // kept from a device's copy, now exact (those told of as they happened stay as told).
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          {
+            key: { remoteJid: GROUP, fromMe: true, id: 'OLDG' },
+            message: { conversation: 'Trip on Saturday' },
+            messageTimestamp: ts - 90 * 86400,
+            reactions: [
+              { key: { remoteJid: GROUP, fromMe: false, participant: DEV }, text: '👍' },
+              { key: { remoteJid: GROUP, fromMe: true }, text: '🎉' },
+            ],
+          },
+          {
+            key: { remoteJid: GROUP, fromMe: false, id: 'H1', participant: ASHA },
+            message: { conversation: 'Photos from last time' },
+            messageTimestamp: ts - 60,
+            reactions: [{ key: { remoteJid: GROUP, fromMe: false, participant: DEV }, text: '😍' }],
+          },
+        ],
+      } as never)
+      await waitFor(async () => {
+        const found = byId((await inbox()).messages)
+        expect(sorted(found[`wa:${GROUP}:OLDG`].reactions)).toEqual(
+          sorted([
+            { emoji: '👍', count: 1, mine: false },
+            { emoji: '🎉', count: 1, mine: true },
+            { emoji: '❤️', count: 1, mine: false },
+          ]),
+        )
+        expect(found[`wa:${GROUP}:OLDG`].reactedBy).toEqual({ [`wa:${DEV}`]: '👍', me: '🎉', [`wa:${ASHA}`]: '❤️' })
+        expect(found[`wa:${GROUP}:H1`]).toMatchObject({ reactions: [{ emoji: '😍', count: 1, mine: false }], reactedBy: { [`wa:${DEV}`]: '😍' } })
+      })
+      // A newer list changes Dev's (newer by his clock); Asha's, told of as it happened, stays; mine,
+      // known only from the older list, goes with this one not naming it.
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          {
+            key: { remoteJid: GROUP, fromMe: true, id: 'OLDG' },
+            message: { conversation: 'Trip on Saturday' },
+            messageTimestamp: ts - 90 * 86400,
+            reactions: [{ key: { remoteJid: GROUP, fromMe: false, participant: DEV }, text: '😂', senderTimestampMs: Date.now() + 60_000 }],
+          },
+        ],
+      } as never)
+      await waitFor(async () => expect(byId((await inbox()).messages)[`wa:${GROUP}:OLDG`].reactedBy).toEqual({ [`wa:${DEV}`]: '😂', [`wa:${ASHA}`]: '❤️' }))
+      // Changed live since, a later copy of the same list doesn't undo it.
+      socket.emit('messages.upsert', { type: 'notify', messages: [reactTo('H1', 'RH1', DEV, '👏', Date.now())] } as never)
+      await waitFor(async () => expect(byId((await inbox()).messages)[`wa:${GROUP}:H1`].reactedBy).toEqual({ [`wa:${DEV}`]: '👏' }))
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          {
+            key: { remoteJid: GROUP, fromMe: false, id: 'H1', participant: ASHA },
+            message: { conversation: 'Photos from last time' },
+            messageTimestamp: ts - 60,
+            reactions: [{ key: { remoteJid: GROUP, fromMe: false, participant: DEV }, text: '😍', senderTimestampMs: (ts - 30) * 1000 }],
+          },
+        ],
+      } as never)
+      await new Promise((r) => setTimeout(r, 300))
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:H1`].reactedBy).toEqual({ [`wa:${DEV}`]: '👏' })
+      // A list newer than that one does.
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          {
+            key: { remoteJid: GROUP, fromMe: false, id: 'H1', participant: ASHA },
+            message: { conversation: 'Photos from last time' },
+            messageTimestamp: ts - 60,
+            reactions: [{ key: { remoteJid: GROUP, fromMe: false, participant: DEV }, text: '😮', senderTimestampMs: Date.now() + 60_000 }],
+          },
+        ],
+      } as never)
+      await waitFor(async () => expect(byId((await inbox()).messages)[`wa:${GROUP}:H1`].reactedBy).toEqual({ [`wa:${DEV}`]: '😮' }))
+      // A message deleted for everyone takes no reactions.
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: GROUP, fromMe: false, id: 'REVH1', participant: ASHA }, message: { protocolMessage: { key: { remoteJid: GROUP, fromMe: false, id: 'H1', participant: ASHA }, type: 0 } }, messageTimestamp: ts }],
+      } as never)
+      await waitFor(async () => expect(byId((await inbox()).messages)[`wa:${GROUP}:H1`]).toMatchObject({ deleted: true }))
+      socket.emit('messages.upsert', { type: 'notify', messages: [reactTo('H1', 'RH2', DEV, '😮', Date.now() + 1000)] } as never)
+      await new Promise((r) => setTimeout(r, 300))
+      expect(byId((await inbox()).messages)[`wa:${GROUP}:H1`].reactions).toBeUndefined()
       await browser.delete('/api/link/whatsapp')
-    })
+    }, 20_000)
 
     it('Telegram: edits, deletes and pins in Telegram; stars are kept in Sytext', async () => {
       const tg = server.telegram

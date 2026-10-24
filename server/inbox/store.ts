@@ -30,6 +30,14 @@ function deletions(threads: Pick<ThreadDoc, 'id' | 'deletedIds'>[], sent: Set<st
   return { deleted, deletedSince, at: new Date(now).toISOString() }
 }
 
+/** A kept message as devices get it: without what only the server uses. */
+export function wireOf(message: StoredMessage): Message {
+  const { ref, reactedAt, ...wire } = message
+  void ref
+  void reactedAt
+  return wire
+}
+
 /** How many chats the browser gets on load (each with every message the server keeps of it). */
 const SNAPSHOT_THREADS = 200
 /**
@@ -44,10 +52,12 @@ const FILE_ASKED_AGAIN_MS = 86_400_000
 export interface StoredMessage extends Message {
   /** Network-specific reference kept alongside (e.g. a WhatsApp message key). */
   ref?: Record<string, unknown>
+  /** With `reactedBy`: when each was given, where the network says (see MessagePayload.reactedAt). */
+  reactedAt?: Record<string, number>
 }
 
 /** Totals per emoji from who-reacted-with-what. */
-function totals(by: Record<string, string>): Reaction[] {
+export function totals(by: Record<string, string>): Reaction[] {
   const byEmoji = new Map<string, Reaction>()
   for (const [sender, emoji] of Object.entries(by)) {
     const reaction = byEmoji.get(emoji) ?? { emoji, count: 0, mine: false }
@@ -61,7 +71,7 @@ function totals(by: Record<string, string>): Reaction[] {
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Reactions from two lists added up, emoji by emoji. */
-function addedUp(a: Reaction[], b: Reaction[]): Reaction[] {
+export function addedUp(a: Reaction[], b: Reaction[]): Reaction[] {
   const byEmoji = new Map<string, Reaction>()
   for (const r of [...a, ...b]) {
     const sum = byEmoji.get(r.emoji)
@@ -70,9 +80,50 @@ function addedUp(a: Reaction[], b: Reaction[]): Reaction[] {
   return [...byEmoji.values()]
 }
 
+/** Reactions less `other`, emoji by emoji (one of mine goes where `other` has mine). */
+function minus(reactions: Reaction[], other: Reaction[]): Reaction[] {
+  return reactions
+    .map((r) => {
+      const o = other.find((x) => x.emoji === r.emoji)
+      return o ? { ...r, count: r.count - o.count, mine: r.mine && !o.mine } : r
+    })
+    .filter((r) => r.count > 0)
+}
+
+/** Only mine of the reactions. */
+const onlyMine = (reactions: Reaction[]) => reactions.filter((r) => r.mine).map((r) => ({ ...r, count: 1 }))
+
 /** Reactions without mine among them. */
-const withoutMine = (reactions: Reaction[]) =>
-  reactions.map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r)).filter((r) => r.count > 0)
+const withoutMine = (reactions: Reaction[]) => minus(reactions, onlyMine(reactions))
+
+/**
+ * Who gave which, as a device says, if it agrees with the totals it shows (each giver's emoji is
+ * among them, and no more of one than counted).
+ */
+function giversMatching(reactions: Reaction[] = [], by: Record<string, string> | undefined) {
+  if (!by) return undefined
+  const known = totals(by)
+  const fits =
+    known.every((k) => reactions.some((r) => r.emoji === k.emoji)) &&
+    reactions.every((r) => {
+      const k = known.find((x) => x.emoji === r.emoji)
+      if (k?.mine && !r.mine) return false
+      return (k?.count ?? 0) + (r.mine && !k?.mine ? 1 : 0) <= r.count
+    })
+  return fits ? by : undefined
+}
+
+/** Of a device's totals, those given by people not in `by`, if any. */
+function unknownGivers(reactions: Reaction[] = [], by: Record<string, string>): { reactionBase?: Reaction[] } {
+  const rest = minus(reactions, totals(by))
+  return rest.length ? { reactionBase: rest } : {}
+}
+
+/** Whether two records hold the same, in whatever order. */
+function sameRecord<T>(a: Record<string, T>, b: Record<string, T>) {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k])
+}
 
 /**
  * A sticker, voice message, photo or file kept without a link to it (earlier versions only named
@@ -117,12 +168,27 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     }
   }
 
+  /**
+   * A message's payload, to change and seal again; null when it can't be opened (sealed with
+   * another key), so it's left as it is rather than sealed over.
+   */
+  const payloadToChange = (doc: MessageDoc): MessagePayload | null => {
+    const unreadable: MessagePayload = { body: UNREADABLE }
+    const opened = openJson<MessagePayload>(doc.payload, unreadable)
+    return opened === unreadable ? null : opened
+  }
+
   /** `count` unread as the network says, but no more than came in since the chat was read in Sytext. */
   async function unreadSince(userId: ObjectId, threadId: string, count: number): Promise<number> {
     if (count <= 0) return Math.max(0, count)
     const thread = await col.threads.findOne({ userId, id: threadId }, { projection: { readThrough: 1 } })
     if (!thread?.readThrough) return count
-    const since = await col.messages.countDocuments({ userId, threadId, senderId: { $ne: 'me' }, sentAt: { $gt: thread.readThrough } })
+    const since = await col.messages.countDocuments({
+      userId,
+      threadId,
+      senderId: { $ne: 'me' },
+      sentAt: { $gt: thread.readThrough },
+    })
     return Math.min(count, since)
   }
 
@@ -153,6 +219,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       ...(payload.attachments?.length ? { attachments: payload.attachments } : {}),
       ...(payload.replyTo ? { replyTo: payload.replyTo } : {}),
       ...(reactions.length ? { reactions } : {}),
+      ...(payload.reactionsBy && Object.keys(payload.reactionsBy).length ? { reactedBy: payload.reactionsBy } : {}),
       ...(payload.editedAt ? { editedAt: payload.editedAt } : {}),
       ...(payload.deleted ? { deleted: true } : {}),
       ...(doc.pinned ? { pinned: true } : {}),
@@ -162,11 +229,21 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
   }
 
   const toContact = (doc: { id: string; network: Contact['network']; data: string }): Contact => {
-    const { name, handle, avatarUrl } = openJson<{ name: string; handle: string; avatarUrl?: string }>(doc.data, {
+    const { name, handle, avatarUrl } = openJson<{
+      name: string
+      handle: string
+      avatarUrl?: string
+    }>(doc.data, {
       name: 'Unknown',
       handle: '',
     })
-    return { id: doc.id, network: doc.network, name, handle, ...(avatarUrl ? { avatarUrl } : {}) }
+    return {
+      id: doc.id,
+      network: doc.network,
+      name,
+      handle,
+      ...(avatarUrl ? { avatarUrl } : {}),
+    }
   }
 
   /** Chats that got new messages since they were last trimmed, by user and chat id. */
@@ -178,7 +255,12 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     const extra = await col.messages
       .find(
         // A pin that has run out no longer keeps a message.
-        { userId, threadId, starred: { $ne: true }, $or: [{ pinned: { $ne: true } }, { pinnedUntil: { $lte: new Date() } }] },
+        {
+          userId,
+          threadId,
+          starred: { $ne: true },
+          $or: [{ pinned: { $ne: true } }, { pinnedUntil: { $lte: new Date() } }],
+        },
         { projection: { _id: 1 } },
       )
       .sort({ sentAt: -1 })
@@ -189,23 +271,31 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
   }
 
   /** Rewrites a message's sealed payload. */
-  /** Changes a message's sealed payload (`change` returns null to leave it), with `also` set beside it. */
+  /**
+   * Changes a message's sealed payload (`change` returns null to leave it), with `also` set beside
+   * it. Only over the payload it read: if something else changed it meanwhile, it's read again.
+   */
   async function updatePayload(
     userId: ObjectId,
     id: string,
     change: (payload: MessagePayload) => MessagePayload | null,
     also: Partial<MessageDoc> = {},
-  ) {
-    const doc = await col.messages.findOne({ userId, id })
-    if (!doc) return null
-    const payload = change(openJson<MessagePayload>(doc.payload, { body: UNREADABLE }))
-    if (!payload) return null
-    const updated = await col.messages.findOneAndUpdate(
-      { userId, id },
-      { $set: { payload: sealer.sealJson(payload), ...also } },
-      { returnDocument: 'after' },
-    )
-    return updated && toMessage(updated)
+  ): Promise<Message | null> {
+    // (Each time round, someone else's change went in: it gets there.)
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const doc = await col.messages.findOne({ userId, id })
+      const current = doc && payloadToChange(doc)
+      if (!doc || !current) return null
+      const payload = change(current)
+      if (!payload) return null
+      const updated = await col.messages.findOneAndUpdate(
+        { userId, id, payload: doc.payload },
+        { $set: { payload: sealer.sealJson(payload), ...also } },
+        { returnDocument: 'after' },
+      )
+      if (updated) return toMessage(updated)
+    }
+    throw new Error(`Message ${id} kept changing`)
   }
 
   return {
@@ -222,7 +312,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       thread: Pick<Thread, 'id' | 'network' | 'kind'> &
         Partial<Pick<Thread, 'title' | 'participantIds' | 'unreadCount' | 'archived'>> & { lastAt?: Date },
     ): Promise<Thread> {
-      const set: Partial<ThreadDoc> = { network: thread.network, kind: thread.kind, updatedAt: new Date() }
+      const set: Partial<ThreadDoc> = {
+        network: thread.network,
+        kind: thread.kind,
+        updatedAt: new Date(),
+      }
       if (thread.title !== undefined) set.title = sealer.seal(thread.title)
       if (thread.participantIds) set.participantIds = thread.participantIds
       if (thread.unreadCount !== undefined) set.unreadCount = await unreadSince(userId, thread.id, thread.unreadCount)
@@ -251,7 +345,14 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
 
     /** The unread count as the network gives it (capped at what's new since an Incognito read). */
     async setUnread(userId: ObjectId, threadId: string, unreadCount: number) {
-      await col.threads.updateOne({ userId, id: threadId }, { $set: { unreadCount: await unreadSince(userId, threadId, unreadCount) } })
+      await col.threads.updateOne(
+        { userId, id: threadId },
+        {
+          $set: {
+            unreadCount: await unreadSince(userId, threadId, unreadCount),
+          },
+        },
+      )
     },
 
     /**
@@ -284,7 +385,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       const existing = await col.contacts.findOne({ userId, id: contact.id })
       const old = existing && toContact(existing)
       const avatarUrl = contact.avatarUrl ?? old?.avatarUrl
-      const data = sealer.sealJson({ name: contact.name, handle: contact.handle, ...(avatarUrl ? { avatarUrl } : {}) })
+      const data = sealer.sealJson({
+        name: contact.name,
+        handle: contact.handle,
+        ...(avatarUrl ? { avatarUrl } : {}),
+      })
       if (old) {
         if (old.name === contact.name && old.handle === contact.handle && old.avatarUrl === avatarUrl) return false
         await col.contacts.updateOne({ userId, id: contact.id }, { $set: { data } })
@@ -345,7 +450,16 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         body: message.body,
         ...(message.attachments ? { attachments: message.attachments } : {}),
         ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-        ...(message.reactions?.length ? { reactionTotals: message.reactions } : {}),
+        // Who gave which, where the device knew (a copy kept again): the rest stay as totals.
+        ...(message.reactedBy
+          ? {
+              reactionsBy: message.reactedBy,
+              ...unknownGivers(message.reactions, message.reactedBy),
+            }
+          : message.reactions?.length
+            ? { reactionTotals: message.reactions }
+            : {}),
+        ...(message.reactedAt ? { reactedAt: message.reactedAt } : {}),
         ...(message.editedAt ? { editedAt: message.editedAt } : {}),
         ...(message.deleted ? { deleted: true } : {}),
       }
@@ -369,7 +483,10 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       )
       if (result.upsertedCount) {
         await col.threads.updateOne({ userId, id: message.threadId }, { $max: { lastAt: new Date(message.sentAt) } })
-        untrimmed.set(`${userId.toHexString()}:${message.threadId}`, { userId, threadId: message.threadId })
+        untrimmed.set(`${userId.toHexString()}:${message.threadId}`, {
+          userId,
+          threadId: message.threadId,
+        })
       }
       return result.upsertedCount > 0
     },
@@ -393,44 +510,57 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         starred?: boolean
       },
     ): Promise<Message | null> {
-      const doc = await col.messages.findOne({ userId, id })
-      if (!doc) return null
-      const set: Partial<MessageDoc> = {}
-      const unset: Record<string, ''> = {}
-      if (patch.deleted) {
-        // Deleted for everyone: what it said, showed or quoted goes; reactions go with it.
-        set.payload = sealer.sealJson({ body: '', deleted: true } satisfies MessagePayload)
-      } else if (patch.body !== undefined || patch.attachments !== undefined || patch.editedAt !== undefined) {
-        // The quote and reactions stay as they are.
-        const { attachments, ...current } = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
-        const nextAttachments = patch.attachments ?? attachments
-        set.payload = sealer.sealJson({
-          ...current,
-          body: patch.body ?? current.body,
-          ...(nextAttachments?.length ? { attachments: nextAttachments } : {}),
-          ...(patch.editedAt ? { editedAt: patch.editedAt } : {}),
-        })
+      // Changing the payload: only over the one read, so a reaction landing meanwhile isn't lost.
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const doc = await col.messages.findOne({ userId, id })
+        if (!doc) return null
+        const set: Partial<MessageDoc> = {}
+        const unset: Record<string, ''> = {}
+        if (patch.deleted) {
+          // Deleted for everyone: what it said, showed or quoted goes; reactions go with it.
+          set.payload = sealer.sealJson({
+            body: '',
+            deleted: true,
+          } satisfies MessagePayload)
+        } else if (patch.body !== undefined || patch.attachments !== undefined || patch.editedAt !== undefined) {
+          // The quote and reactions stay as they are.
+          const opened = payloadToChange(doc)
+          if (opened) {
+            const { attachments, ...current } = opened
+            const nextAttachments = patch.attachments ?? attachments
+            set.payload = sealer.sealJson({
+              ...current,
+              body: patch.body ?? current.body,
+              ...(nextAttachments?.length ? { attachments: nextAttachments } : {}),
+              ...(patch.editedAt ? { editedAt: patch.editedAt } : {}),
+            })
+          }
+        }
+        if (patch.status) set.status = patch.status
+        // New attachments may have files to fetch again, or no longer.
+        if (patch.attachments) {
+          if (patch.attachments.some((a) => !a.url)) unset.filesOk = ''
+          else set.filesOk = true
+        }
+        for (const flag of ['pinned', 'starred'] as const) {
+          if (patch[flag] === true) set[flag] = true
+          else if (patch[flag] === false) unset[flag] = ''
+        }
+        // A new pin brings its own end (or none); unpinned, there's none.
+        if (patch.pinned === true && patch.pinnedUntil) set.pinnedUntil = new Date(patch.pinnedUntil)
+        else if (patch.pinned !== undefined) unset.pinnedUntil = ''
+        if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) return toMessage(doc)
+        const updated = await col.messages.findOneAndUpdate(
+          { userId, id, ...(set.payload ? { payload: doc.payload } : {}) },
+          {
+            ...(Object.keys(set).length ? { $set: set } : {}),
+            ...(Object.keys(unset).length ? { $unset: unset } : {}),
+          },
+          { returnDocument: 'after' },
+        )
+        if (updated) return toMessage(updated)
       }
-      if (patch.status) set.status = patch.status
-      // New attachments may have files to fetch again, or no longer.
-      if (patch.attachments) {
-        if (patch.attachments.some((a) => !a.url)) unset.filesOk = ''
-        else set.filesOk = true
-      }
-      for (const flag of ['pinned', 'starred'] as const) {
-        if (patch[flag] === true) set[flag] = true
-        else if (patch[flag] === false) unset[flag] = ''
-      }
-      // A new pin brings its own end (or none); unpinned, there's none.
-      if (patch.pinned === true && patch.pinnedUntil) set.pinnedUntil = new Date(patch.pinnedUntil)
-      else if (patch.pinned !== undefined) unset.pinnedUntil = ''
-      if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) return toMessage(doc)
-      const updated = await col.messages.findOneAndUpdate(
-        { userId, id },
-        { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) },
-        { returnDocument: 'after' },
-      )
-      return updated && toMessage(updated)
+      throw new Error(`Message ${id} kept changing`)
     },
 
     /**
@@ -440,6 +570,8 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     async keepFlagged(userId: ObjectId, threadId: string, hint: MessageHint, action: MessageAction, ref: Record<string, unknown>) {
       const flags = action.type === 'pin' && action.pinned ? { pinned: true } : action.type === 'star' && action.starred ? { starred: true } : null
       if (!flags || !hint.id.startsWith(`${threadId}:`)) return
+      const reactedBy = giversMatching(hint.reactions, hint.reactedBy)
+      const givers = reactedBy ? { reactedBy } : {}
       await this.addMessage(userId, {
         id: hint.id,
         threadId,
@@ -449,6 +581,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         ...(hint.attachments ? { attachments: hint.attachments } : {}),
         ...(hint.replyTo ? { replyTo: hint.replyTo } : {}),
         ...(hint.reactions ? { reactions: hint.reactions } : {}),
+        ...givers,
         ...(hint.editedAt ? { editedAt: hint.editedAt } : {}),
         ...(hint.status ? { status: hint.status } : {}),
         ...flags,
@@ -460,40 +593,139 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     async deleteMessage(userId: ObjectId, threadId: string, id: string): Promise<boolean> {
       const gone = (await col.messages.deleteOne({ userId, id })).deletedCount > 0
       // Remembered, kept or not: devices that were away remove it when they come back.
-      await col.threads.updateOne({ userId, id: threadId }, { $push: { deletedIds: { $each: [{ id, at: new Date() }], $slice: -DELETIONS_KEPT } } })
+      await col.threads.updateOne(
+        { userId, id: threadId },
+        {
+          $push: {
+            deletedIds: {
+              $each: [{ id, at: new Date() }],
+              $slice: -DELETIONS_KEPT,
+            },
+          },
+        },
+      )
       return gone
     },
 
     /** Telegram's private and small-group messages by their own ids (deletions say only those). */
     async byRefIds(userId: ObjectId, idPrefix: string, refIds: number[]): Promise<{ id: string; threadId: string }[]> {
       return col.messages
-        .find({ userId, id: { $regex: `^${escapeRegex(idPrefix)}` }, 'ref.id': { $in: refIds } }, { projection: { id: 1, threadId: 1 } })
+        .find(
+          {
+            userId,
+            id: { $regex: `^${escapeRegex(idPrefix)}` },
+            'ref.id': { $in: refIds },
+          },
+          { projection: { id: 1, threadId: 1 } },
+        )
         .toArray()
     },
 
-    /** One person's reaction (`senderId` "me" for the user) changed; null removes it. */
-    async setReaction(userId: ObjectId, id: string, senderId: string, emoji: string | null): Promise<Message | null> {
+    /**
+     * One person's reaction (`senderId` "me" for the user) changed, as it happened; null removes
+     * it. `at` is when it was given, by the giver's clock, as WhatsApp orders each person's
+     * reactions; `direct` says the chat is between the user and one other person.
+     */
+    async setReaction(
+      userId: ObjectId,
+      id: string,
+      senderId: string,
+      emoji: string | null,
+      { at, direct = false }: { at: number; direct?: boolean },
+    ): Promise<Message | null> {
       return updatePayload(userId, id, (payload) => {
+        // A message deleted for everyone has no reactions.
+        if (payload.deleted) return null
+        const times = payload.reactedAt ?? {}
+        // The same or an older word of this person's reaction (sent again, or late): nothing new.
+        if (times[senderId] !== undefined && at <= times[senderId]) return null
         const { reactionTotals, reactionBase, ...rest } = payload
-        // Kept again with only the totals a device showed: those stay, and each person's own
-        // reaction goes on top, counted once however often it's said. Mine takes the place of my
-        // part of them. (Who gave the others isn't known, so one of them saying theirs again
-        // counts it twice, until they change it.)
+        // Kept again from a device's copy that showed only totals (who gave them unknown): on the
+        // first word from a person, their part of those comes off where it can be told. Mine is
+        // marked; in a chat with one other person, the rest are theirs. (In a group it can't be:
+        // the list WhatsApp sends of the message's reactions replaces them, see setReactions.)
         let base = reactionBase ?? (!payload.reactionsBy && reactionTotals?.length ? reactionTotals : undefined)
-        if (base && senderId === 'me') base = withoutMine(base)
+        if (base && !(senderId in times) && !(senderId in (payload.reactionsBy ?? {}))) {
+          if (senderId === 'me') base = withoutMine(base)
+          else if (direct) base = onlyMine(base)
+        }
         const by = { ...payload.reactionsBy }
         if (emoji) by[senderId] = emoji
         else delete by[senderId]
-        return { ...rest, reactionsBy: by, ...(base?.length ? { reactionBase: base } : {}) }
+        return {
+          ...rest,
+          reactionsBy: by,
+          reactedAt: { ...times, [senderId]: at },
+          ...(base?.length ? { reactionBase: base } : {}),
+        }
+      })
+    },
+
+    /**
+     * Everyone's reactions to a message as WhatsApp lists them with it (from history): who gave
+     * which and when (an empty one: taken back), and how many more it doesn't say who gave
+     * (`unnamed`). For each giver the newest word wins, by their time (one without a time only
+     * says what nothing else has); one it leaves out stays if anything newer was heard of them, or
+     * if it doesn't name everyone. Returns the message if that changed it.
+     */
+    async setReactions(
+      userId: ObjectId,
+      id: string,
+      {
+        by: list,
+        unnamed,
+      }: {
+        by: Record<string, { emoji: string; at?: number }>
+        unnamed: Reaction[]
+      },
+    ): Promise<Message | null> {
+      return updatePayload(userId, id, (payload) => {
+        if (payload.deleted) return null
+        const { reactionTotals, reactionBase, reactionsBy = {}, reactedAt: times = {}, ...rest } = payload
+        const by: Record<string, string> = {}
+        const at: Record<string, number> = { ...times }
+        for (const [who, emoji] of Object.entries(reactionsBy)) {
+          if (!(who in list) && (who in times || unnamed.length)) by[who] = emoji
+        }
+        for (const [who, given] of Object.entries(list)) {
+          const known = times[who]
+          const newer = given.at !== undefined ? known === undefined || given.at > known : known === undefined
+          if (!newer) {
+            if (reactionsBy[who]) by[who] = reactionsBy[who]!
+            continue
+          }
+          if (given.emoji) by[who] = given.emoji
+          if (given.at !== undefined) at[who] = given.at
+        }
+        // Those it doesn't say who gave, less others known by name but not named in it (likely
+        // them; never mine, which always says so).
+        const unlisted = Object.fromEntries(Object.entries(by).filter(([who]) => who !== 'me' && !(who in list)))
+        const anonymous = minus(unnamed, totals(unlisted))
+        const base = anonymous.length ? anonymous : undefined
+        const same =
+          !reactionTotals &&
+          sameRecord(reactionsBy, by) &&
+          sameRecord(times, at) &&
+          JSON.stringify(reactionBase ?? null) === JSON.stringify(base ?? null)
+        return same
+          ? null
+          : {
+              ...rest,
+              reactionsBy: by,
+              ...(Object.keys(at).length ? { reactedAt: at } : {}),
+              ...(base ? { reactionBase: base } : {}),
+            }
       })
     },
 
     /** The network reported new totals (Telegram doesn't always say who). */
     async setReactionTotals(userId: ObjectId, id: string, reactions: Reaction[]): Promise<Message | null> {
       return updatePayload(userId, id, (payload) => {
-        const { reactionsBy, reactionBase, ...rest } = payload
+        if (payload.deleted) return null
+        const { reactionsBy, reactionBase, reactedAt, ...rest } = payload
         void reactionsBy
         void reactionBase
+        void reactedAt
         return { ...rest, reactionTotals: reactions }
       })
     },
@@ -522,7 +754,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       before: { id: string; sentAt?: string },
       limit = 30,
     ): Promise<{ messages: Message[]; hasMore: boolean }> {
-      const stored = await col.messages.findOne({ userId, id: before.id, threadId })
+      const stored = await col.messages.findOne({
+        userId,
+        id: before.id,
+        threadId,
+      })
       const sentAt = stored?.sentAt ?? (before.sentAt ? new Date(before.sentAt) : null)
       if (!sentAt || Number.isNaN(sentAt.getTime())) return { messages: [], hasMore: false }
       const docs = await col.messages
@@ -530,7 +766,10 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         .sort({ sentAt: -1 })
         .limit(limit + 1)
         .toArray()
-      return { messages: docs.slice(0, limit).reverse().map(toMessage), hasMore: docs.length > limit }
+      return {
+        messages: docs.slice(0, limit).reverse().map(toMessage),
+        hasMore: docs.length > limit,
+      }
     },
 
     /**
@@ -546,15 +785,29 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
           userId,
           id: { $regex: `^${escapeRegex(idPrefix)}` },
           filesOk: { $ne: true },
-          $or: [{ fileAskedAt: { $exists: false } }, { fileAskedAt: { $lt: new Date(Date.now() - FILE_ASKED_AGAIN_MS) } }],
+          $or: [
+            { fileAskedAt: { $exists: false } },
+            {
+              fileAskedAt: { $lt: new Date(Date.now() - FILE_ASKED_AGAIN_MS) },
+            },
+          ],
         })
         .sort({ sentAt: -1 })
         .limit(2000)
         .toArray()
-      const found: { id: string; threadId: string; ref?: Record<string, unknown> }[] = []
+      const found: {
+        id: string
+        threadId: string
+        ref?: Record<string, unknown>
+      }[] = []
       const ok: string[] = []
       for (const doc of docs) {
-        if (lacksFile(toMessage(doc))) found.push({ id: doc.id, threadId: doc.threadId, ...(doc.ref ? { ref: doc.ref } : {}) })
+        if (lacksFile(toMessage(doc)))
+          found.push({
+            id: doc.id,
+            threadId: doc.threadId,
+            ...(doc.ref ? { ref: doc.ref } : {}),
+          })
         else ok.push(doc.id)
         if (found.length >= limit) break
       }
@@ -578,7 +831,13 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
      */
     async markSentRead(userId: ObjectId, threadId: string, upToRefId: number): Promise<Message[]> {
       const docs = await col.messages
-        .find({ userId, threadId, senderId: 'me', status: { $in: ['sent', 'delivered'] }, 'ref.id': { $lte: upToRefId } })
+        .find({
+          userId,
+          threadId,
+          senderId: 'me',
+          status: { $in: ['sent', 'delivered'] },
+          'ref.id': { $lte: upToRefId },
+        })
         .toArray()
       if (!docs.length) return []
       await col.messages.updateMany({ userId, id: { $in: docs.map((d) => d.id) } }, { $set: { status: 'read' } })

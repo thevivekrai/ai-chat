@@ -7,7 +7,7 @@ import {
   type OlderMessages,
   type SendOptions,
 } from '../connectors/types'
-import { withMyReaction } from '../reactions'
+import { withMyReactionOn } from '../reactions'
 import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Thread } from '../types'
 import { ME_ID, withAction } from '../types'
 import { openDeviceStore, wipeDeviceStore, type DeviceStore } from './deviceStore'
@@ -71,6 +71,7 @@ const copyOf = (m: Message): MessageHint => ({
   ...(m.attachments?.length ? { attachments: m.attachments.map(({ url, ...a }) => (url?.startsWith('/api/files/') ? { ...a, url } : a)) } : {}),
   ...(m.replyTo ? { replyTo: m.replyTo } : {}),
   ...(m.reactions?.length ? { reactions: m.reactions } : {}),
+  ...(m.reactedBy && Object.keys(m.reactedBy).length ? { reactedBy: m.reactedBy } : {}),
   ...(m.editedAt ? { editedAt: m.editedAt } : {}),
   ...(m.status ? { status: m.status } : {}),
 })
@@ -271,7 +272,7 @@ export class ServerConnector implements Connector {
     const mine = this.messages.get(messageId)
     const { message } = await this.signedIn(serverApi.react(threadId, messageId, emoji, mine && hintOf(mine)))
     // The server no longer keeps it: only this device's copy changes.
-    const updated = message ?? (mine && { ...mine, reactions: withMyReaction(mine.reactions, emoji) })
+    const updated = message ?? (mine && { ...mine, ...withMyReactionOn(mine, emoji) })
     if (!updated) throw new Error('That message is gone.')
     this.keepMessages([updated])
     return updated

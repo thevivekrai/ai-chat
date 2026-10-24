@@ -31,14 +31,14 @@ import type { Readable } from 'node:stream'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
 import { isPhotoType, type MessageHint, type ServerOlderMessages, type WhatsAppLinkResult } from '../../src/data/server/types.ts'
-import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage, Thread } from '../../src/data/types.ts'
+import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, downloadImage, type Avatars, type Picture } from '../inbox/avatars.ts'
 import { sizeLabel, type FileBody, type FileLinks, type FileRef, type Upload } from '../inbox/files.ts'
 import { messageChanges } from '../inbox/changes.ts'
-import type { InboxStore, StoredMessage } from '../inbox/store.ts'
+import { addedUp, totals, wireOf, type InboxStore, type StoredMessage } from '../inbox/store.ts'
 import type { Hub } from '../realtime.ts'
 import type { Accounts } from './accounts.ts'
 
@@ -92,7 +92,7 @@ export interface WaSocket {
 /** What this manager sends: text, a reaction, or a photo, video or file (uploaded by Baileys). */
 export type WaContent =
   | { text: string; edit?: WAMessageKey }
-  | { react: { text: string; key: WAMessageKey } }
+  | { react: { text: string; key: WAMessageKey; senderTimestampMs?: number } }
   | { delete: WAMessageKey }
   | { pin: WAMessageKey; type: proto.PinInChat.Type; time?: 86400 | 604800 | 2592000 }
   | { image: Buffer; mimetype: string; caption?: string }
@@ -259,6 +259,27 @@ function messageForFile(ref: Extract<FileRef, { n: 'wa' }>): WAMessage {
 }
 
 const mimeOf = (m: WaMediaFields | null | undefined, fallback?: string) => m?.mimetype?.split(';')[0]?.trim() || fallback
+
+/**
+ * Reactions as WhatsApp lists them with a message: who gave which and when (an empty one: taken
+ * back), and how many more don't say who.
+ */
+type ReactionList = { by: Record<string, { emoji: string; at?: number }>; unnamed: Reaction[] }
+
+/** A new message's reactions as WhatsApp lists them: who gave which and when, and the totals. */
+function givenBy({ by, unnamed }: ReactionList): Pick<StoredMessage, 'reactions' | 'reactedBy' | 'reactedAt'> {
+  const given = Object.entries(by).filter(([, r]) => !!r.emoji)
+  // When each was given, or taken back (so an older word of it, late, changes nothing).
+  const reactedAt = Object.fromEntries(Object.entries(by).flatMap(([who, r]) => (r.at !== undefined ? [[who, r.at]] : [])))
+  if (!given.length && !unnamed.length && !Object.keys(reactedAt).length) return {}
+  const reactedBy = Object.fromEntries(given.map(([who, r]) => [who, r.emoji]))
+  const reactions = addedUp(totals(reactedBy), unnamed)
+  return {
+    ...(reactions.length ? { reactions } : {}),
+    ...(given.length ? { reactedBy } : {}),
+    ...(Object.keys(reactedAt).length ? { reactedAt } : {}),
+  }
+}
 
 /** Where something WhatsApp sent belongs: the chat's id, and its other id where WhatsApp gives it. */
 type ChatRef = { remoteJid?: string | null; remoteJidAlt?: string | null }
@@ -912,13 +933,14 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     // A reaction points at the message it reacts to; an empty one takes it back.
     const reaction = content?.reactionMessage
     if (reaction?.key?.id) {
-      const group = isJidGroup(chatJid)
-      const who = msg.key.fromMe
-        ? 'me'
-        : group
-          ? senderIdOf(s, msg.key.participant ?? remote, msg.key.participantAlt)
-          : `wa:${chatJid}`
-      const updated = await store.setReaction(s.userId, `wa:${chatJid}:${reaction.key.id}`, who, reaction.text || null)
+      const who = reactorOf(s, chatJid, msg.key)
+      if (!who) return
+      // When it was given, as WhatsApp orders reactions (where it doesn't say: when it was sent).
+      const at = toNumber(reaction.senderTimestampMs) || toNumber(msg.messageTimestamp) * 1000 || Date.now()
+      const updated = await store.setReaction(s.userId, `wa:${chatJid}:${reaction.key.id}`, who, reaction.text || null, {
+        at,
+        direct: !isJidGroup(chatJid),
+      })
       if (updated) publish(s, { type: 'message.updated', message: updated })
       return
     }
@@ -970,6 +992,8 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     const key = { remoteJid: remote, fromMe, id: msg.key.id!, ...(msg.key.participant ? { participant: msg.key.participant } : {}) }
     const attachments = withFileLink(s.userId, key, parts)
 
+    // Everyone's reactions, where WhatsApp lists them with the message (history does).
+    const listed = reactionsOf(s, chatJid, msg.reactions)
     const message: StoredMessage = {
       id: `wa:${chatJid}:${msg.key.id}`,
       threadId: thread.id,
@@ -980,18 +1004,41 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       ...(attachments ? { attachments } : {}),
       ...(context ? { replyTo: await quotedFor(s, chatJid, context) } : {}),
       ref: { key: { remoteJid: remote, fromMe, id: msg.key.id, participant: msg.key.participant ?? undefined } },
+      ...(listed ? givenBy(listed) : {}),
     }
     if (!(await store.addMessage(s.userId, message))) {
-      // Already kept: this may be the phone sending again a sticker, photo or file that had no link.
+      // Already kept: this may be the phone sending again a sticker, photo or file that had no
+      // link, or listing its reactions.
       if (attachments?.some((a) => a.url)) await addFileLinks(s.userId, message.id, parts.body, attachments)
+      const reacted = listed && (await store.setReactions(s.userId, message.id, listed))
+      if (reacted) publish(s, { type: 'message.updated', message: reacted })
       return
     }
     if (live && !fromMe) await store.incrementUnread(s.userId, thread.id)
     const updated = await store.thread(s.userId, thread.id)
     if (updated) publish(s, { type: 'thread.updated', thread: updated })
-    const { ref, ...wire } = message
-    void ref
-    publish(s, { type: 'message.created', message: wire })
+    publish(s, { type: 'message.created', message: wireOf(message) })
+  }
+
+  /** Who a reaction is from: me, the person in a direct chat, or a group's member (null: not said). */
+  function reactorOf(s: Session, chatJid: string, key: WAMessageKey | null | undefined): string | null {
+    if (key?.fromMe) return 'me'
+    if (!isJidGroup(chatJid)) return `wa:${chatJid}`
+    const member = key?.participant || key?.participantAlt
+    return member ? senderIdOf(s, member, key?.participant ? key.participantAlt : undefined) : null
+  }
+
+  /** Who reacted with what, from the reactions WhatsApp lists with a message (an empty one: taken back). */
+  function reactionsOf(s: Session, chatJid: string, reactions: proto.IReaction[] | null | undefined): ReactionList | undefined {
+    if (!reactions?.length) return undefined
+    const list: ReactionList = { by: {}, unnamed: [] }
+    for (const r of reactions) {
+      const who = reactorOf(s, chatJid, r.key as WAMessageKey | null | undefined)
+      const at = toNumber(r.senderTimestampMs) || undefined
+      if (who) list.by[who] = { emoji: r.text ?? '', ...(at ? { at } : {}) }
+      else if (r.text) list.unnamed = addedUp(list.unnamed, [{ emoji: r.text, count: 1, mine: false }])
+    }
+    return Object.keys(list.by).length || list.unnamed.length ? list : undefined
   }
 
   /**
@@ -1065,9 +1112,7 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       ref: { key: { remoteJid: jid, fromMe: true, id: sentId } },
     }
     await store.addMessage(userId, stored)
-    const { ref, ...wire } = stored
-    void ref
-    return wire
+    return wireOf(stored)
   }
 
   async function onMessageUpdate(s: Session, key: WAMessageKey, update: Partial<WAMessage>) {
@@ -1498,8 +1543,18 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       const key =
         (target?.ref as { key?: WAMessageKey } | undefined)?.key ?? (hint?.id === messageId ? keyFromHint(threadId, hint) : null)
       if (!key) throw new HttpError(404, 'That message is gone.')
-      await socket.sendMessage(threadId.slice('wa:'.length), { react: { text: emoji ?? '', key } })
-      return target ? store.setReaction(userId, messageId, 'me', emoji) : null
+      if (target?.deleted) throw new HttpError(409, 'That message was deleted.')
+      // Stamped here, so WhatsApp's own word of it (an echo, or history later) is the same, not newer.
+      const at = Date.now()
+      const jid = threadId.slice('wa:'.length)
+      await socket.sendMessage(jid, { react: { text: emoji ?? '', key, senderTimestampMs: at } })
+      if (!target) return null
+      // WhatsApp's own word of it, echoed before this, says the same: then it's already as it should
+      // be, so the message is read again rather than reported as one the server doesn't keep.
+      const updated = await store.setReaction(userId, messageId, 'me', emoji, { at, direct: !isJidGroup(jid) })
+      if (updated) return updated
+      const now = await store.message(userId, messageId)
+      return now ? wireOf(now) : null
     },
 
     async setTyping(userId: ObjectId, threadId: string, typing: boolean) {

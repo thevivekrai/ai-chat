@@ -120,7 +120,7 @@ export class FakeWaSocket implements WaSocket {
   /** Private id (LID) → phone-number id, as WhatsApp's key store on the device has them. */
   lids = new Map<string, string>()
   /** Messages the phone has, by id: it sends one again when asked (requestPlaceholderResend). */
-  phone = new Map<string, WAMessage>()
+  phone: Map<string, WAMessage>
   resendRequests: WAMessageKey[] = []
   signalRepository = {
     lidMapping: {
@@ -129,8 +129,10 @@ export class FakeWaSocket implements WaSocket {
     },
   }
 
-  constructor(auth: AuthenticationState) {
+  /** `phone` may be shared by the sockets of a test server (see startTestServer). */
+  constructor(auth: AuthenticationState, phone = new Map<string, WAMessage>()) {
     this.authState = { creds: auth.creds }
+    this.phone = phone
   }
 
   ev = {
@@ -435,11 +437,20 @@ export interface TestServer {
   close(): Promise<void>
 }
 
-export async function startTestServer({ port: fixedPort = 0, staticDir }: { port?: number; staticDir?: string } = {}): Promise<TestServer> {
+/**
+ * `sharedPhone`: every WhatsApp connection is the same phone, which keeps its messages across
+ * reconnects and restarts (for clicking through by hand); otherwise each connection has its own.
+ */
+export async function startTestServer({
+  port: fixedPort = 0,
+  staticDir,
+  sharedPhone = false,
+}: { port?: number; staticDir?: string; sharedPhone?: boolean } = {}): Promise<TestServer> {
   const dbName = `tidings_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const database = await connectDatabase(TEST_MONGODB_URI!, dbName)
   const sealer = createSealer(Buffer.alloc(32, 7))
   const sockets: FakeWaSocket[] = []
+  const phone = sharedPhone ? new Map<string, WAMessage>() : undefined
   const telegram = fakeTelegram()
   const google = await fakeGoogle()
   const tokens = createSessionTokens('x'.repeat(40))
@@ -465,7 +476,7 @@ export async function startTestServer({ port: fixedPort = 0, staticDir }: { port
       filesRepairDelayMs: 50,
       groupTitleWaitMs: 400,
       createSocket: (auth) => {
-        const socket = new FakeWaSocket(auth)
+        const socket = new FakeWaSocket(auth, phone)
         sockets.push(socket)
         // Like WhatsApp: a fresh device is offered a QR code first.
         if (!auth.creds.registered) setTimeout(() => socket.emit('connection.update', { qr: 'qr-data' }), 5)
