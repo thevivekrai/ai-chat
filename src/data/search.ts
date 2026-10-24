@@ -88,6 +88,16 @@ interface SearchInput {
 
 const MAX_HITS_PER_THREAD = 3
 
+/**
+ * The in-chat search ("find in this chat"): unlike the AI search, it looks for exactly what was
+ * typed, ignoring case. Returns the ids of the messages that say it, oldest first; deleted ones
+ * say nothing.
+ */
+export function matchesInChat(messages: Message[], query: string): string[] {
+  const q = query.trim().toLowerCase()
+  return q ? messages.filter((m) => !m.deleted && m.body.toLowerCase().includes(q)).map((m) => m.id) : []
+}
+
 export function searchMessages(
   { threads, messages, contacts, now = Date.now() }: SearchInput,
   query: string,

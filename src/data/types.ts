@@ -99,6 +99,43 @@ export interface Message {
   attachments?: Attachment[]
   replyTo?: QuotedMessage
   reactions?: Reaction[]
+  /** When it was last edited (by whoever wrote it). */
+  editedAt?: string
+  /** Deleted for everyone: shown as such, without its text or attachments. */
+  deleted?: boolean
+  /** Pinned in the chat: for everyone in it, where the network has pins. */
+  pinned?: boolean
+  /** Starred by me, to find again under Starred. */
+  starred?: boolean
+}
+
+/**
+ * Changing a message after it was sent. Editing and deleting for everyone are for my own messages;
+ * deleting for me removes it from my side only.
+ */
+export type MessageAction =
+  | { type: 'edit'; body: string }
+  | { type: 'delete'; forEveryone: boolean }
+  | { type: 'pin'; pinned: boolean }
+  | { type: 'star'; starred: boolean }
+
+/** A message as it is after `action`, for when only this device has it to change. */
+export function withAction(message: Message, action: MessageAction, now = new Date()): Message {
+  switch (action.type) {
+    case 'edit':
+      return { ...message, body: action.body, editedAt: now.toISOString() }
+    case 'delete': {
+      const { attachments, replyTo, reactions, ...rest } = message
+      void attachments
+      void replyTo
+      void reactions
+      return { ...rest, body: '', deleted: true }
+    }
+    case 'pin':
+      return { ...message, pinned: action.pinned || undefined }
+    case 'star':
+      return { ...message, starred: action.starred || undefined }
+  }
 }
 
 /** What a chat's network lets Sytext do, so only working actions are offered. */
@@ -111,9 +148,24 @@ export interface ChatCapabilities {
   history: boolean
   /** Can send photos and files. */
   files: boolean
+  /** Can edit my messages, delete them (for everyone, or for me), pin and star messages. */
+  edit: boolean
+  delete: boolean
+  pin: boolean
+  star: boolean
 }
 
-export const NO_CAPABILITIES: ChatCapabilities = { reply: false, react: false, typing: false, history: false, files: false }
+export const NO_CAPABILITIES: ChatCapabilities = {
+  reply: false,
+  react: false,
+  typing: false,
+  history: false,
+  files: false,
+  edit: false,
+  delete: false,
+  pin: false,
+  star: false,
+}
 
 /** A reply written now and sent later ("Send later"). */
 export interface ScheduledMessage {
@@ -170,6 +222,8 @@ export interface SearchHit {
 export type InboxEvent =
   | { type: 'message.created'; message: Message }
   | { type: 'message.updated'; message: Message }
+  /** Deleted for me (here or on another device): it goes from the chat. */
+  | { type: 'message.deleted'; threadId: string; messageId: string }
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
   /** Someone started or stopped typing. It also stops by itself after a few seconds. */

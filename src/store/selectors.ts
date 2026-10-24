@@ -162,7 +162,12 @@ export function selectViewThreads(
 
 export function countViews(
   views: ThreadView[],
-  { networks, tasks, scheduled }: { networks: NetworkId[]; tasks: Task[]; scheduled: ScheduledMessage[] },
+  {
+    networks,
+    tasks,
+    scheduled,
+    messages = {},
+  }: { networks: NetworkId[]; tasks: Task[]; scheduled: ScheduledMessage[]; messages?: Record<string, Message[]> },
 ): Record<View, number> {
   const visible = filterByNetwork(views, networks)
   const visibleIds = new Set(visible.map((v) => v.id))
@@ -172,7 +177,16 @@ export function countViews(
     waiting: visible.filter((v) => v.waitingOnThem).length,
     scheduled: scheduled.filter((s) => visibleIds.has(s.threadId)).length + visible.filter((v) => v.snoozed).length,
     tasks: tasks.filter((t) => !t.done).length,
+    starred: [...visibleIds].reduce((n, id) => n + (messages[id]?.filter((m) => m.starred).length ?? 0), 0),
   }
+}
+
+/** Starred messages across the chats on show, newest first. */
+export function starredMessages(messages: Record<string, Message[]>, threads: Record<string, Thread>, networks: NetworkId[]): Message[] {
+  return Object.values(messages)
+    .flat()
+    .filter((m) => m.starred && threads[m.threadId] && (!networks.length || networks.includes(threads[m.threadId].network)))
+    .sort((a, b) => toMs(b.sentAt) - toMs(a.sentAt))
 }
 
 /** All threads with derived queue state, recomputed when data, AI results, consent or time change. */

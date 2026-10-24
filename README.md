@@ -13,11 +13,12 @@ Nothing is ever sent automatically.
   device you sign in on, and you reply from Sytext. The links keep running on the server when you
   sign out or close the app.
 - **Chats live on your devices, not in the database.** Each browser keeps its own copy; the
-  server keeps only the links and the latest 40 messages of each chat, so a small free database
-  is enough.
+  server keeps only the links and the latest 40 messages of each chat (plus any pinned or
+  starred), so a small free database is enough.
 - **Conversations as on the networks themselves.** Quoted replies, reactions, "typing…" both
-  ways, profile and group pictures, read ticks, and earlier messages as you scroll back.
-  The demo chats have replies, reactions and typing too.
+  ways, profile and group pictures, read ticks, and earlier messages as you scroll back. Edit
+  your messages, unsend them or delete messages just for you, pin and star messages, and search
+  for a word in a chat. The demo chats have all of it too.
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
 - **Real AI.** Add your **Claude API key** and every AI feature calls Claude. Without one, a
@@ -224,12 +225,38 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
   of them: WhatsApp's phone sends each one again (it must be online), and Telegram is asked by
   message id. They then open like new ones.
 
+### Edit, delete, pin, star and search
+
+Each message's **⋯** menu (hover, or tap the message on a phone) has what its network allows:
+
+- **Edit** one of your messages: it goes back into the message box; `Enter` saves, `Esc` cancels.
+  It changes for everyone and shows *edited*, as edits made on the phone do. WhatsApp allows 15
+  minutes after sending, Telegram 48 hours; past that Sytext says so and keeps your new text.
+- **Delete for everyone** (your own messages) leaves *You deleted this message*, as WhatsApp
+  does; when someone else unsends one, it shows *This message was deleted*. WhatsApp allows about
+  2 days. On Telegram the message just disappears, as it does there.
+- **Delete for me** removes it from Sytext and, on WhatsApp, from your phone too. Telegram's
+  large groups and channels have no "delete for me" (deleting there deletes for everyone), so
+  there it's removed from Sytext only.
+- **Pin** pins it in the chat for everyone (on WhatsApp for 30 days, the longest it offers). The
+  chat's pinned messages show in a bar above it; tapping it jumps to each in turn.
+- **Star** keeps it under **Starred** in the sidebar, from every chat, newest first. On WhatsApp
+  it's starred on your phone too; Telegram has no stars, so they're kept by Sytext.
+- **Copy text.**
+
+Edits, deletions and pins made in WhatsApp or Telegram themselves show in Sytext too, and so do
+stars from your phone's WhatsApp.
+
+**Search in a chat** with the 🔍 in its header: every match is highlighted, and `Enter` /
+`Shift+Enter` (or the arrows) go to the older or newer one. It searches the messages loaded in
+the chat; **Earlier** loads older ones until it finds more. Deleted messages aren't searched.
+
 ### Where your chats are kept
 
 - **On the server:** the linked sessions (they have to run somewhere when no browser is open, and
   WhatsApp can't run inside a web page), your chats and contacts, and only the **latest 40
-  messages of each chat**, to pass on to your devices. Older messages are deleted from the server
-  every minute; data from before this limit is trimmed on start. Profile pictures aren't stored:
+  messages of each chat**, to pass on to your devices, and pinned or starred messages however old.
+  Older messages are deleted from the server every minute; data from before this limit is trimmed on start. Profile pictures aren't stored:
   only that one exists, and the image is kept in memory and fetched again from WhatsApp or
   Telegram when needed. So the database stays small however much you chat: about chats × 40
   messages, plus the session keys.
@@ -244,7 +271,8 @@ Nothing is uploaded anywhere else, and nothing is stored on the server:
 
 On the server, session keys, chat and contact names, message text and attachments are **encrypted
 at rest** (AES-256-GCM, with `DATA_ENCRYPTION_KEY`), so a copy of the database alone reveals no
-chats. Ids, times and counts stay readable so the database can sort them. Done/snoozed state, tasks
+chats. Ids, times, counts and whether a message is pinned or starred stay readable so the
+database can sort and keep them. Done/snoozed state, tasks
 and AI results stay in the browser, as for every other source.
 
 ## More connections, from the browser
@@ -440,11 +468,10 @@ simulated WhatsApp bridge room) and a local Telegram Bot API server.
 
 ## Limits and next steps
 
-- **WhatsApp and Telegram media.** Pictures are shown; other media are labelled, and sending is
-  text only (with replies and reactions).
 - **One server instance**, and linked accounts sync only while it runs (see Deploy).
-- **Edits and reactions to old messages.** One that changes a message the server no longer keeps
-  (older than the latest 40 of its chat) isn't passed on to devices.
+- **Changes to old messages.** An edit, deletion, pin or reaction made on the phone to a message
+  the server no longer keeps (older than the latest 40 of its chat, and not pinned or starred)
+  isn't passed on to devices.
 
 - **Encryption.** Matrix end-to-end encrypted rooms (matrix-js-sdk's Rust crypto plus device
   verification).

@@ -16,7 +16,8 @@ export function toAiThread(thread: Thread, messages: Message[], contacts: Record
       .filter((c): c is Contact => !!c)
       .map((c) => ({ id: c.id, name: c.name, label: c.label, org: c.org })),
     messages: messages
-      .filter((m) => m.status !== 'sending' && m.status !== 'failed')
+      // Deleted for everyone: there's nothing left to read.
+      .filter((m) => m.status !== 'sending' && m.status !== 'failed' && !m.deleted)
       .map((m) => ({
         id: m.id,
         senderId: m.senderId,

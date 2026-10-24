@@ -281,8 +281,13 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       tg.emit({ type: 'message', message: { id: 13, chat: tg.asha, out: false, text: 'Bring the tent?', date: now } })
       await events.next((e) => e.type === 'message.created' && e.message.id === 'tga:5001:13')
       await events.next((e) => e.type === 'thread.updated' && e.thread.id === 'tga:5001' && e.thread.unreadCount === 2)
-      tg.emit({ type: 'edited', message: { id: 13, chat: tg.asha, out: false, text: 'Bring the big tent?', date: now } })
-      await events.next((e) => e.type === 'message.updated' && e.message.body === 'Bring the big tent?')
+      tg.emit({ type: 'edited', message: { id: 13, chat: tg.asha, out: false, text: 'Bring the big tent?', date: now, editDate: now + 5 } })
+      const edited = await events.next((e) => e.type === 'message.updated' && e.message.body === 'Bring the big tent?')
+      expect(edited).toMatchObject({ message: { editedAt: new Date((now + 5) * 1000).toISOString() } })
+      // A change Telegram doesn't call an edit (no edit date) isn't marked as one.
+      tg.emit({ type: 'edited', message: { id: 12, chat: tg.asha, out: false, text: 'Are we still on for Saturday?', date: now - 60, replyToId: 11 } })
+      const unchanged = await events.next((e) => e.type === 'message.updated' && e.message.id === 'tga:5001:12')
+      expect(unchanged.message.editedAt).toBeUndefined()
 
       // Sending, then the other side reading it.
       const sent = await browser.post(`/api/threads/${encodeURIComponent('tga:5001')}/messages`, { body: 'Yes, packing it now' })
@@ -1022,6 +1027,149 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       const again = await browser.raw('GET', sent.json.message.attachments[0].url)
       expect(again.body).toEqual(notes)
       expect(again.headers.get('content-disposition')).toMatch(/^attachment; filename="notes.txt"/)
+    })
+  })
+
+  describe('editing, deleting, pinning and starring', () => {
+    const RAVI = '919812345678@s.whatsapp.net'
+    const thread = `wa:${RAVI}`
+    const act = (browser: Browser, threadId: string, messageId: string, action: Record<string, unknown>) =>
+      browser.post(`/api/threads/${enc(threadId)}/message-actions`, { messageId, action })
+
+    it('WhatsApp: both ways, and kept however old once pinned or starred', async () => {
+      const browser = await newUser('actions-wa@example.com')
+      const socket = await linkWhatsApp(browser)
+      const events = await browser.events()
+      const ts = Math.floor(Date.now() / 1000)
+      socket.emit('messaging-history.set', {
+        chats: [{ id: RAVI }],
+        contacts: [{ id: RAVI, name: 'Ravi Kumar' }],
+        messages: [
+          { key: { remoteJid: RAVI, fromMe: true, id: 'MINE' }, message: { conversation: 'Shipping on Monday' }, messageTimestamp: ts - 300, status: 3 },
+          { key: { remoteJid: RAVI, fromMe: false, id: 'HIS' }, message: { conversation: 'Great, my address is 12 MG Road' }, messageTimestamp: ts - 200 },
+          { key: { remoteJid: RAVI, fromMe: false, id: 'OTHER' }, message: { conversation: 'Thanks!' }, messageTimestamp: ts - 100 },
+          { key: { remoteJid: RAVI, fromMe: true, id: 'LASTWEEK' }, message: { conversation: 'Invoice attached' }, messageTimestamp: ts - 7 * 86400, status: 4 },
+        ],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)[`${thread}:OTHER`]).toBeDefined())
+
+      // Editing: my own messages only.
+      const edited = await act(browser, thread, `${thread}:MINE`, { type: 'edit', body: 'Shipping on Tuesday' })
+      expect(edited.status).toBe(200)
+      expect(edited.json.message).toMatchObject({ body: 'Shipping on Tuesday', editedAt: expect.any(String) })
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'edit', id: 'MINE', text: 'Shipping on Tuesday' })
+      expect((await act(browser, thread, `${thread}:HIS`, { type: 'edit', body: 'Nope' })).status).toBe(403)
+      expect((await act(browser, thread, `${thread}:MINE`, { type: 'edit', body: '   ' })).status).toBe(400)
+      expect((await act(browser, thread, `${thread}:MINE`, { type: 'rename' })).status).toBe(400)
+      // Past WhatsApp's limits, which phones would quietly ignore.
+      const changesBeforeLimits = socket.changes.length
+      const late = await act(browser, thread, `${thread}:LASTWEEK`, { type: 'edit', body: 'Invoice attached (v2)' })
+      expect(late.status).toBe(400)
+      expect(late.json.error).toMatch(/15 minutes/)
+      expect((await act(browser, thread, `${thread}:LASTWEEK`, { type: 'delete', forEveryone: true })).json.error).toMatch(/about 2 days/)
+      expect(socket.changes.length).toBe(changesBeforeLimits)
+
+      // Pinning and starring.
+      expect((await act(browser, thread, `${thread}:HIS`, { type: 'pin', pinned: true })).json.message).toMatchObject({ pinned: true })
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'pin', id: 'HIS', pinned: true })
+      expect((await act(browser, thread, `${thread}:HIS`, { type: 'star', starred: true })).json.message).toMatchObject({ starred: true })
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'star', id: 'HIS', starred: true })
+
+      // Deleting for everyone (mine), and for me.
+      expect((await act(browser, thread, `${thread}:HIS`, { type: 'delete', forEveryone: true })).status).toBe(403)
+      const unsent = await act(browser, thread, `${thread}:MINE`, { type: 'delete', forEveryone: true })
+      expect(unsent.json.message).toMatchObject({ deleted: true, body: '' })
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'delete', id: 'MINE' })
+      expect((await act(browser, thread, `${thread}:MINE`, { type: 'edit', body: 'Back again' })).status).toBe(409)
+      const gone = await act(browser, thread, `${thread}:OTHER`, { type: 'delete', forEveryone: false })
+      expect(gone.json).toEqual({ message: null, removed: true })
+      expect(socket.changes.at(-1)).toEqual({ jid: RAVI, change: 'delete-for-me', id: 'OTHER' })
+      await events.next((e) => e.type === 'message.deleted' && e.messageId === `${thread}:OTHER`)
+      expect(byId((await browser.get('/api/inbox')).json.messages)[`${thread}:OTHER`]).toBeUndefined()
+
+      // The same, done on the phone.
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          { key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, message: { conversation: 'Call me when you leave' }, messageTimestamp: ts },
+          { key: { remoteJid: RAVI, fromMe: true, id: 'UNPIN' }, message: { pinInChatMessage: { key: { remoteJid: RAVI, fromMe: false, id: 'HIS' }, type: 2 } }, messageTimestamp: ts },
+          { key: { remoteJid: RAVI, fromMe: false, id: 'PINP1' }, message: { pinInChatMessage: { key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, type: 1 } }, messageTimestamp: ts },
+        ],
+      } as never)
+      await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:P1` && e.message.pinned === true)
+      await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:HIS` && !e.message.pinned)
+      socket.emit('messages.update', [{ key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, update: { starred: true } }] as never)
+      await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:P1` && e.message.starred === true)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'REV' }, message: { protocolMessage: { key: { remoteJid: RAVI, fromMe: false, id: 'P1' }, type: 0 } }, messageTimestamp: ts }],
+      } as never)
+      await events.next((e) => e.type === 'message.updated' && e.message.id === `${thread}:P1` && e.message.deleted === true)
+      socket.emit('messages.delete', { keys: [{ remoteJid: RAVI, fromMe: false, id: 'HIS' }] } as never)
+      await events.next((e) => e.type === 'message.deleted' && e.messageId === `${thread}:HIS`)
+
+      // Pinned and starred messages stay on the server however many come after them.
+      const userId = new ObjectId((await browser.get('/api/auth/me')).json.user.id)
+      const { store } = server.current()
+      const busy = `wa:120363999999@g.us`
+      await store.upsertThread(userId, { id: busy, network: 'whatsapp', kind: 'group', title: 'Busy group' })
+      for (let i = 0; i < 45; i++) {
+        await store.addMessage(userId, { id: `${busy}:B${i}`, threadId: busy, senderId: 'me', body: `Message ${i}`, sentAt: new Date((ts - 1000 + i) * 1000).toISOString(), ...(i === 0 ? { starred: true } : {}), ...(i === 1 ? { pinned: true } : {}) })
+      }
+      await store.trim()
+      const kept = (await browser.get('/api/inbox')).json.messages.filter((m: { threadId: string }) => m.threadId === busy).map((m: { id: string }) => m.id)
+      expect(kept).toHaveLength(42)
+      expect(kept).toEqual(expect.arrayContaining([`${busy}:B0`, `${busy}:B1`, `${busy}:B44`]))
+      expect(kept).not.toContain(`${busy}:B2`)
+      events.close()
+      await browser.delete('/api/link/whatsapp')
+    })
+
+    it('Telegram: edits, deletes and pins in Telegram; stars are kept in Sytext', async () => {
+      const tg = server.telegram
+      tg.state.needsPassword = false
+      const browser = await newUser('actions-tg@example.com')
+      await browser.post('/api/link/telegram/code', { phone: '+91 90000 00011' })
+      expect((await browser.post('/api/link/telegram/verify', { code: '12345' })).json).toEqual({ status: 'connected' })
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeDefined())
+      const events = await browser.events()
+      const before = tg.state.changes.length
+
+      const edited = await act(browser, 'tga:5001', 'tga:5001:11', { type: 'edit', body: 'Yes! See you at 10' })
+      expect(edited.json.message).toMatchObject({ body: 'Yes! See you at 10', editedAt: expect.any(String) })
+      expect((await act(browser, 'tga:5001', 'tga:5001:12', { type: 'edit', body: 'Not mine' })).status).toBe(403)
+      const late = await act(browser, 'tga:5001', 'tga:5001:11', { type: 'edit', body: 'too late' })
+      expect(late.status).toBe(400)
+      expect(late.json.error).toMatch(/too old to edit/)
+      expect((await act(browser, 'tga:5001', 'tga:5001:12', { type: 'pin', pinned: true })).json.message).toMatchObject({ pinned: true })
+      const changesBeforeStar = tg.state.changes.length
+      expect((await act(browser, 'tga:5001', 'tga:5001:12', { type: 'star', starred: true })).json.message).toMatchObject({ starred: true })
+      expect(tg.state.changes.length).toBe(changesBeforeStar) // Telegram has no stars: kept in Sytext only.
+      expect((await act(browser, 'tga:5001', 'tga:5001:11', { type: 'delete', forEveryone: true })).json).toEqual({ message: null, removed: true })
+      expect(tg.state.changes.slice(before)).toEqual([
+        { chatId: '5001', change: 'edit', id: 11, text: 'Yes! See you at 10' },
+        { chatId: '5001', change: 'pin', id: 12 },
+        { chatId: '5001', change: 'delete', id: 11 },
+      ])
+      expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:11']).toBeUndefined()
+
+      // A supergroup has no "delete for me" (it would delete for everyone): it's only removed from Sytext.
+      await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7']).toBeDefined())
+      const changesBeforeHiding = tg.state.changes.length
+      expect((await act(browser, 'tga:-100777', 'tga:-100777:7', { type: 'delete', forEveryone: false })).json).toEqual({ message: null, removed: true })
+      expect(tg.state.changes.length).toBe(changesBeforeHiding)
+      expect(byId((await browser.get('/api/inbox')).json.messages)['tga:-100777:7']).toBeUndefined()
+
+      // Deleted and unpinned in Telegram's own app: a private chat's deletion names only the message.
+      tg.emit({ type: 'pinned', chatId: '5001', ids: [12], pinned: false })
+      await events.next((e) => e.type === 'message.updated' && e.message.id === 'tga:5001:12' && !e.message.pinned)
+      tg.emit({ type: 'deleted', ids: [12] })
+      await events.next((e) => e.type === 'message.deleted' && e.messageId === 'tga:5001:12')
+      expect(byId((await browser.get('/api/inbox')).json.messages)['tga:5001:12']).toBeUndefined()
+      events.close()
+      await browser.delete('/api/link/telegram')
     })
   })
 

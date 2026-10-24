@@ -1,7 +1,7 @@
 import type { InboxApi } from '../api'
 import { withMyReaction } from '../reactions'
 import type { ChatCapabilities, InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
-import { ME_ID } from '../types'
+import { ME_ID, withAction } from '../types'
 import { toMs } from '@/lib/time'
 import { loadDb, saveDb, seedDb, type MockDb } from './db'
 import { INCOMING_POOL } from './incoming'
@@ -18,7 +18,17 @@ const newId = (prefix: string) =>
 const clone = <T>(value: T): T => structuredClone(value)
 
 /** The demo shows replies, reactions and typing; it has no older history to fetch. */
-const DEMO_CAPABILITIES: ChatCapabilities = { reply: true, react: true, typing: true, history: false, files: false }
+const DEMO_CAPABILITIES: ChatCapabilities = {
+  reply: true,
+  react: true,
+  typing: true,
+  history: false,
+  files: false,
+  edit: true,
+  delete: true,
+  pin: true,
+  star: true,
+}
 
 /** The demo inbox's backend: the inbox API minus account management, with its demo controls. */
 export type DemoApi = Omit<InboxApi, 'connections' | 'demo'> & { demo: NonNullable<InboxApi['demo']> }
@@ -125,6 +135,24 @@ export function createMockApi(): DemoApi {
       else delete message.reactions
       persist()
       return clone(message)
+    },
+
+    async actOnMessage(threadId, messageId, action) {
+      await latency(80)
+      const index = db.messages.findIndex((m) => m.id === messageId && m.threadId === threadId)
+      if (index < 0) throw new Error(`Unknown message ${messageId}`)
+      const message = db.messages[index]
+      const mine = message.senderId === ME_ID
+      if (action.type === 'edit' && !mine) throw new Error('Only your own messages can be edited.')
+      if (action.type === 'delete' && action.forEveryone && !mine) throw new Error('Only your own messages can be deleted for everyone.')
+      if (action.type === 'delete' && !action.forEveryone) {
+        db.messages.splice(index, 1)
+        persist()
+        return null
+      }
+      db.messages[index] = withAction(message, action)
+      persist()
+      return clone(db.messages[index])
     },
 
     async setTyping() {

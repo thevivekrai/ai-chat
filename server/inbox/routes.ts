@@ -1,5 +1,6 @@
 import express, { Router, type Request, type Response } from 'express'
 import type { MessageHint } from '../../src/data/server/types.ts'
+import type { MessageAction } from '../../src/data/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
 import { field, HttpError, requireUser, userIdOf } from '../http.ts'
@@ -39,6 +40,29 @@ export function hintOf(value: unknown, id: string | undefined): MessageHint | un
 }
 
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
+
+/** An edit, deletion, pin or star, as the browser sent it; anything else is refused. */
+export function actionOf(value: unknown): MessageAction {
+  const action = (value ?? {}) as Record<string, unknown>
+  switch (action.type) {
+    case 'edit': {
+      const body = typeof action.body === 'string' ? action.body.trim() : ''
+      if (!body) throw new HttpError(400, 'Write something, or delete the message instead.')
+      if (body.length > 4096) throw new HttpError(400, 'That message is too long.')
+      return { type: 'edit', body }
+    }
+    case 'delete':
+      if (typeof action.forEveryone !== 'boolean') break
+      return { type: 'delete', forEveryone: action.forEveryone }
+    case 'pin':
+      if (typeof action.pinned !== 'boolean') break
+      return { type: 'pin', pinned: action.pinned }
+    case 'star':
+      if (typeof action.starred !== 'boolean') break
+      return { type: 'star', starred: action.starred }
+  }
+  throw new HttpError(400, 'Unknown action.')
+}
 
 /** The linked chats: a snapshot on load, then live changes as server-sent events. */
 export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsapp, telegram, files }: InboxDeps): Router {
@@ -99,6 +123,18 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
       throw new HttpError(400, 'Send one emoji, or null to remove the reaction.')
     }
     res.json({ message: await network.react(userId, threadId, messageId, emoji, hintOf(req.body?.message, messageId)) })
+  })
+
+  /**
+   * Edits, deletes, pins or stars a message. `message` describes it, in case the server no longer
+   * keeps it. Answers with the message as kept now (null if the server doesn't keep it), and
+   * `removed` when it's gone from the chat.
+   */
+  router.post('/threads/:id/message-actions', signedIn, async (req, res) => {
+    const { userId, threadId, network } = await chatOf(req, res)
+    const messageId = field(req.body, 'messageId', { max: 300 })
+    const action = actionOf(req.body?.action)
+    res.json(await network.act(userId, threadId, messageId, action, hintOf(req.body?.message, messageId)))
   })
 
   router.post('/threads/:id/typing', signedIn, async (req, res) => {

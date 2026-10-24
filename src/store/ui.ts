@@ -2,7 +2,15 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { NetworkId } from '@/data/types'
 
-export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks'
+export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks' | 'starred'
+
+/** Searching inside the open chat: what for, and which match is on screen. */
+export interface ChatSearch {
+  threadId: string
+  query: string
+  /** The message of the current match, if any. */
+  current: string | null
+}
 export type Dialog = 'command' | 'settings' | 'shortcuts'
 export type SettingsTab = 'profile' | 'accounts' | 'ai' | 'appearance'
 
@@ -25,6 +33,9 @@ interface UiState {
   composer: Record<string, string>
   /** The message being replied to, per thread. */
   replyingTo: Record<string, string>
+  /** The message of mine being edited, per thread (the composer holds its new text). */
+  editing: Record<string, string>
+  chatSearch: ChatSearch | null
   composerFocusTick: number
   searchFocusTick: number
   flash: { messageId: string; tick: number } | null
@@ -47,6 +58,9 @@ interface UiState {
   setNavThreadIds(ids: string[]): void
   setComposer(threadId: string, text: string): void
   setReplyingTo(threadId: string, messageId: string | null): void
+  setEditing(threadId: string, messageId: string | null): void
+  /** Opens the in-chat search (or changes it); null closes it. */
+  setChatSearch(search: ChatSearch | null): void
   focusComposer(): void
   focusSearch(): void
   setDraftsOpen(open: boolean): void
@@ -79,6 +93,8 @@ export const useUi = create<UiState>()(
       snoozeMenuOpen: false,
       composer: {},
       replyingTo: {},
+      editing: {},
+      chatSearch: null,
       composerFocusTick: 0,
       searchFocusTick: 0,
       flash: null,
@@ -102,6 +118,7 @@ export const useUi = create<UiState>()(
           selectedThreadId: threadId,
           mobileThreadOpen: !!threadId,
           draftsOpen: threadId === s.selectedThreadId ? s.draftsOpen : false,
+          chatSearch: s.chatSearch?.threadId === threadId ? s.chatSearch : null,
           snoozeMenuOpen: false,
           aiSheetOpen: false,
           navIndex: index === -1 ? s.navIndex : index,
@@ -143,6 +160,14 @@ export const useUi = create<UiState>()(
           else delete replyingTo[threadId]
           return { replyingTo }
         }),
+      setEditing: (threadId, messageId) =>
+        set((s) => {
+          const editing = { ...s.editing }
+          if (messageId) editing[threadId] = messageId
+          else delete editing[threadId]
+          return { editing }
+        }),
+      setChatSearch: (chatSearch) => set({ chatSearch }),
       focusComposer: () => set((s) => ({ composerFocusTick: s.composerFocusTick + 1 })),
       focusSearch: () => set((s) => ({ searchFocusTick: s.searchFocusTick + 1 })),
       setDraftsOpen: (draftsOpen) => set({ draftsOpen }),

@@ -4,6 +4,7 @@
  */
 import type { ExtractedTask } from '@/ai'
 import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/data/api'
+import type { MessageAction } from '@/data/types'
 import { myReaction } from '@/data/reactions'
 import { serverApi } from '@/data/server/serverApi'
 import { isAtLeast } from '@/lib/media'
@@ -47,9 +48,67 @@ export async function sendReply(threadId: string, text: string, files: File[] = 
   )
 }
 
+/* ── Editing, deleting, pinning and starring ─────────────────────────────── */
+
+const ACTION_DONE: Record<MessageAction['type'], (action: MessageAction) => string | null> = {
+  edit: () => null,
+  delete: (a) => (a.type === 'delete' && a.forEveryone ? 'Deleted for everyone' : 'Deleted for you'),
+  pin: (a) => (a.type === 'pin' && a.pinned ? 'Pinned' : 'Unpinned'),
+  star: (a) => (a.type === 'star' && a.starred ? 'Starred' : 'Unstarred'),
+}
+
+/** Edits, deletes, pins or stars a message; says so, or why it couldn't. */
+export async function messageAction(threadId: string, messageId: string, action: MessageAction): Promise<boolean> {
+  try {
+    await useInbox.getState().actOnMessage(threadId, messageId, action)
+    const done = ACTION_DONE[action.type](action)
+    if (done) toast({ title: done, group: 'message-action' })
+    return true
+  } catch (error) {
+    toast({ title: "Couldn't do that", description: error instanceof Error ? error.message : undefined, group: 'message-action' })
+    return false
+  }
+}
+
+/** Puts one of my messages in the composer to edit; sending it saves the edit. */
+export function startEdit(threadId: string, messageId: string) {
+  const message = useInbox.getState().messages[threadId]?.find((m) => m.id === messageId)
+  if (!message) return
+  const ui = useUi.getState()
+  ui.setReplyingTo(threadId, null)
+  ui.setEditing(threadId, messageId)
+  ui.setComposer(threadId, message.body)
+  ui.focusComposer()
+}
+
+export function cancelEdit(threadId: string) {
+  const ui = useUi.getState()
+  ui.setEditing(threadId, null)
+  ui.setComposer(threadId, '')
+}
+
+/** Saves the composer's text as the edited message. */
+export async function saveEdit(threadId: string, text: string) {
+  const ui = useUi.getState()
+  const messageId = ui.editing[threadId]
+  const body = text.trim()
+  if (!messageId || !body) return
+  const before = useInbox.getState().messages[threadId]?.find((m) => m.id === messageId)
+  cancelEdit(threadId)
+  if (before?.body === body) return
+  const saved = await messageAction(threadId, messageId, { type: 'edit', body })
+  // Refused (too late to edit, say): the text comes back, unless something else is being written by now.
+  const now = useUi.getState()
+  if (!saved && !now.editing[threadId] && !now.composer[threadId]?.trim()) {
+    now.setEditing(threadId, messageId)
+    now.setComposer(threadId, text)
+  }
+}
+
 /** Quotes a message in the reply being written. */
 export function startReply(threadId: string, messageId: string) {
   const ui = useUi.getState()
+  if (ui.editing[threadId]) cancelEdit(threadId)
   ui.setReplyingTo(threadId, messageId)
   ui.focusComposer()
 }

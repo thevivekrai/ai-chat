@@ -38,6 +38,7 @@ export function hashString(value: string): number {
 /** One-line preview for the thread list. */
 export function messagePreview(message: Message | undefined, contacts: Record<string, Contact>, isGroup: boolean) {
   if (!message) return 'No messages yet'
+  if (message.deleted) return message.senderId === ME_ID ? 'You deleted this message' : 'This message was deleted'
   const text = message.body.replace(/\s+/g, ' ').trim() || attachmentPreview(message.attachments?.[0])
   if (message.senderId === ME_ID) return `You: ${text}`
   if (isGroup) return `${contacts[message.senderId]?.name.split(' ')[0] ?? 'Someone'}: ${text}`

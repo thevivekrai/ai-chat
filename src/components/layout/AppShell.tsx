@@ -1,5 +1,6 @@
 import { ConversationPane } from '@/components/conversation/ConversationPane'
 import { ScheduledView } from '@/components/scheduled/ScheduledView'
+import { StarredView } from '@/components/starred/StarredView'
 import { TasksView } from '@/components/tasks/TasksView'
 import { ThreadListPane } from '@/components/threads/ThreadListPane'
 import { cn } from '@/lib/cn'
@@ -28,7 +29,15 @@ export function AppShell() {
           <Sidebar />
         </aside>
         <main className={cn('flex min-h-0 w-full flex-col md:w-80 md:shrink-0 xl:w-[360px]', threadOpen && 'max-md:hidden')}>
-          {view === 'tasks' ? <TasksView /> : view === 'scheduled' ? <ScheduledView /> : <ThreadListPane view={view} />}
+          {view === 'tasks' ? (
+            <TasksView />
+          ) : view === 'scheduled' ? (
+            <ScheduledView />
+          ) : view === 'starred' ? (
+            <StarredView />
+          ) : (
+            <ThreadListPane view={view} />
+          )}
         </main>
         <div className={cn('min-h-0 min-w-0 flex-1 flex-col', threadOpen ? 'flex' : 'hidden md:flex')}>
           <ConversationPane />

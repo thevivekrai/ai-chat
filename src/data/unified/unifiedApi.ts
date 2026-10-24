@@ -476,6 +476,13 @@ export function createUnifiedApi(): InboxApi {
       return connector?.capabilities?.(threadId) ?? NO_CAPABILITIES
     },
 
+    async actOnMessage(threadId, messageId, action) {
+      if (sourceOf(threadId) === 'demo') return demoApi.actOnMessage(threadId, messageId, action)
+      const connector = connectorFor(threadId)
+      if (!connector.actOnMessage) throw new Error("This chat can't do that.")
+      return connector.actOnMessage(threadId, messageId, action)
+    },
+
     async react(threadId, messageId, emoji) {
       if (sourceOf(threadId) === 'demo') return demoApi.react(threadId, messageId, emoji)
       const connector = connectorFor(threadId)

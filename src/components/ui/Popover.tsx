@@ -59,6 +59,20 @@ function useFloating({ open: controlled, onOpenChange }: Pick<FloatingProps, 'op
   return { open, setOpen, rootRef, triggerRef }
 }
 
+/**
+ * Which side of `trigger` has room for a panel `height` tall, within whatever scrolls around it
+ * (or the window): below if it fits there, otherwise whichever side has more.
+ */
+function sideWithRoom(trigger: HTMLElement, height: number): 'top' | 'bottom' {
+  let area = trigger.parentElement
+  while (area && !/(auto|scroll)/.test(getComputedStyle(area).overflowY)) area = area.parentElement
+  const bounds = area?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight }
+  const at = trigger.getBoundingClientRect()
+  const below = bounds.bottom - at.bottom
+  const above = at.top - bounds.top
+  return below >= height || below >= above ? 'bottom' : 'top'
+}
+
 const panelPosition = (side: 'top' | 'bottom', align: 'start' | 'end') =>
   cn(
     'glass-thick glass-edge absolute z-50 animate-pop-in rounded-2xl shadow-pop',
@@ -71,6 +85,8 @@ export interface MenuItem {
   label: string
   hint?: string
   icon?: LucideIcon
+  /** Something that can't be undone, like deleting: shown in red. */
+  danger?: boolean
   onSelect(): void
 }
 
@@ -83,9 +99,20 @@ export function Menu({
   className,
   panelClassName,
   ...state
-}: FloatingProps & { items: MenuItem[]; title?: string }) {
+}: Omit<FloatingProps, 'side'> & {
+  items: MenuItem[]
+  title?: string
+  /** 'auto' opens it whichever way there's room for it, measured as it opens. */
+  side?: 'top' | 'bottom' | 'auto'
+}) {
   const { open, setOpen, rootRef, triggerRef } = useFloating(state)
   const listRef = useRef<HTMLDivElement>(null)
+  const [roomySide, setRoomySide] = useState<'top' | 'bottom'>('bottom')
+  const toggle = () => {
+    // Its height, from its rows: 36px each, a title's 28px and 8px of padding, plus the gap.
+    if (!open && side === 'auto' && triggerRef.current) setRoomySide(sideWithRoom(triggerRef.current, items.length * 36 + (title ? 28 : 0) + 14))
+    setOpen(!open)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -109,14 +136,14 @@ export function Menu({
 
   return (
     <div ref={rootRef} className={cn('relative inline-flex', className)}>
-      {renderTrigger({ ref: triggerRef, onClick: () => setOpen(!open), 'aria-haspopup': 'menu', 'aria-expanded': open })}
+      {renderTrigger({ ref: triggerRef, onClick: toggle, 'aria-haspopup': 'menu', 'aria-expanded': open })}
       {open && (
         <div
           ref={listRef}
           role="menu"
           aria-label={title}
           onKeyDown={onKeyDown}
-          className={cn(panelPosition(side, align), 'min-w-60 p-1', panelClassName)}
+          className={cn(panelPosition(side === 'auto' ? roomySide : side, align), 'min-w-60 p-1', panelClassName)}
         >
           {title && (
             <div className="px-2.5 pt-1.5 pb-1 text-[11px] font-semibold tracking-wider text-faint uppercase">{title}</div>
@@ -130,9 +157,12 @@ export function Menu({
                 setOpen(false)
                 item.onSelect()
               }}
-              className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm text-fg outline-none hover:bg-surface-2 focus-visible:bg-surface-2"
+              className={cn(
+                'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm outline-none hover:bg-surface-2 focus-visible:bg-surface-2',
+                item.danger ? 'text-rose-600 dark:text-rose-400' : 'text-fg',
+              )}
             >
-              {item.icon && <item.icon className="size-4 text-muted" aria-hidden />}
+              {item.icon && <item.icon className={cn('size-4', item.danger ? 'text-current' : 'text-muted')} aria-hidden />}
               <span className="flex-1">{item.label}</span>
               {item.hint && <span className="text-xs whitespace-nowrap text-faint">{item.hint}</span>}
             </button>

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
-import { AlertTriangle, CalendarClock, CornerUpLeft, FileText, Paperclip, SendHorizontal, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Check, CornerUpLeft, FileText, Paperclip, Pencil, SendHorizontal, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Menu } from '@/components/ui/Popover'
@@ -13,7 +13,7 @@ import { NETWORKS } from '@/lib/networks'
 import { sendLaterOptions } from '@/lib/schedule'
 import { formatShortWhen } from '@/lib/time'
 import { ME_ID } from '@/data/types'
-import { noteTyping, scheduleReply, sendReply, stopTyping, toggleDrafts } from '@/store/actions'
+import { cancelEdit, noteTyping, saveEdit, scheduleReply, sendReply, stopTyping, toggleDrafts } from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { toast } from '@/store/toasts'
@@ -47,6 +47,9 @@ export function Composer({ threadId }: { threadId: string }) {
   const quotedName = useInbox((s) =>
     !replyingTo ? '' : replyingTo.senderId === ME_ID ? 'yourself' : (s.contacts[replyingTo.senderId]?.name ?? 'someone'),
   )
+  // Editing one of my messages: the composer holds its new text, and sending saves it.
+  const editingId = useUi((s) => s.editing[threadId])
+  const editing = useInbox((s) => (editingId ? s.messages[threadId]?.find((m) => m.id === editingId) : undefined))
   const draftsOpen = useUi((s) => s.draftsOpen)
   const focusTick = useUi((s) => s.composerFocusTick)
   const now = useClock((s) => s.now)
@@ -103,6 +106,10 @@ export function Composer({ threadId }: { threadId: string }) {
   const removeFile = (index: number) => setAttached({ threadId, files: files.filter((_, i) => i !== index) })
 
   const send = () => {
+    if (editingId) {
+      void saveEdit(threadId, text)
+      return
+    }
     if (!text.trim() && !files.length) return
     if (blanks.length && !confirmingBlanks) {
       setConfirmingBlanks(true)
@@ -147,6 +154,7 @@ export function Composer({ threadId }: { threadId: string }) {
     } else if (e.key === 'Escape') {
       e.preventDefault()
       if (useUi.getState().draftsOpen) useUi.getState().setDraftsOpen(false)
+      else if (editingId) cancelEdit(threadId)
       else if (replyingToId) cancelReply()
       else e.currentTarget.blur()
     }
@@ -154,11 +162,23 @@ export function Composer({ threadId }: { threadId: string }) {
 
   const options = sendLaterOptions(now)
   const hasText = !!text.trim()
-  const canSend = hasText || files.length > 0
+  const canSend = hasText || (files.length > 0 && !editingId)
 
   return (
     <div className="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4" {...dropHandlers}>
-      {replyingTo && replyingToId && (
+      {editingId && (
+        <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-line bg-surface px-3 py-2 shadow-card animate-pop-in">
+          <Pencil className="size-4 shrink-0 text-accent-ink" aria-hidden />
+          <div className="min-w-0 flex-1 border-l-[3px] border-accent pl-2.5">
+            <p className="text-xs font-semibold text-accent-ink">Editing message</p>
+            <p className="truncate text-xs text-muted">{editing?.body ?? ''}</p>
+          </div>
+          <Button variant="ghost" size="icon-sm" aria-label="Cancel editing" title="Cancel editing (Esc)" onClick={() => cancelEdit(threadId)}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      )}
+      {!editingId && replyingTo && replyingToId && (
         <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-line bg-surface px-3 py-2 shadow-card animate-pop-in">
           <CornerUpLeft className="size-4 shrink-0 text-accent-ink" aria-hidden />
           <div className="min-w-0 flex-1 border-l-[3px] border-accent pl-2.5">
@@ -192,7 +212,7 @@ export function Composer({ threadId }: { threadId: string }) {
             : 'border-line focus-within:border-accent/40 focus-within:ring-4 focus-within:ring-accent/10',
         )}
       >
-        {canAttach && (
+        {canAttach && !editingId && (
           <>
             <input
               ref={fileInput}
@@ -225,7 +245,9 @@ export function Composer({ threadId }: { threadId: string }) {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          placeholder={files.length ? 'Add a caption…' : `Message ${recipient} on ${NETWORKS[thread.network].name}…`}
+          placeholder={
+            editingId ? 'Edit your message…' : files.length ? 'Add a caption…' : `Message ${recipient} on ${NETWORKS[thread.network].name}…`
+          }
           aria-label="Message"
           className="max-h-[200px] min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[14.5px] leading-relaxed outline-none placeholder:text-faint"
         />
@@ -246,15 +268,22 @@ export function Composer({ threadId }: { threadId: string }) {
               variant="ghost"
               size="icon-sm"
               aria-label="Send later"
-              disabled={!hasText || files.length > 0}
+              disabled={!hasText || files.length > 0 || !!editingId}
               title={files.length ? "Photos and files can't be sent later" : 'Send later'}
             >
               <CalendarClock className="size-[18px]" />
             </Button>
           )}
         />
-        <Button variant="primary" size="icon-sm" aria-label="Send" title="Send (Enter)" disabled={!canSend} onClick={send}>
-          <SendHorizontal className="size-4" />
+        <Button
+          variant="primary"
+          size="icon-sm"
+          aria-label={editingId ? 'Save edit' : 'Send'}
+          title={editingId ? 'Save (Enter)' : 'Send (Enter)'}
+          disabled={!canSend}
+          onClick={send}
+        >
+          {editingId ? <Check className="size-4" /> : <SendHorizontal className="size-4" />}
         </Button>
       </div>
       <div className="mt-2 flex items-center gap-2">

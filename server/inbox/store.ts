@@ -80,6 +80,10 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       ...(payload.attachments?.length ? { attachments: payload.attachments } : {}),
       ...(payload.replyTo ? { replyTo: payload.replyTo } : {}),
       ...(reactions.length ? { reactions } : {}),
+      ...(payload.editedAt ? { editedAt: payload.editedAt } : {}),
+      ...(payload.deleted ? { deleted: true } : {}),
+      ...(doc.pinned ? { pinned: true } : {}),
+      ...(doc.starred ? { starred: true } : {}),
     }
   }
 
@@ -96,8 +100,9 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
 
   /** Deletes what's beyond the latest messages of a chat; returns how many went. */
   async function trimThread(userId: ObjectId, threadId: string): Promise<number> {
+    // Pinned and starred messages stay, however old: they're what the user wanted to find again.
     const extra = await col.messages
-      .find({ userId, threadId }, { projection: { _id: 1 } })
+      .find({ userId, threadId, pinned: { $ne: true }, starred: { $ne: true } }, { projection: { _id: 1 } })
       .sort({ sentAt: -1 })
       .skip(MESSAGES_KEPT_PER_CHAT)
       .toArray()
@@ -231,6 +236,8 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         ...(message.attachments ? { attachments: message.attachments } : {}),
         ...(message.replyTo ? { replyTo: message.replyTo } : {}),
         ...(message.reactions?.length ? { reactionTotals: message.reactions } : {}),
+        ...(message.editedAt ? { editedAt: message.editedAt } : {}),
+        ...(message.deleted ? { deleted: true } : {}),
       }
       const result = await col.messages.updateOne(
         { userId, id: message.id },
@@ -242,6 +249,8 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
             payload: sealer.sealJson(payload),
             ...(message.status ? { status: message.status } : {}),
             ...(message.ref ? { ref: message.ref } : {}),
+            ...(message.pinned ? { pinned: true } : {}),
+            ...(message.starred ? { starred: true } : {}),
           },
         },
         { upsert: true },
@@ -253,16 +262,31 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return result.upsertedCount > 0
     },
 
-    /** Edits text or attachments, or updates the delivery status. Returns the stored message. */
+    /**
+     * Edits text or attachments, marks it edited or deleted for everyone, pins or stars it, or
+     * updates the delivery status. Returns the stored message.
+     */
     async updateMessage(
       userId: ObjectId,
       id: string,
-      patch: { body?: string; attachments?: Message['attachments']; status?: Message['status'] },
+      patch: {
+        body?: string
+        attachments?: Message['attachments']
+        status?: Message['status']
+        editedAt?: string
+        deleted?: boolean
+        pinned?: boolean
+        starred?: boolean
+      },
     ): Promise<Message | null> {
       const doc = await col.messages.findOne({ userId, id })
       if (!doc) return null
       const set: Partial<MessageDoc> = {}
-      if (patch.body !== undefined || patch.attachments !== undefined) {
+      const unset: Record<string, ''> = {}
+      if (patch.deleted) {
+        // Deleted for everyone: what it said, showed or quoted goes; reactions go with it.
+        set.payload = sealer.sealJson({ body: '', deleted: true } satisfies MessagePayload)
+      } else if (patch.body !== undefined || patch.attachments !== undefined || patch.editedAt !== undefined) {
         // The quote and reactions stay as they are.
         const { attachments, ...current } = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
         const nextAttachments = patch.attachments ?? attachments
@@ -270,12 +294,33 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
           ...current,
           body: patch.body ?? current.body,
           ...(nextAttachments?.length ? { attachments: nextAttachments } : {}),
+          ...(patch.editedAt ? { editedAt: patch.editedAt } : {}),
         })
       }
       if (patch.status) set.status = patch.status
-      if (Object.keys(set).length === 0) return toMessage(doc)
-      const updated = await col.messages.findOneAndUpdate({ userId, id }, { $set: set }, { returnDocument: 'after' })
+      for (const flag of ['pinned', 'starred'] as const) {
+        if (patch[flag] === true) set[flag] = true
+        else if (patch[flag] === false) unset[flag] = ''
+      }
+      if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) return toMessage(doc)
+      const updated = await col.messages.findOneAndUpdate(
+        { userId, id },
+        { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+        { returnDocument: 'after' },
+      )
       return updated && toMessage(updated)
+    },
+
+    /** Deleted for me: gone from the server. Returns whether it was kept. */
+    async deleteMessage(userId: ObjectId, id: string): Promise<boolean> {
+      return (await col.messages.deleteOne({ userId, id })).deletedCount > 0
+    },
+
+    /** Telegram's private and small-group messages by their own ids (deletions say only those). */
+    async byRefIds(userId: ObjectId, idPrefix: string, refIds: number[]): Promise<{ id: string; threadId: string }[]> {
+      return col.messages
+        .find({ userId, id: { $regex: `^${escapeRegex(idPrefix)}` }, 'ref.id': { $in: refIds } }, { projection: { id: 1, threadId: 1 } })
+        .toArray()
     },
 
     /** One person's reaction (`senderId` "me" for the user) changed; null removes it. */
@@ -382,11 +427,18 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
           { $group: { _id: '$threadId', docs: { $firstN: { input: '$$ROOT', n: MESSAGES_KEPT_PER_CHAT } } } },
         ])
         .toArray()
+      // Pinned and starred ones too, however old: the chat's pinned bar and Starred list need them.
+      const flagged = await col.messages
+        .find({ userId, threadId: { $in: ids }, $or: [{ pinned: true }, { starred: true }] })
+        .limit(2000)
+        .toArray()
+      const latest = grouped.flatMap((g) => g.docs)
+      const seen = new Set(latest.map((d) => d.id))
       const contactDocs = await col.contacts.find({ userId }).limit(5000).toArray()
       return {
         threads: threadDocs.map(toThread),
         contacts: contactDocs.map(toContact),
-        messages: grouped.flatMap((g) => g.docs.map(toMessage)),
+        messages: [...latest, ...flagged.filter((d) => !seen.has(d.id))].map(toMessage),
       }
     },
 

@@ -113,6 +113,8 @@ export interface ServerInbox {
 export type ServerEvent =
   | { type: 'message.created'; message: Message }
   | { type: 'message.updated'; message: Message }
+  /** Deleted for me, here or on the network: it goes from the chat. */
+  | { type: 'message.deleted'; threadId: string; messageId: string }
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
   | { type: 'account.updated'; account: PublicAccount }

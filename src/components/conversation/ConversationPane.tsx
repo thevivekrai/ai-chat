@@ -9,10 +9,12 @@ import { useAi } from '@/store/ai'
 import { settledLastMessageId, useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
+import { ChatSearchBar } from './ChatSearchBar'
 import { Composer } from './Composer'
 import { ConversationHeader } from './ConversationHeader'
 import { DraftTray } from './DraftTray'
 import { MessageList } from './MessageList'
+import { PinnedBar } from './PinnedBar'
 import { SummaryBar } from './SummaryBar'
 
 export function ConversationPane() {
@@ -55,6 +57,8 @@ function Conversation({ threadId }: { threadId: string }) {
       {/* A size container, so parts like the drafts tray adapt to the column, not the window. */}
       <div className="@container flex min-w-0 flex-1 flex-col">
         <ConversationHeader threadId={threadId} />
+        <ChatSearchBar threadId={threadId} />
+        <PinnedBar threadId={threadId} />
         <SummaryBar threadId={threadId} />
         <MessageList threadId={threadId} />
         <AnimatePresence>{draftsOpen && <DraftTray threadId={threadId} />}</AnimatePresence>

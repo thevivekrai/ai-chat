@@ -3,7 +3,7 @@ import type { Message, Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
 import { DAY, HOUR } from '@/lib/time'
 import { NOW, viewInput } from '@/test/fixtures'
-import { buildThreadViews, countViews, selectViewThreads } from './selectors'
+import { buildThreadViews, countViews, selectViewThreads, starredMessages } from './selectors'
 
 const opts = { networks: [], query: '', messages: viewInput().messages }
 const needsReplyIds = (input = viewInput()) =>
@@ -127,5 +127,22 @@ describe('other views', () => {
     const later = NOW + 15 * DAY
     const ids = selectViewThreads(buildThreadViews(viewInput({ now: later })), 'waiting', opts).map((v) => v.id)
     expect(ids).toEqual([])
+  })
+})
+
+describe('starred messages', () => {
+  it('lists starred messages newest first, for the chosen networks, and counts them', () => {
+    const input = viewInput()
+    const star = (threadId: string, index: number) => (input.messages[threadId][index] = { ...input.messages[threadId][index], starred: true })
+    const older = star('rohan', 0)
+    const newer = star('rohan', 1)
+    const elsewhere = star('divya', 0)
+    const starred = starredMessages(input.messages, input.threads, [])
+    expect(starred.map((m) => m.id)).toContain(elsewhere.id)
+    expect(starred.indexOf(newer)).toBeLessThan(starred.indexOf(older))
+    const network = input.threads.rohan.network
+    expect(starredMessages(input.messages, input.threads, [network]).every((m) => input.threads[m.threadId].network === network)).toBe(true)
+    const counts = countViews(buildThreadViews(input), { networks: [], tasks: [], scheduled: input.scheduled, messages: input.messages })
+    expect(counts.starred).toBe(3)
   })
 })

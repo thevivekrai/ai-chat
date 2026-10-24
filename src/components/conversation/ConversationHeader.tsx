@@ -1,4 +1,4 @@
-import { AlarmClock, AlarmClockOff, ArrowLeft, Check, Sparkles, Undo2 } from 'lucide-react'
+import { AlarmClock, AlarmClockOff, ArrowLeft, Check, Search, Sparkles, Undo2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
@@ -85,6 +85,7 @@ export function ConversationHeader({ threadId }: { threadId: string }) {
             <Kbd className="hidden lg:inline-flex">E</Kbd>
           </Button>
         )}
+        <ChatSearchButton threadId={threadId} />
         <SnoozeMenu threadId={threadId} snoozed={snoozed} />
         <Button
           variant={aiOpen ? 'soft' : 'ghost'}
@@ -127,5 +128,22 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
         </Button>
       )}
     />
+  )
+}
+
+/** Opens (or closes) the search inside this chat. */
+function ChatSearchButton({ threadId }: { threadId: string }) {
+  const searching = useUi((s) => s.chatSearch?.threadId === threadId)
+  return (
+    <Button
+      variant={searching ? 'soft' : 'ghost'}
+      size="icon-sm"
+      aria-pressed={searching}
+      aria-label="Search in this chat"
+      title="Search in this chat"
+      onClick={() => useUi.getState().setChatSearch(searching ? null : { threadId, query: '', current: null })}
+    >
+      <Search className="size-4" />
+    </Button>
   )
 }
