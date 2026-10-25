@@ -90,15 +90,16 @@ describe('OpenAI-compatible services with your own key', () => {
     setLlmConfig({ provider: 'custom', apiKey: 'k', model: 'local-model', triageModel: 'local-model', baseUrl: 'https://llm.example.com/v1/' })
     const calls = fakeFetch(
       { status: 400, json: { error: { message: 'response_format json_schema is not supported' } } },
-      chat('Here you go: ' + JSON.stringify(SUMMARY)),
-      chat(JSON.stringify(SUMMARY)),
+      // A sentence around the object is fine: the object is what counts.
+      chat('Here you go: ' + JSON.stringify(SUMMARY) + ' Hope that helps!'),
+      chat('Sorry, I cannot summarise this.'),
     )
-    // An answer that isn't pure JSON is explained, not shown.
-    await expect(summarizeThread(aiThread('priya'))).rejects.toMatchObject({ kind: 'bad_output', message: expect.stringContaining('Your AI service') })
+    expect(await summarizeThread(aiThread('priya'))).toMatchObject(SUMMARY)
     expect(calls.map((c) => c.body.response_format?.type)).toEqual(['json_schema', 'json_object'])
     expect(calls[0]!.url).toBe('https://llm.example.com/v1/chat/completions')
 
-    await summarizeThread(aiThread('priya'))
+    // Remembered; and an answer with no object in it is explained, not shown.
+    await expect(summarizeThread(aiThread('priya'))).rejects.toMatchObject({ kind: 'bad_output', message: expect.stringContaining('Your AI service') })
     expect(calls.at(-1)!.body.response_format.type).toBe('json_object')
   })
 

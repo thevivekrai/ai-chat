@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import express, { Router, type Express } from 'express'
 import type { DatabaseProblem, ServerFeatures } from '../src/data/server/types.ts'
-import { aiRoutes, type SharedAi } from './ai.ts'
+import { aiRoutes, SHARED_AI_BY, type SharedAi } from './ai.ts'
 import { authRoutes } from './auth/routes.ts'
 import type { GoogleVerifier } from './auth/google.ts'
 import type { SessionTokens } from './auth/tokens.ts'
@@ -72,6 +72,7 @@ export function createApp(deps: AppDeps): Express {
       database: true,
       storage: deps.temporaryStorage ? 'temporary' : 'database',
       ai: !!deps.ai,
+      ...(deps.ai ? { aiBy: SHARED_AI_BY[deps.ai.provider] } : {}),
     }
     const problem = deps.temporaryStorage?.problem()
     res.json(problem ? { ...features, databaseProblem: problem } : features)

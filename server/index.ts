@@ -184,7 +184,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     config.telegram && 'Telegram',
     config.cloudinary && 'profile photo uploads',
     config.keepAwakeUrl && 'keep-awake',
-    config.ai && 'shared AI',
+    config.ai && `shared AI (${config.ai.provider})`,
   ]
   console.log(`Switched on: WhatsApp${on.filter(Boolean).map((f) => `, ${f}`).join('')}`)
 

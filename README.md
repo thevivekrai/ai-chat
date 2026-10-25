@@ -24,9 +24,10 @@ Nothing is ever sent automatically.
   without showing "typing…".
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
-- **Real AI.** Signed in, everyone gets the free **shared AI** (Google's Gemini, with the
-  server's key). Or bring your own key: **Claude, Gemini, ChatGPT, OpenRouter, Groq, Mistral,
-  DeepSeek, Grok** or any OpenAI-compatible service. A built-in demo AI runs on the device too.
+- **Real AI.** The built-in demo AI runs by default. Signed in, anyone can switch on the free
+  **shared AI** (free models on OpenRouter, or Google's Gemini, with the server's key). Or bring
+  your own key: **Claude, Gemini, ChatGPT, OpenRouter, Groq, Mistral,
+  DeepSeek, Grok** or any OpenAI-compatible service.
 - **Priority and tags.** Each allowed chat is marked **Urgent**, **Normal** or **Low**, and tagged
   with what it's about: **Question, Follow-up, Deadline, Payment, Order, Meeting, Work, Personal,
   Promo** or **FYI**. Tap a tag above the list to see only those chats.
@@ -82,7 +83,7 @@ variable. The service's log says which file it read and which features are on:
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Your own profile photo. (Photos and files in chats don't need it.) |
-| `AI_API` | A Google Gemini API key: turns on the shared AI for everyone signed in. `AI_MODEL` and `AI_TRIAGE_MODEL` pick its models. |
+| `AI_API` | An OpenRouter key (`sk-or-…`) or a Google Gemini key: turns on the shared AI for everyone signed in. `AI_PROVIDER` (`openrouter` or `gemini`) says which if the key doesn't; `AI_MODEL` and `AI_TRIAGE_MODEL` pick its models. |
 | `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
 | `TEMPORARY_STORAGE` | `off` stops the server keeping accounts in temporary storage while the database can't be reached (see below). |
 
@@ -379,15 +380,17 @@ kept for when you sign out).
 
 Choose the AI in **Settings → AI**:
 
-- **Shared AI · free** (the default when signed in). The server calls Google's Gemini with its own
-  key (`AI_API`), so nobody needs a key. The key never reaches a browser. Each user gets up to 30
-  requests a minute; a few run at once and the rest wait their turn. If a model isn't available
-  to the key, the next one is tried.
+- **Built-in demo AI** (the default): simple rules on the device; no chat leaves it.
+- **Shared AI · free**, for anyone signed in. The server answers with its own key (`AI_API`):
+  with an OpenRouter key, through `openrouter/free`, OpenRouter's router of free models (it picks
+  one that supports structured output for each request); with a Gemini key, through Gemini Flash.
+  Nobody needs a key, and the key never reaches a browser. Each user gets up to 30 requests a
+  minute; a few run at once and the rest wait their turn. If a model isn't available to the key,
+  the next one is tried. Free models' providers may keep what's sent to them.
 - **Your own API key**: Claude, Gemini, ChatGPT (OpenAI), OpenRouter, Groq, Mistral, DeepSeek,
   Grok (xAI), or any OpenAI-compatible service by its address. The key is checked with the
   provider, stored only in this browser, and sent only to that provider. Models can be typed in
   freely; each provider suggests a few.
-- **Built-in demo AI**: simple rules on the device; no chat leaves it.
 
 ### With Claude
 
@@ -431,7 +434,7 @@ results for the demo chats and simple rules elsewhere.
 AI**, or a single chat from its AI panel). New chats stay unselected until you allow them. The gate
 lives inside the AI module (`src/ai/access.ts`), not just the UI, so an unselected chat can't reach
 a model even by accident. The allowed chats are sent to the chosen AI when a feature needs them:
-through this app's server to Google for the shared AI, or straight to the provider for your own key. Turning AI off clears AI results from the device.
+through this app's server to the shared AI's provider, or straight to the provider for your own key. Turning AI off clears AI results from the device.
 
 ![Ask across chats: an AI answer with its source messages](docs/screenshots/ask-dark.jpg)
 
@@ -500,7 +503,7 @@ server/
     accounts.ts       ← linked accounts and their status
     routes.ts         ← /api/link/…
   inbox/              ← per-user chat store (encrypted fields) and /api/inbox, /api/threads/…
-  ai.ts               ← the shared AI: /api/ai/generate, Gemini with the server's key (AI_API), limits
+  ai.ts               ← the shared AI: /api/ai/generate, OpenRouter or Gemini with the server's key (AI_API), limits
   realtime.ts         ← server-sent events (/api/events) to the user's open tabs
   crypto.ts           ← AES-256-GCM for data at rest
 ```
@@ -539,7 +542,8 @@ connected or Claude is chosen.
   port standing in for the phone, for clicking through linking end to end.
 - **AI requests.** A stubbed `fetch` checks each provider's request shape (for Claude: model,
   effort, structured output, fallbacks, no sampling parameters), refusals and error mapping; the
-  shared AI is tested against a stand-in Gemini, including its limits and model fallback.
+  shared AI is tested against stand-ins for OpenRouter and Gemini, including its limits and model
+  fallback.
 - **Telegram connector.** Tested against an in-memory Bot API.
 - **Unified inbox.** Merging, routing, local done/snooze state, scheduled sends, search and
   disconnecting.

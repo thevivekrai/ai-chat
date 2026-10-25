@@ -31,10 +31,11 @@ export interface Config {
    */
   temporaryStorage: boolean
   /**
-   * Turns on the shared AI for everyone signed in: a Google Gemini API key in AI_API (or
-   * GEMINI_API_KEY). AI_MODEL and AI_TRIAGE_MODEL choose the models.
+   * Turns on the shared AI for everyone signed in: an OpenRouter key (sk-or-…) or a Google Gemini
+   * key in AI_API (or GEMINI_API_KEY); AI_PROVIDER=openrouter|gemini says which, if the key's
+   * shape doesn't. AI_MODEL and AI_TRIAGE_MODEL choose the models.
    */
-  ai?: { apiKey: string; model: string; triageModel: string }
+  ai?: { provider: SharedAiProvider; apiKey: string; model: string; triageModel: string }
 }
 
 export class ConfigError extends Error {}
@@ -81,14 +82,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
     keepAwakeUrl: isOff(env.KEEP_AWAKE) ? undefined : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
     temporaryStorage: !isOff(env.TEMPORARY_STORAGE),
-    ai: aiKey
-      ? {
-          apiKey: aiKey,
-          model: env.AI_MODEL?.trim() || 'gemini-flash-latest',
-          triageModel: env.AI_TRIAGE_MODEL?.trim() || 'gemini-flash-lite-latest',
-        }
-      : undefined,
+    ai: aiKey ? sharedAi(aiKey, env) : undefined,
   }
+}
+
+export type SharedAiProvider = 'openrouter' | 'gemini'
+
+/** Free models by default: OpenRouter's router of free models, or Gemini's Flash models. */
+const SHARED_DEFAULTS: Record<SharedAiProvider, { model: string; triageModel: string }> = {
+  openrouter: { model: 'openrouter/free', triageModel: 'openrouter/free' },
+  gemini: { model: 'gemini-flash-latest', triageModel: 'gemini-flash-lite-latest' },
+}
+
+function sharedAi(apiKey: string, env: NodeJS.ProcessEnv): NonNullable<Config['ai']> {
+  const named = env.AI_PROVIDER?.trim().toLowerCase()
+  if (named && named !== 'openrouter' && named !== 'gemini') throw new ConfigError('AI_PROVIDER must be openrouter or gemini.')
+  const provider: SharedAiProvider = (named as SharedAiProvider | undefined) ?? (apiKey.startsWith('sk-or-') ? 'openrouter' : 'gemini')
+  const model = env.AI_MODEL?.trim() || SHARED_DEFAULTS[provider].model
+  return { provider, apiKey, model, triageModel: env.AI_TRIAGE_MODEL?.trim() || (env.AI_MODEL?.trim() ? model : SHARED_DEFAULTS[provider].triageModel) }
 }
 
 const isOff = (value: string | undefined) => /^(off|false|no|0)$/i.test(value?.trim() ?? '')

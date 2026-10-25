@@ -74,7 +74,15 @@ export function parseOutput<K extends LlmTask>(task: K, text: string, provider: 
   try {
     value = JSON.parse(trimmed)
   } catch {
-    throw new LlmError('bad_output', `${provider}'s answer couldn't be read. Try again.`)
+    // Some models put a sentence before or after the object: the object is what counts.
+    const start = trimmed.indexOf('{')
+    const end = trimmed.lastIndexOf('}')
+    try {
+      if (start === -1 || end <= start) throw new Error('No object')
+      value = JSON.parse(trimmed.slice(start, end + 1))
+    } catch {
+      throw new LlmError('bad_output', `${provider}'s answer couldn't be read. Try again.`)
+    }
   }
   const parsed = (SCHEMAS[task] as z.ZodType<LlmOutputs[K]>).safeParse(value)
   if (!parsed.success) throw new LlmError('bad_output', `${provider}'s answer was missing something. Try again.`)

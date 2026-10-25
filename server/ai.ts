@@ -1,36 +1,65 @@
 import { Router } from 'express'
 import { runGemini } from '../src/ai/gemini.ts'
+import { runOpenAi } from '../src/ai/openai.ts'
 import { LlmError, type LlmRequest } from '../src/ai/llm.ts'
 import { LLM_TASKS } from '../src/ai/schemas.ts'
 import type { SessionTokens } from './auth/tokens.ts'
 import type { Collections } from './db.ts'
+import type { SharedAiProvider } from './config.ts'
 import { HttpError, requireUser, userIdOf } from './http.ts'
 
 /**
- * The shared AI: signed-in users' AI requests, answered by Gemini with the server's own key
- * (AI_API), so nobody needs a key of their own. The key never leaves the server, and requests are
- * passed on as they come, not stored or logged.
+ * The shared AI: signed-in users' AI requests, answered with the server's own key (AI_API): by
+ * free models on OpenRouter, or by Google's Gemini. Nobody needs a key of their own. The key never
+ * leaves the server, and requests are passed on as they come, not stored or logged.
  */
 export interface SharedAi {
+  provider: SharedAiProvider
   apiKey: string
   /** Drafts, summaries, tasks and answers. */
   model: string
   /** Sorting the queue, which runs often: a lighter model with higher free limits. */
   triageModel: string
-  /** Tests stand in for Google's API. */
+  /** Tests stand in for the provider's API. */
   fetch?: typeof fetch
+}
+
+/** Who answers, as the app tells its users. */
+export const SHARED_AI_BY: Record<SharedAiProvider, string> = {
+  openrouter: 'free AI models on OpenRouter',
+  gemini: "Google's Gemini",
 }
 
 /** Per user: enough for normal use, while a free key's limits are shared by everyone. */
 const PER_MINUTE = 30
 const PER_DAY = 1500
-/** Requests to Google at once, across all users; the rest wait their turn. */
+/** Requests to the provider at once, across all users; the rest wait their turn. */
 const AT_ONCE = 4
 const MAX_WAITING = 200
 const MAX_PROMPT_CHARS = 400_000
 
-/** If a configured model isn't available to the key, these are tried in turn. */
-const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash']
+/** If a configured model isn't available to the key, these are tried in turn (free ones only). */
+const FALLBACK_MODELS: Record<SharedAiProvider, string[]> = {
+  openrouter: ['openrouter/free'],
+  gemini: ['gemini-flash-latest', 'gemini-2.5-flash'],
+}
+
+function ask(ai: SharedAi, model: string, request: LlmRequest) {
+  const name = 'The shared AI'
+  if (ai.provider === 'gemini') return runGemini({ apiKey: ai.apiKey, model, fetch: ai.fetch, name }, request)
+  return runOpenAi(
+    {
+      apiKey: ai.apiKey,
+      model,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      name,
+      fetch: ai.fetch,
+      // How OpenRouter names the app in its dashboard.
+      headers: { 'X-Title': 'Sytext' },
+    },
+    request,
+  )
+}
 
 export function aiRoutes({ col, tokens, ai }: { col: Collections; tokens: SessionTokens; ai: SharedAi | null }): Router {
   const router = Router()
@@ -55,12 +84,12 @@ export function aiRoutes({ col, tokens, ai }: { col: Collections; tokens: Sessio
     used.set(user, times)
 
     const first = request.task === 'priority' ? ai.triageModel : ai.model
-    const models = [...new Set([working.get(first) ?? first, first, ai.model, ...FALLBACK_MODELS])]
+    const models = [...new Set([working.get(first) ?? first, first, ai.model, ...FALLBACK_MODELS[ai.provider]])]
     try {
       const output = await slots(async () => {
         for (const [i, model] of models.entries()) {
           try {
-            const result = await runGemini({ apiKey: ai.apiKey, model, fetch: ai.fetch, name: 'The shared AI' }, request)
+            const result = await ask(ai, model, request)
             working.set(first, model)
             return result
           } catch (error) {

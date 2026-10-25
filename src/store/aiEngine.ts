@@ -10,7 +10,8 @@ import { useSettings, type AiSettings } from './settings'
 
 export type AiEngine =
   | { kind: 'demo'; name: string }
-  | { kind: 'shared'; name: string }
+  /** `by`: who answers, as the server says ("free AI models on OpenRouter"). */
+  | { kind: 'shared'; name: string; by: string }
   | { kind: 'key'; name: string; provider: KeyProviderId; model: string; triageModel: string }
 
 const DEMO: AiEngine = { kind: 'demo', name: 'Demo AI' }
@@ -20,15 +21,18 @@ export function sharedAiAvailable(session: { status: string; features: { ai?: bo
   return session.status === 'signed-in' && !!session.features?.ai
 }
 
+/** Who answers for the server's shared AI, in words for users. */
+export const sharedAiBy = (session: { features: { aiBy?: string } | null }) => session.features?.aiBy ?? 'an AI service'
+
 export function modelsOf(ai: AiSettings, provider: KeyProviderId) {
   const preset = keyProvider(provider)
   const chosen = ai.models[provider]
   return { model: chosen?.model || preset.model, triageModel: chosen?.triageModel || chosen?.model || preset.triageModel }
 }
 
-export function engineOf(ai: AiSettings, sharedAvailable: boolean): AiEngine {
+export function engineOf(ai: AiSettings, sharedAvailable: boolean, sharedBy = 'an AI service'): AiEngine {
   if (ai.choice === 'demo') return DEMO
-  if (ai.choice === 'shared') return sharedAvailable ? { kind: 'shared', name: SHARED_AI_NAME } : DEMO
+  if (ai.choice === 'shared') return sharedAvailable ? { kind: 'shared', name: SHARED_AI_NAME, by: sharedBy } : DEMO
   const provider = ai.choice
   if (!ai.keys[provider]?.trim() || (provider === 'custom' && !ai.baseUrl.trim())) return DEMO
   const { model, triageModel } = modelsOf(ai, provider)
@@ -37,13 +41,15 @@ export function engineOf(ai: AiSettings, sharedAvailable: boolean): AiEngine {
 }
 
 export function currentAiEngine(): AiEngine {
-  return engineOf(useSettings.getState().ai, sharedAiAvailable(useSession.getState()))
+  const session = useSession.getState()
+  return engineOf(useSettings.getState().ai, sharedAiAvailable(session), sharedAiBy(session))
 }
 
 export function useAiEngine(): AiEngine {
   const ai = useSettings((s) => s.ai)
   const shared = useSession(sharedAiAvailable)
-  return engineOf(ai, shared)
+  const by = useSession(sharedAiBy)
+  return engineOf(ai, shared, by)
 }
 
 /** A string that changes whenever results from the engine would differ. */
@@ -79,6 +85,6 @@ useSession.subscribe(sync)
 /** Where allowed chats go, in one sentence for privacy notes. */
 export function engineWhere(engine: AiEngine): string {
   if (engine.kind === 'demo') return 'The built-in demo AI runs on this device.'
-  if (engine.kind === 'shared') return "They are sent to Google's Gemini through this app's server."
+  if (engine.kind === 'shared') return `They are sent to ${engine.by} through this app's server.`
   return `They are sent to ${engine.name} with your API key.`
 }
