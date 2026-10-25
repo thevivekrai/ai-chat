@@ -179,6 +179,10 @@ export function fakeGuffshuff() {
     messages: () => messages,
     /** Whether the bridge is listening. */
     listening: () => streams.size > 0,
+    /** The stream dropping and coming straight back, as a flaky connection does. */
+    reconnect() {
+      for (const stream of streams) for (const listener of stream.listeners.get('connect') ?? []) (listener as () => void)()
+    },
     /** A message the site has but never pushed (the stream was down). */
     writeQuietly: (from: string, text: string) => write(from, text, { toStream: false }),
     photoUrl: PHOTO,

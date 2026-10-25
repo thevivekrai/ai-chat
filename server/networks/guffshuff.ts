@@ -28,6 +28,8 @@ const PREFIX = 'gs:'
 
 /** The site re-checked for chats this often, in case its live stream missed something. */
 const CATCH_UP_MS = 2 * 60_000
+/** A stream that keeps reconnecting shouldn't re-read the chats each time: syncs stay this far apart. */
+const MIN_SYNC_GAP_MS = 10_000
 /** A photo, as base64 inside a JSON body: Guffshuff's own limit is 50 MB, so this is well inside it. */
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 /** Guffshuff hands over a whole conversation at once, so only this much of it is worth keeping. */
@@ -86,6 +88,12 @@ interface Session {
   stopped: boolean
   /** What's going wrong with syncing, as last told to the user. */
   problem?: string
+  /** This Guffshuff has no unread counts to give, so they're not asked for again. */
+  noUnread?: boolean
+  /** The sync running now, so two of them never overlap. */
+  syncing?: Promise<void>
+  /** When the last sync finished, to keep a reconnecting stream from syncing over and over. */
+  syncedAt?: number
   /** Chats already imported, so a catch-up never re-reads (and so re-reads) a whole conversation. */
   imported: Set<string>
   /** The newest message of each chat, as the site last reported it. */
@@ -254,12 +262,17 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
     const people = ((await request(s, '/api/messages/users')) ?? []) as GsUser[]
     if (!Array.isArray(people) || !live(s)) return
     // Unread counts first: importing a chat clears them on Guffshuff, and they're what the queue
-    // shows. A Guffshuff without that route (an older one) still syncs, just without counts.
-    const counts = await request(s, '/api/messages/unread').catch((error: unknown) => {
-      console.warn('[guffshuff] no unread counts:', error instanceof Error ? error.message : error)
-      return null
-    })
-    const unread = (counts ?? {}) as Record<string, number>
+    // shows. A Guffshuff without that route (an older one) still syncs, just without counts — and
+    // once it has refused, it isn't asked (or complained about) on every look. A re-link asks again.
+    let unread: Record<string, number> = {}
+    if (!s.noUnread) {
+      const counts = await request(s, '/api/messages/unread').catch((error: unknown) => {
+        s.noUnread = true
+        console.warn('[guffshuff] no unread counts, carrying on without them:', error instanceof Error ? error.message : error)
+        return null
+      })
+      unread = (counts ?? {}) as Record<string, number>
+    }
 
     let changed = false
     for (const person of people) {
@@ -315,8 +328,9 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
         .then(() => (s.problem ? syncAndNote(s) : undefined))
         .catch((error: unknown) => console.error('[guffshuff] message failed', error))
     })
-    // Messages that arrived while the stream was down are picked up on the next look.
-    stream.on('connect', () => void syncAndNote(s))
+    // Messages that arrived while the stream was down are picked up on the next look — but a
+    // stream that reconnects in a loop shouldn't re-read every chat each time it comes back.
+    stream.on('connect', () => void syncAndNote(s, { afterReconnect: true }))
   }
 
   /** The real stream: socket.io, carrying the same session cookie the REST API uses. */
@@ -381,7 +395,21 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
    * Syncs, and says in Settings how it went. Without this a site that signs in but then refuses to
    * hand over its chats would sit there saying "connected" with an empty inbox.
    */
-  async function syncAndNote(s: Session, options?: { announce?: boolean }) {
+  async function syncAndNote(s: Session, options?: { announce?: boolean; afterReconnect?: boolean }) {
+    // One sync at a time, and a reconnect right after one has just run is nothing new to read.
+    if (s.syncing) return s.syncing
+    if (options?.afterReconnect && s.syncedAt !== undefined && Date.now() - s.syncedAt < MIN_SYNC_GAP_MS) return
+    const run = syncAndNoteNow(s, options)
+    s.syncing = run
+    try {
+      await run
+    } finally {
+      s.syncing = undefined
+      s.syncedAt = Date.now()
+    }
+  }
+
+  async function syncAndNoteNow(s: Session, options?: { announce?: boolean }) {
     let problem: string | undefined
     try {
       await sync(s, options)
