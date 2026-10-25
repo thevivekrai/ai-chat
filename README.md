@@ -356,6 +356,11 @@ with its chats.
 | Read receipts | Opening a chat tells the site, as its own pages do — unless Incognito mode is on. |
 | Not there | Replies, reactions, edits, unsending and "typing…": Guffshuff has none, so Sytext hides them rather than failing. Starring, pinning, deleting for me and archiving are kept by Sytext itself. |
 
+If the site signs in but won't hand over its chats, **Settings says which call it refused** (rather
+than sitting there "connected" with an empty inbox), and it tries again every couple of minutes.
+A half-broken site still works as far as it can: missing unread counts, or one unreadable
+conversation, don't stop the rest syncing.
+
 **Linking reads your conversations in, which marks them read on Guffshuff** — the same as opening
 them there. It's the only way its API hands over a conversation. Unread counts are read first, so
 the queue still shows what was waiting. After that, new messages come from the live stream, which

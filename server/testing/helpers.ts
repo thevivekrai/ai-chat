@@ -450,7 +450,8 @@ export async function startTestServer({
   staticDir,
   sharedPhone = false,
   ai,
-}: { port?: number; staticDir?: string; sharedPhone?: boolean; ai?: SharedAi } = {}): Promise<TestServer> {
+  guffshuffCatchUpMs,
+}: { port?: number; staticDir?: string; sharedPhone?: boolean; ai?: SharedAi; guffshuffCatchUpMs?: number } = {}): Promise<TestServer> {
   const dbName = `tidings_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const database = await connectDatabase(TEST_MONGODB_URI!, dbName)
   const sealer = createSealer(Buffer.alloc(32, 7))
@@ -500,7 +501,15 @@ export async function startTestServer({
       api: { apiId: 1, apiHash: 'hash' },
       createClient: telegram.create,
     })
-    const gs = createGuffshuff({ sealer, store, accounts, hub, avatars, files, api: guffshuff.api })
+    const gs = createGuffshuff({
+      sealer,
+      store,
+      accounts,
+      hub,
+      avatars,
+      files,
+      api: { ...guffshuff.api, ...(guffshuffCatchUpMs ? { catchUpMs: guffshuffCatchUpMs } : {}) },
+    })
     managers = { store, whatsapp, telegram: tg, guffshuff: gs }
     const app = createApp({
       col: database.col,
