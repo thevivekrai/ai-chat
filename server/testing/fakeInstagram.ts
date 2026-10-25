@@ -9,6 +9,8 @@ export const DEV = '17841400000000003'
 export const PRIYA_THREAD = '340282366841710301244276050000000001'
 export const GROUP_THREAD = '340282366841710301244276050000000002'
 const PHOTO = 'https://scontent.cdninstagram.com/v/parcel.jpg'
+/** As long as Instagram's own, which the client checks for before trusting one. */
+const CSRF = 'QkPzL7mD4xTn2bVhR8sWc1Ye6Ja0Ugfi'
 /** A real (if tiny) PNG, so a browser showing one of these chats has something to draw. */
 const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 
@@ -49,6 +51,10 @@ export function fakeInstagram() {
     signedOut: false,
     /** Instagram can't be reached at all. */
     down: false,
+    /** Where the csrf token comes from: a cookie on the login page, or a page's bootstrap data. */
+    csrfVia: 'page' as 'page' | 'shared_data',
+    /** Instagram refuses this address outright, as it does with hosting providers'. */
+    blocked: false,
     /** Every request made, as "METHOD /path". */
     calls: [] as string[],
     /** What the bridge sent, in order. */
@@ -120,10 +126,20 @@ export function fakeInstagram() {
       return new Response(PIXEL, { headers: { 'content-type': 'image/png' } })
     }
 
-    if (path === '/accounts/login/') {
+    if (state.blocked) return new Response('<html>blocked</html>', { status: 403, headers: { 'content-type': 'text/html' } })
+
+    if (path === '/accounts/login/' || path === '/') {
       return new Response('<html>login</html>', {
-        headers: { 'content-type': 'text/html', 'set-cookie': 'csrftoken=csrf-1; Path=/; Secure' },
+        headers: {
+          'content-type': 'text/html',
+          ...(state.csrfVia === 'page' && path === '/accounts/login/' ? { 'set-cookie': `csrftoken=${CSRF}; Path=/; Secure` } : {}),
+        },
       })
+    }
+
+    // Instagram's own pages read their token from here when no cookie came with the page.
+    if (path === '/data/shared_data/') {
+      return state.csrfVia === 'shared_data' ? json({ config: { csrf_token: CSRF } }) : json({ config: {} })
     }
 
     const cookies = cookiesOf(init)
