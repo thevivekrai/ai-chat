@@ -14,6 +14,7 @@ import { useAi } from './ai'
 import { isUnsentHere, useInbox } from './inbox'
 import { incognitoOn } from './privacy'
 import { useSession } from './session'
+import { keepAiConsent } from './aiConsent'
 import { currentAiEngine } from './aiEngine'
 import { useSettings, type AiSettings } from './settings'
 import { toast, useToasts } from './toasts'
@@ -413,6 +414,12 @@ export async function unlinkNetwork(network: LinkedNetwork) {
   })
 }
 
+/** Which linked chats AI may read, kept for this account's next sign-in on this device. */
+function keepConsentOfSignedInUser() {
+  const user = useSession.getState().user
+  if (user) keepAiConsent(user.id, useSettings.getState().aiThreadIds.filter(isServerThread))
+}
+
 /** Removes what this device kept about some chats: AI results and consent, unsent text, the selection. */
 function forgetThreadsHere(matches: (threadId: string) => boolean) {
   const ai = useAi.getState()
@@ -469,6 +476,7 @@ export async function signInWithGoogle(credential: string) {
 
 export async function signOut() {
   await serverApi.logout().catch(() => undefined)
+  keepConsentOfSignedInUser()
   forgetThreadsHere(isServerThread)
   await useSession.getState().signedOut()
 }
@@ -477,6 +485,7 @@ export async function signOut() {
 export function watchSession() {
   const offSignedOut = api.connections.onSignedOut(() => {
     if (useSession.getState().status !== 'signed-in') return
+    keepConsentOfSignedInUser()
     forgetThreadsHere(isServerThread)
     void useSession.getState().signedOut('You were signed out. Sign in again to see your chats.')
   })

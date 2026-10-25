@@ -97,6 +97,25 @@ describe('Needs reply (without AI)', () => {
     expect(needsReplyIds({ ...input, threads: doneThreads, messages, now: NOW + 2000 })).toContain('rohan')
   })
 
+  it('drops the tags that ask something of a done chat (and leaves it out of their filters) until they write again', () => {
+    const input = viewInput({
+      canRead: () => true,
+      priority: {
+        rohan: { key: 'rohan-2', status: 'ready', result: { priority: 'urgent', expectsReply: true, reason: '', labels: ['deadline', 'payment', 'work'] } },
+      },
+    })
+    const rohan = (i: typeof input) => buildThreadViews(i).find((v) => v.id === 'rohan')!
+    expect(rohan(input)).toMatchObject({ done: false, labels: ['deadline', 'payment', 'work'] })
+
+    const done = { ...input, threads: { ...input.threads, rohan: { ...input.threads.rohan, doneAt: new Date(NOW).toISOString() } } }
+    // Work only describes the chat: it stays.
+    expect(rohan(done)).toMatchObject({ done: true, labels: ['work'], priorityLoading: false })
+    expect(selectViewThreads(buildThreadViews(done), 'all', { ...opts, tag: 'payment' }).map((v) => v.id)).not.toContain('rohan')
+
+    const later: Message = { id: 'z', threadId: 'rohan', senderId: 'c-rohan', body: 'Paid?', sentAt: new Date(NOW + 1000).toISOString() }
+    expect(rohan({ ...done, messages: { ...done.messages, rohan: [...done.messages.rohan, later] }, now: NOW + 2000 }).done).toBe(false)
+  })
+
   it('hides snoozed threads until the snooze ends', () => {
     const input = viewInput()
     const until = new Date(NOW + 2 * HOUR).toISOString()

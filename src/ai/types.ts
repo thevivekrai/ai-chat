@@ -41,6 +41,9 @@ export interface AiMessage {
 export const CHAT_LABELS = ['question', 'follow-up', 'deadline', 'payment', 'order', 'meeting', 'work', 'personal', 'promo', 'fyi'] as const
 export type ChatLabel = (typeof CHAT_LABELS)[number]
 
+/** Tags that only describe a chat, and still apply once it's done (the rest ask something of the user). */
+export const CALM_LABELS: readonly ChatLabel[] = ['work', 'personal', 'promo', 'fyi']
+
 /** At most this many tags per chat. */
 export const MAX_LABELS = 3
 
