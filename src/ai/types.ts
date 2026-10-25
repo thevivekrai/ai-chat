@@ -1,4 +1,4 @@
-import type { NetworkId } from '@/data/types'
+import type { ChatLabel, NetworkId } from '../data/types'
 
 export type Priority = 'urgent' | 'normal' | 'low'
 export type Tone = 'short' | 'friendly' | 'professional'
@@ -37,15 +37,8 @@ export interface AiMessage {
   attachments?: string[]
 }
 
-/** What a chat is about, or what it asks of the user: shown as tags next to its priority. */
-export const CHAT_LABELS = ['question', 'follow-up', 'deadline', 'payment', 'order', 'meeting', 'work', 'personal', 'promo', 'fyi'] as const
-export type ChatLabel = (typeof CHAT_LABELS)[number]
-
-/** Tags that only describe a chat, and still apply once it's done (the rest ask something of the user). */
-export const CALM_LABELS: readonly ChatLabel[] = ['work', 'personal', 'promo', 'fyi']
-
-/** At most this many tags per chat. */
-export const MAX_LABELS = 3
+// Relative, not '@/': the server loads this file directly, where that alias isn't resolved.
+export { CALM_LABELS, CHAT_LABELS, MAX_LABELS, type ChatLabel } from '../data/types'
 
 export interface PriorityResult {
   priority: Priority

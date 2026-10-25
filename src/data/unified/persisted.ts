@@ -22,7 +22,7 @@ export interface ConnectionsConfig {
 
 /** Inbox features networks don't have, for chats from real accounts. */
 export interface LocalState {
-  /** Done and snoozed state, per thread. */
+  /** Done and snoozed state, and tags chosen by hand, per thread. */
   threadState: Record<string, Required<ThreadStatePatch>>
   /** Chats archived on this device, for networks that can't archive them (a Telegram bot, Matrix). */
   archived: string[]

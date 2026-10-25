@@ -111,7 +111,7 @@ export function createUnifiedApi(): InboxApi {
   /** Chats whose done/snoozed state and tasks the server keeps with the account. */
   const keptWithAccount = (threadId: string) => sourceOf(threadId) === 'server' && !!server
 
-  /** Adds this device's done/snoozed state to a connector's thread (the account's, for linked chats). */
+  /** Adds this device's done/snoozed state and tags to a connector's thread (the account's, for linked chats). */
   function withLocalState(thread: Thread): Thread {
     threadCache.set(thread.id, thread)
     if (keptWithAccount(thread.id)) return local.archived.includes(thread.id) ? { ...thread, archived: true } : thread
@@ -120,6 +120,7 @@ export function createUnifiedApi(): InboxApi {
       ...thread,
       doneAt: state?.doneAt ?? null,
       snoozedUntil: state?.snoozedUntil ?? null,
+      ...(state?.labels?.length ? { labels: state.labels } : {}),
       ...(local.archived.includes(thread.id) ? { archived: true } : {}),
     }
   }
@@ -593,7 +594,7 @@ export function createUnifiedApi(): InboxApi {
     async updateThreadState(threadId, patch) {
       if (sourceOf(threadId) === 'demo') return demoApi.updateThreadState(threadId, patch)
       if (keptWithAccount(threadId)) return withLocalState(await requireServer().setThreadState(threadId, patch))
-      const current = local.threadState[threadId] ?? { doneAt: null, snoozedUntil: null }
+      const current = local.threadState[threadId] ?? { doneAt: null, snoozedUntil: null, labels: [] }
       local = { ...local, threadState: { ...local.threadState, [threadId]: { ...current, ...patch } } }
       persistLocal()
       const thread = threadCache.get(threadId)

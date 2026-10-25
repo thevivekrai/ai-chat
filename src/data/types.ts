@@ -56,6 +56,11 @@ export interface Thread {
    * archived on the network itself (and follow the phone); other chats, on this device.
    */
   archived?: boolean
+  /**
+   * Tags put on the chat by hand, kept with the account for linked chats (like done and snoozed).
+   * The AI's own tags come from its classification instead, and both are shown together.
+   */
+  labels?: ChatLabel[]
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
@@ -241,7 +246,29 @@ export interface ReadOptions {
 export interface ThreadStatePatch {
   doneAt?: string | null
   snoozedUntil?: string | null
+  /** The tags chosen by hand for this chat (see Thread.labels). */
+  labels?: ChatLabel[]
 }
+
+/**
+ * What a chat is about, or what it asks of the user: the AI gives these, and people can tag a chat
+ * themselves. Shown next to its priority.
+ */
+export const CHAT_LABELS = ['question', 'follow-up', 'deadline', 'payment', 'order', 'meeting', 'work', 'personal', 'promo', 'fyi'] as const
+export type ChatLabel = (typeof CHAT_LABELS)[number]
+
+/**
+ * The tags a done chat keeps. Everything else — a question, a deadline, a payment — asked something
+ * of the user, and once the chat is done it no longer does. Priority goes the same way: Normal and
+ * Low stay, Urgent doesn't.
+ */
+export const CALM_LABELS: readonly ChatLabel[] = ['personal']
+
+/** At most this many tags the AI may give a chat. */
+export const MAX_LABELS = 3
+
+/** At most this many tags someone may put on a chat themselves. */
+export const MAX_OWN_LABELS = 5
 
 export interface SearchHit {
   messageId: string

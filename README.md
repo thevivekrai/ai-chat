@@ -32,7 +32,10 @@ Nothing is ever sent automatically.
   DeepSeek, Grok** or any OpenAI-compatible service.
 - **Priority and tags.** Each allowed chat is marked **Urgent**, **Normal** or **Low**, and tagged
   with what it's about: **Question, Follow-up, Deadline, Payment, Order, Meeting, Work, Personal,
-  Promo** or **FYI**. Tap a tag above the list to see only those chats.
+  Promo** or **FYI**. Tag a chat yourself from the same set with the tag button in its header, and
+  tap a tag above the list to see only those chats. Marking a chat **done** clears the tags that
+  asked something of you — only **Normal**, **Low** and **Personal** stay — and they come back if
+  someone writes again.
 - **Demo inbox.** 15 sample conversations across five networks, generated relative to now, in
   English and Hinglish. Try it without an account, too.
 
@@ -453,6 +456,8 @@ Gemini (`src/ai/gemini.ts`) is asked for JSON held to the same schemas (`respons
 OpenAI-compatible services (`src/ai/openai.ts`) get structured output where they support it, plain
 JSON mode or instructions where they don't; the first mode a service accepts is remembered. Every
 answer is checked against the schema (`src/ai/schemas.ts`) before it is used.
+
+Tags you add by hand sit alongside the AI's and are kept with your account, like done and snoozed.
 
 Results are cached per chat, keyed on its latest message, so the AI only runs again when a chat
 (or the chosen AI) changes. Without a real AI, the same functions use the built-in demo AI (`src/ai/mock/`): canned

@@ -1742,6 +1742,15 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       } as never)
       await waitFor(async () => expect((await threads(browser))[thread].snoozedUntil).toBeNull())
 
+      // Tags put on by hand are kept with the account too, and checked.
+      const tagged = await browser.post(`/api/threads/${enc(thread)}/state`, { labels: ['work', 'payment', 'work'] })
+      expect(tagged.json.thread.labels).toEqual(['work', 'payment'])
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { labels: ['nonsense'] })).status).toBe(400)
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { labels: 'work' })).status).toBe(400)
+      expect(byId((await browser.get('/api/inbox')).json.threads)[thread].labels).toEqual(['work', 'payment'])
+      // Cleared by sending none.
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { labels: [] })).json.thread.labels).toBeUndefined()
+
       // Undone.
       expect((await browser.post(`/api/threads/${enc(thread)}/state`, { doneAt: null })).json.thread.doneAt).toBeNull()
     })

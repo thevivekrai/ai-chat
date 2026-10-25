@@ -46,7 +46,7 @@ if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
 const aiCalls: { model: string; task: string }[] = []
 let aiDown = false
 const CANNED: Record<string, unknown> = {
-  priority: { priority: 'urgent', expectsReply: true, reason: 'Ravi is waiting on the planter order.', labels: ['follow-up', 'order', 'work'] },
+  priority: { priority: 'urgent', expectsReply: true, reason: 'Ravi is waiting on the planter order.', labels: ['follow-up', 'order', 'personal'] },
   summary: { oneLine: 'Ravi wants two more planters shipped next week.', bullets: ['Two more planters', 'Ship next week', 'Courier being booked'] },
   tasks: { tasks: [] },
   drafts: { short: 'Shipping Monday.', friendly: 'Hi Ravi! Both planters ship Monday 🙂', professional: 'Hello Ravi, both planters will ship on Monday.' },

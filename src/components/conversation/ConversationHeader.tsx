@@ -1,16 +1,18 @@
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowLeft, Check, CheckCheck, MoreVertical, Search, Sparkles, Undo2 } from 'lucide-react'
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowLeft, Check, CheckCheck, MoreVertical, Search, Sparkles, Tag as TagIcon, Undo2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Menu, type MenuItem } from '@/components/ui/Popover'
+import { CHAT_LABELS, type ChatLabel } from '@/data/types'
+import { LABELS } from '@/lib/chatLabels'
 import { typingLabel } from '@/lib/format'
 import { useBreakpoint } from '@/lib/media'
 import { NETWORKS } from '@/lib/networks'
 import { snoozeOptions } from '@/lib/schedule'
 import { formatShortWhen, toMs } from '@/lib/time'
-import { archiveThread, markDone, reopenThread, sendReadReceipt, snoozeThread, toggleAiPanel, unsnoozeThread } from '@/store/actions'
+import { archiveThread, markDone, reopenThread, sendReadReceipt, snoozeThread, toggleAiPanel, toggleThreadLabel, unsnoozeThread } from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { useIncognito } from '@/store/privacy'
@@ -98,6 +100,7 @@ export function ConversationHeader({ threadId }: { threadId: string }) {
         >
           <Sparkles className="size-4" />
         </Button>
+        <TagMenu threadId={threadId} labels={thread.labels ?? []} />
         <ChatMenu threadId={threadId} archived={!!thread.archived} />
       </div>
     </header>
@@ -127,6 +130,37 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
       renderTrigger={(props) => (
         <Button {...props} variant={snoozed ? 'soft' : 'ghost'} size="icon-sm" aria-label="Snooze (S)" title="Snooze (S)">
           <AlarmClock className="size-4" />
+        </Button>
+      )}
+    />
+  )
+}
+
+/** Tags put on the chat by hand, from the same set the AI uses. */
+function TagMenu({ threadId, labels }: { threadId: string; labels: ChatLabel[] }) {
+  const items: MenuItem[] = CHAT_LABELS.map((label) => ({
+    id: label,
+    label: LABELS[label].label,
+    icon: LABELS[label].icon,
+    checked: labels.includes(label),
+    onSelect: () => void toggleThreadLabel(threadId, label),
+  }))
+  return (
+    <Menu
+      title="Tags"
+      items={items}
+      side="auto"
+      panelClassName="min-w-52"
+      renderTrigger={(props) => (
+        <Button
+          {...props}
+          variant={labels.length ? 'soft' : 'ghost'}
+          size="icon-sm"
+          className="max-sm:hidden"
+          aria-label={labels.length ? `Tags: ${labels.map((l) => LABELS[l].label).join(', ')}` : 'Tag this chat'}
+          title="Tag this chat"
+        >
+          <TagIcon className="size-4" />
         </Button>
       )}
     />

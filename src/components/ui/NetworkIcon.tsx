@@ -7,7 +7,7 @@ import { NETWORKS } from '@/lib/networks'
  * chat comes from. Size it with `className` (default 16px).
  */
 export function NetworkIcon({ network, className }: { network: NetworkId; className?: string }) {
-  const { name, icon, background } = NETWORKS[network]
+  const { name, icon, image, background } = NETWORKS[network]
   return (
     <span
       role="img"
@@ -21,9 +21,13 @@ export function NetworkIcon({ network, className }: { network: NetworkId; classN
         className,
       )}
     >
-      <svg viewBox="0 0 24 24" aria-hidden className="size-[62%] fill-current">
-        <path d={icon} />
-      </svg>
+      {image ? (
+        <img src={image} alt="" aria-hidden className="size-[76%] object-contain" />
+      ) : (
+        <svg viewBox="0 0 24 24" aria-hidden className="size-[62%] fill-current">
+          <path d={icon} />
+        </svg>
+      )}
     </span>
   )
 }
