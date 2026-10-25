@@ -1,4 +1,4 @@
-import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Thread } from '../types'
+import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Task, Thread, ThreadStatePatch } from '../types'
 
 /**
  * A connector brings one real account into the inbox: a Telegram bot, a Matrix account (and,
@@ -14,8 +14,13 @@ export type ConnectorId = 'telegram' | 'matrix'
 
 export interface ConnectorSnapshot {
   contacts: Contact[]
-  /** doneAt and snoozedUntil are ignored: the unified API keeps those on this device. */
+  /**
+   * doneAt and snoozedUntil are ignored, and kept on this device by the unified API, unless the
+   * connector keeps them itself (setThreadState).
+   */
   threads: Thread[]
+  /** Tasks the connector keeps itself (see putTask). */
+  tasks?: Task[]
   messages: Message[]
   /** The account's own display name, when the network has one. */
   selfName?: string
@@ -31,6 +36,9 @@ export type ConnectorEvent =
   | { type: 'message.deleted'; threadId: string; messageId: string }
   /** Many things changed at once (first sync, rooms joined or left): re-read the snapshot. */
   | { type: 'reloaded' }
+  /** A task kept by the connector (linked chats keep theirs with the account), changed anywhere. */
+  | { type: 'task.updated'; task: Task }
+  | { type: 'task.removed'; taskId: string }
 
 export interface ConnectorStatus {
   state: 'connecting' | 'online' | 'error'
@@ -65,6 +73,11 @@ export interface Connector {
   setTyping?(threadId: string, typing: boolean): Promise<void>
   /** Archives a chat on the network itself. Chats of connectors without it are archived on the device. */
   archiveThread?(threadId: string, archived: boolean): Promise<Thread>
+  /** Keeps done and snoozed with the account, rather than on this device. */
+  setThreadState?(threadId: string, patch: ThreadStatePatch): Promise<Thread>
+  /** Keeps tasks from its chats with the account, rather than on this device. */
+  putTask?(task: Task): Promise<Task>
+  deleteTask?(taskId: string): Promise<void>
   /** Messages from before `beforeId`, oldest first. */
   loadOlder?(threadId: string, beforeId: string): Promise<OlderMessages>
   subscribe(listener: (event: ConnectorEvent) => void): () => void

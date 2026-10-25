@@ -263,4 +263,7 @@ export type InboxEvent =
   | { type: 'typing'; threadId: string; senderId: string; active: boolean }
   | { type: 'scheduled.updated'; scheduled: ScheduledMessage }
   | { type: 'scheduled.removed'; scheduledId: string }
+  /** A task changed on another device (tasks from linked chats are kept with the account). */
+  | { type: 'task.updated'; task: Task }
+  | { type: 'task.removed'; taskId: string }
   | { type: 'reset'; snapshot: InboxSnapshot }

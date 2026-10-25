@@ -118,6 +118,18 @@ beforeEach(async () => {
       const message: Message = { id: `${RAVI}:F-${name}`, threadId: RAVI, senderId: 'me', body: '', sentAt: at(0), status: 'sent' }
       return json({ message })
     }
+    if (url.pathname.endsWith('/state')) {
+      const thread = inbox.threads.find((t) => decodeURIComponent(url.pathname).includes(t.id))
+      if (!thread) return json({ error: 'No such chat.' }, 404)
+      Object.assign(thread, body)
+      return json({ thread: { ...thread } })
+    }
+    if (url.pathname.startsWith('/api/tasks/')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/tasks/'.length))
+      const others = (inbox.tasks ?? []).filter((t) => t.id !== id)
+      inbox.tasks = method === 'PUT' ? [...others, body] : others
+      return json(method === 'PUT' ? { task: body } : { ok: true })
+    }
     if (url.pathname.endsWith('/archive')) {
       const thread = inbox.threads.find((t) => url.pathname.includes(encodeURIComponent(t.id)) || url.pathname.includes(t.id))!
       return json({ thread: { ...thread, ...(body.archived ? { archived: true } : {}) } })
@@ -253,11 +265,66 @@ describe('chats linked on the server', () => {
     stop()
   })
 
+  it('keeps done, snoozed and tasks with the account: there again after signing out and in', async () => {
+    const first = await signedIn()
+    const doneAt = at(0)
+    expect(await first.api.updateThreadState(RAVI, { doneAt })).toMatchObject({ doneAt })
+    expect(requests.at(-1)).toEqual({ method: 'POST', path: `/api/threads/${RAVI}/state`, body: { doneAt } })
+    const task = await first.api.addTask({ title: 'Check the parcel', dueAt: null, source: { threadId: RAVI, messageId: `${RAVI}:M1` } })
+    expect(requests.at(-1)).toMatchObject({ method: 'PUT', path: `/api/tasks/${task.id}` })
+    await first.api.updateTask(task.id, { done: true })
+    expect(inbox.tasks).toEqual([{ ...task, done: true }])
+    // Nothing of it is kept on this device.
+    expect(loadLocal().threadState).toEqual({})
+    expect(loadLocal().tasks).toEqual([])
+
+    await first.api.connections.setServerSession(null)
+    expect((await first.api.loadInbox()).tasks).toEqual([])
+    first.stop()
+
+    const again = await signedIn()
+    await eventually(async () => expect((await again.api.loadInbox()).tasks).toEqual([{ ...task, done: true }]))
+    expect((await again.api.loadInbox()).threads[0]).toMatchObject({ id: RAVI, doneAt })
+
+    // Changed on another device: here too.
+    again.stream.push({ type: 'task.removed', taskId: task.id })
+    expect(again.events.at(-1)).toEqual({ type: 'task.removed', taskId: task.id })
+    expect((await again.api.loadInbox()).tasks).toEqual([])
+    const until = at(-60)
+    again.stream.push({ type: 'thread.updated', thread: { ...inbox.threads[0]!, doneAt: null, snoozedUntil: until } })
+    expect((await again.api.loadInbox()).threads[0]).toMatchObject({ doneAt: null, snoozedUntil: until })
+
+    // A new message from them brings a snoozed chat back.
+    again.stream.push({ type: 'message.created', message: messageAt(3, 0) })
+    expect(again.events.at(-1)).toMatchObject({ type: 'thread.updated', thread: { id: RAVI, snoozedUntil: null } })
+    again.stop()
+  })
+
+  it('moves done state and tasks this device kept for linked chats to the account', async () => {
+    const doneAt = at(10)
+    writeJson(LOCAL_KEY, {
+      ...loadLocal(),
+      threadState: { [RAVI]: { doneAt, snoozedUntil: null }, 'tg:42': { doneAt, snoozedUntil: null } },
+      tasks: [
+        { id: 't_old', title: 'Old one', dueAt: null, done: false, createdAt: at(20), source: { threadId: RAVI, messageId: `${RAVI}:M1` } },
+        { id: 't_hand', title: 'By hand', dueAt: null, done: false, createdAt: at(20) },
+      ],
+    })
+    const { api, stop } = await signedIn()
+    await eventually(() => expect(loadLocal().threadState[RAVI]).toBeUndefined())
+    expect(inbox.threads[0]!.doneAt).toBe(doneAt)
+    expect(inbox.tasks?.map((t) => t.id)).toEqual(['t_old'])
+    // What isn't a linked chat's stays here.
+    expect(loadLocal().threadState['tg:42']).toBeDefined()
+    expect(loadLocal().tasks.map((t) => t.id)).toEqual(['t_hand'])
+    await eventually(async () => expect((await api.loadInbox()).tasks.map((t) => t.id).sort()).toEqual(['t_hand', 't_old']))
+    stop()
+  })
+
   it('reports an ended session, and forgets everything about those chats on sign-out', async () => {
     const { api, stream, stop } = await signedIn()
     await api.updateThreadState(RAVI, { doneAt: at(0) })
     await api.addTask({ title: 'Check the parcel', dueAt: null, source: { threadId: RAVI, messageId: `${RAVI}:M1` } })
-    expect(loadLocal().threadState[RAVI]).toBeDefined()
 
     const signedOut = vi.fn()
     api.connections.onSignedOut(signedOut)
@@ -269,7 +336,6 @@ describe('chats linked on the server', () => {
     const inbox = await api.loadInbox()
     expect(inbox.threads).toEqual([])
     expect(inbox.tasks).toEqual([])
-    expect(loadLocal().threadState[RAVI]).toBeUndefined()
     expect(api.connections.get().server).toBeNull()
     // This device's copy goes too.
     await eventually(async () => expect((await (await openDeviceStore('u1')).load(10)).threads).toEqual([]))

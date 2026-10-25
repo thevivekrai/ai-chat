@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { Switch } from '@/components/ui/Switch'
-import { PriorityTag } from '@/components/ui/Tags'
+import { LabelTag, PriorityTag } from '@/components/ui/Tags'
 import { cn } from '@/lib/cn'
 import { NETWORKS } from '@/lib/networks'
 import { formatDurationLong, formatWhen } from '@/lib/time'
@@ -135,6 +135,13 @@ function PrioritySection({ threadId }: { threadId: string }) {
             </span>
           </div>
           <p className="mt-2 text-[13px] leading-relaxed">{result.reason}</p>
+          {!!result.labels?.length && (
+            <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Tags">
+              {result.labels.map((label) => (
+                <LabelTag key={label} label={label} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Section>

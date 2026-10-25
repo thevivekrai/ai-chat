@@ -225,6 +225,16 @@ export const useInbox = create<InboxState>()((set, get) => {
         case 'scheduled.removed':
           set((s) => ({ scheduled: s.scheduled.filter((x) => x.id !== event.scheduledId) }))
           break
+        case 'task.updated':
+          set((s) => ({
+            tasks: s.tasks.some((t) => t.id === event.task.id)
+              ? s.tasks.map((t) => (t.id === event.task.id ? event.task : t))
+              : [...s.tasks, event.task],
+          }))
+          break
+        case 'task.removed':
+          set((s) => ({ tasks: s.tasks.filter((t) => t.id !== event.taskId) }))
+          break
         case 'reset':
           // A reload keeps older pages already fetched, so scrolling back isn't lost.
           set((s) => {

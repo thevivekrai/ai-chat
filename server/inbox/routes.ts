@@ -139,6 +139,13 @@ function chatLookup({ store, whatsapp, telegram }: Pick<InboxDeps, 'store' | 'wh
   return { networkOf, chatOf }
 }
 
+/** A time from the browser: an ISO string, null to clear it, or undefined to leave it as it is. */
+function timeOrNull(value: unknown, name: string): string | null | undefined {
+  if (value === undefined || value === null) return value
+  if (typeof value !== 'string' || value.length > 40 || Number.isNaN(Date.parse(value))) throw new HttpError(400, `${name} must be a time.`)
+  return new Date(value).toISOString()
+}
+
 /** An edit, deletion, pin or star, as the browser sent it; anything else is refused. */
 export function actionOf(value: unknown): MessageAction {
   const action = (value ?? {}) as Record<string, unknown>
@@ -226,6 +233,48 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
     const { userId, threadId, network } = await chatOf(req, res)
     if (typeof req.body?.archived !== 'boolean') throw new HttpError(400, 'Say whether to archive it.')
     res.json({ thread: await network.archive(userId, threadId, req.body.archived) })
+  })
+
+  /** Done and snoozed: kept with the account, so they're the same on every device and after signing out. */
+  router.post('/threads/:id/state', signedIn, async (req, res) => {
+    const { userId, threadId } = await chatOf(req, res)
+    const patch = { doneAt: timeOrNull(req.body?.doneAt, 'doneAt'), snoozedUntil: timeOrNull(req.body?.snoozedUntil, 'snoozedUntil') }
+    const thread = await store.setThreadState(userId, threadId, patch)
+    if (!thread) throw new HttpError(404, 'No such chat.')
+    hub.publish(userId.toHexString(), { type: 'thread.updated', thread })
+    res.json({ thread })
+  })
+
+  /** Adds or changes a task from a linked chat (the id comes from the device that made it). */
+  router.put('/tasks/:id', signedIn, async (req, res) => {
+    const userId = userIdOf(res)
+    const id = String(req.params.id)
+    if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, 'Bad task id.')
+    const b = (req.body ?? {}) as Record<string, unknown>
+    const title = field(b, 'title', { max: 500 })
+    const source = b.source as { threadId?: unknown; messageId?: unknown } | undefined
+    if (typeof source?.threadId !== 'string' || typeof source.messageId !== 'string' || source.messageId.length > 300) {
+      throw new HttpError(400, 'Say which chat the task is from.')
+    }
+    if (!(await store.thread(userId, source.threadId))) throw new HttpError(404, 'No such chat.')
+    const createdAt = timeOrNull(b.createdAt, 'createdAt') ?? new Date().toISOString()
+    const task = await store.putTask(userId, {
+      id,
+      title,
+      dueAt: timeOrNull(b.dueAt, 'dueAt') ?? null,
+      done: b.done === true,
+      createdAt,
+      source: { threadId: source.threadId, messageId: source.messageId },
+    })
+    hub.publish(userId.toHexString(), { type: 'task.updated', task })
+    res.json({ task })
+  })
+
+  router.delete('/tasks/:id', signedIn, async (req, res) => {
+    const userId = userIdOf(res)
+    const id = String(req.params.id)
+    if (await store.deleteTask(userId, id)) hub.publish(userId.toHexString(), { type: 'task.removed', taskId: id })
+    res.json({ ok: true })
   })
 
   /** Incognito mode: nothing tells people that the user read their messages, or is typing. */

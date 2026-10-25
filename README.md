@@ -27,6 +27,9 @@ Nothing is ever sent automatically.
 - **Real AI.** Signed in, everyone gets the free **shared AI** (Google's Gemini, with the
   server's key). Or bring your own key: **Claude, Gemini, ChatGPT, OpenRouter, Groq, Mistral,
   DeepSeek, Grok** or any OpenAI-compatible service. A built-in demo AI runs on the device too.
+- **Priority and tags.** Each allowed chat is marked **Urgent**, **Normal** or **Low**, and tagged
+  with what it's about: **Question, Follow-up, Deadline, Payment, Order, Meeting, Work, Personal,
+  Promo** or **FYI**. Tap a tag above the list to see only those chats.
 - **Demo inbox.** 15 sample conversations across five networks, generated relative to now, in
   English and Hinglish. Try it without an account, too.
 
@@ -322,8 +325,9 @@ at the top:
 On the server, session keys, chat and contact names, message text and attachments are **encrypted
 at rest** (AES-256-GCM, with `DATA_ENCRYPTION_KEY`), so a copy of the database alone reveals no
 chats. Ids, times, counts and whether a message is pinned or starred stay readable so the
-database can sort and keep them. Done/snoozed state, tasks
-and AI results stay in the browser, as for every other source.
+database can sort and keep them. **Done and snoozed** state and **tasks** from linked chats are
+kept with your account too (task text sealed like messages), so they're the same on every device
+and still there after signing out and in. AI results stay in the browser.
 
 ## More connections, from the browser
 
@@ -389,7 +393,7 @@ Choose the AI in **Settings → AI**:
 
 | Feature | Model (default) | Effort |
 | --- | --- | --- |
-| Sorting the queue: priority, and whether a reply is expected | Claude Haiku 5.5 | low |
+| Sorting the queue: priority, tags, and whether a reply is expected | Claude Haiku 5.5 | low |
 | Summaries and detected tasks | Claude Opus 5.5 | low |
 | Drafts (all three tones in one request) and answers in ⌘K | Claude Opus 5.5 | medium |
 
@@ -440,7 +444,8 @@ src/
   data/
     api.ts            ← the only data-access module: InboxApi + ConnectionsApi
     unified/          ← merges every source; routes by id prefix; done/snoozed, tasks and
-                        scheduled sends for real accounts, kept on the device
+                        scheduled sends for real accounts (on the device, or with the account
+                        for chats linked on the server)
     connectors/
       telegram/       ← Bot API client and connector (long polling, local message store)
       matrix/         ← matrix-js-sdk connector, loaded on demand; bridge detection
@@ -555,7 +560,8 @@ simulated WhatsApp bridge room) and a local Telegram Bot API server.
   rooms show their last 30 messages, and a Telegram bot only what it has seen.
 - **Scheduled sends** go out while Sytext is open. One that was due while it was closed waits for
   you instead of arriving hours late. Matrix delayed events (MSC4140) would let the server send them.
-- **Sync across devices.** Done, snoozed and tasks live on one device. For Matrix they could sync
-  through room account data.
+- **Sync across devices.** Done, snoozed and tasks sync for WhatsApp and Telegram linked on the
+  server; for a Telegram bot and Matrix they live on one device (Matrix could sync them through
+  room account data).
 - **One person, one chat.** The same person on several networks isn't merged yet.
 - **Notifications.** No push notifications.

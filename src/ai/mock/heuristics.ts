@@ -14,7 +14,7 @@ import {
 } from '@/lib/replyRules'
 import { shortName } from '@/lib/format'
 import { DAY, formatDurationLong, toMs } from '@/lib/time'
-import type { AiMessage, AiThread, ExtractedTask, Priority, PriorityResult, ThreadSummary, Tone } from '../types'
+import { MAX_LABELS, type AiMessage, type AiThread, type ChatLabel, type ExtractedTask, type Priority, type PriorityResult, type ThreadSummary, type Tone } from '../types'
 import { findDateMention } from './dates'
 
 /* ── Reading a thread ───────────────────────────────────────────────────── */
@@ -77,6 +77,62 @@ function detectIntent(text: string): Intent | null {
 
 /* ── Classification ─────────────────────────────────────────────────────── */
 
+/** Someone says it can't wait (and doesn't say it can). */
+const URGENT_WORDS =
+  /\b(urgent|urgently|asap|emergency|immediately|right away|right now|critical|hospital|accident|jaldi|turant|abhi ke abhi|please call|call me)\b/i
+const NOT_URGENT = /\b(not urgent|no rush|no hurry|whenever you can|koi jaldi nahi|aaram se)\b/i
+/** Asking again, or asking where things are. */
+const CHASING = /(\?\s*\?|^\s*(hello|hi|hey|helo)\s*\?+\s*$|\bany update|\bstill waiting|\bdid you (see|get|check)|\bwaiting for your)/im
+const PROMO = /\b(offer|sale|discount|% off|cashback|coupon|deal|subscribe|newsletter|unsubscribe|limited time)\b/i
+const WORK = /\b(client|customer|invoice|meeting|deadline|project|office|report|order|quote|proposal|contract|team)\b/i
+
+export function saysUrgent(text: string): boolean {
+  return URGENT_WORDS.test(text) && !NOT_URGENT.test(text)
+}
+
+/**
+ * They're chasing a reply: they ask where things are ("any update?", "??"), or ask again an hour
+ * or more after first asking. (Several messages in a row are just how people write.)
+ */
+export function isChasing(pending: AiMessage[]): boolean {
+  if (pending.some((m) => CHASING.test(m.body))) return true
+  const asks = pending.filter((m) => hasQuestion(m.body) || hasRequest(m.body))
+  return asks.length >= 2 && toMs(asks[asks.length - 1]!.sentAt) - toMs(asks[0]!.sentAt) >= 60 * 60_000
+}
+
+/** Tags for what the chat is about, from the same signals the rules use. */
+export function heuristicLabels(t: AiThread, now = Date.now()): ChatLabel[] {
+  const pending = pendingInbound(t)
+  const recent = t.messages.slice(-6)
+  const text = (pending.length ? pending : recent).map((m) => m.body).join('\n')
+  const labels: ChatLabel[] = []
+  const add = (label: ChatLabel, when: boolean) => when && !labels.includes(label) && labels.push(label)
+  const automated = isAutomated(t)
+  add('promo', automated && PROMO.test(text))
+  add('follow-up', !automated && isChasing(pending))
+  add('question', !automated && pending.some((m) => hasQuestion(m.body) || hasRequest(m.body)))
+  add(
+    'deadline',
+    !automated &&
+      // Something due or happening within the week, not "in about 3 weeks".
+      (pending.some((m) => {
+        const d = findDateMention(m.body, toMs(m.sentAt))
+        return !!d && d.at > now - DAY && d.at - now < 7 * DAY
+      }) || /\b(today|tonight|tomorrow|kal|deadline|by (mon|tue|wed|thu|fri|sat|sun))/i.test(text)),
+  )
+  // Every topic that shows, not just the first (a message can ask for the invoice of an order).
+  const about = (intent: Intent) => INTENT_PATTERNS.some(([i, re]) => i === intent && re.test(text))
+  // Automated messages: what they're about (a bank alert, a delivery), but never asks or plans.
+  add('payment', about('payment') || about('price') || /\b(refund|bill|amount|rs\.?|inr)\b|₹/i.test(text))
+  add('order', about('order'))
+  add('meeting', !automated && (about('plans') || /\b(call|meeting|zoom|meet)\b/i.test(text)))
+  const work = t.participants.some((p) => /customer|client|lead|work|colleague|vendor|supplier/i.test(p.label ?? '')) || WORK.test(text)
+  add('work', work)
+  add('personal', !work && !automated && t.participants.some((p) => /family|friend|mom|dad|brother|sister/i.test(p.label ?? '')))
+  add('fyi', !automated && !heuristicExpectsReply(t) && !lastMessage(t)?.fromMe)
+  return labels.slice(0, MAX_LABELS)
+}
+
 export function heuristicExpectsReply(t: AiThread): boolean {
   return expectsReply({
     isGroup: t.isGroup,
@@ -114,13 +170,19 @@ export function heuristicPriority(t: AiThread, now: number, prior?: Priority): P
     .map((m) => findDateMention(m.body, toMs(m.sentAt)))
     .find((d) => d && d.at > now - DAY && d.at - now < 2 * DAY)
 
-  if (/\b(urgent|asap|immediately|right away|jaldi)\b/i.test(text)) {
+  if (saysUrgent(text)) {
     return { priority: 'urgent', expectsReply: true, reason: `${who} flagged this as time-sensitive.` }
+  }
+  if (!t.isGroup && isChasing(pending)) {
+    return { priority: 'urgent', expectsReply: true, reason: `${who} is chasing a reply.` }
+  }
+  if (/\b(refund|payment (failed|due|pending)|overdue|not paid|money back)\b/i.test(text)) {
+    return { priority: 'urgent', expectsReply: true, reason: `Money is at stake: ${truncate(pending.at(-1)!.body, 50)}` }
   }
   if (isCustomer && /\b(late|delay|delayed|still|not received|refund|damaged|broken|wrong|update)\b/i.test(text)) {
     return { priority: 'urgent', expectsReply: true, reason: `A customer is chasing an update.` }
   }
-  if (isCustomer && waitingMs > 2 * DAY) {
+  if ((isCustomer || !t.isGroup) && waitingMs > 2 * DAY && pending.some((m) => hasQuestion(m.body))) {
     return {
       priority: 'urgent',
       expectsReply: true,

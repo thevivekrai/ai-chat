@@ -213,7 +213,9 @@ export const useAi = create<AiState>()(
     },
     {
       name: 'tidings.ai',
-      version: 1,
+      version: 2,
+      // v1's priorities came from older rules and have no tags: every chat is sorted again.
+      migrate: (persisted, version) => (version < 2 ? { ...(persisted as object), priority: {} } : persisted) as AiState,
       // Only finished results are worth keeping across reloads; drafts are always fresh.
       partialize: (s) => ({ priority: onlyReady(s.priority), summary: onlyReady(s.summary), tasks: onlyReady(s.tasks) }),
     },

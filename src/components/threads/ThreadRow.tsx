@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from 'react'
 import { motion } from 'motion/react'
 import type { Contact } from '@/data/types'
 import { Avatar } from '@/components/ui/Avatar'
-import { PriorityTag, PriorityTagSkeleton, ScheduledBadge, SnoozedBadge, UnansweredBadge } from '@/components/ui/Tags'
+import { LabelTag, PriorityTag, PriorityTagSkeleton, ScheduledBadge, SnoozedBadge, UnansweredBadge } from '@/components/ui/Tags'
 import { UNANSWERED_BADGE_AFTER } from '@/config'
 import { cn } from '@/lib/cn'
 import { messagePreview, typingLabel } from '@/lib/format'
@@ -45,6 +45,8 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
       ) : (
         view.priorityLoading && <PriorityTagSkeleton key="p" />
       )),
+    // Two tags at most in the list; the AI panel shows them all.
+    ...view.labels.slice(0, 2).map((label) => <LabelTag key={`l-${label}`} label={label} />),
     view.needsReply && waitingMs >= UNANSWERED_BADGE_AFTER && <UnansweredBadge key="u" waitingMs={waitingMs} />,
     showWaitingOnThem && view.waitingOnThem && (
       <span key="w" className="text-[11px] text-muted">

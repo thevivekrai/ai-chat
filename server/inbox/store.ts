@@ -1,9 +1,9 @@
 import type { ObjectId } from 'mongodb'
 import { MESSAGES_KEPT_PER_CHAT } from '../../src/data/server/types.ts'
 import type { MessageHint } from '../../src/data/server/types.ts'
-import type { Contact, Message, MessageAction, Reaction, Thread } from '../../src/data/types.ts'
+import { ME_ID, type Contact, type Message, type MessageAction, type Reaction, type Task, type Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
-import type { Collections, MessageDoc, MessagePayload, ThreadDoc } from '../db.ts'
+import type { Collections, MessageDoc, MessagePayload, TaskDoc, ThreadDoc } from '../db.ts'
 
 /**
  * Messages deleted for me lately, for devices that were away then; and, of the chats sent
@@ -138,6 +138,8 @@ export interface InboxSnapshotPart {
   threads: Thread[]
   contacts: Contact[]
   messages: Message[]
+  /** Tasks added from these chats. */
+  tasks: Task[]
   /** Messages deleted for me lately: devices that were away remove them too. */
   deleted: string[]
   /** Chats a device away since an earlier time starts afresh (see deletions). */
@@ -199,12 +201,22 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     title: open(doc.title),
     participantIds: doc.participantIds,
     unreadCount: doc.unreadCount,
-    // Done and snoozed live in the browser for linked chats, like for every other connector.
-    doneAt: null,
-    snoozedUntil: null,
+    doneAt: doc.doneAt?.toISOString() ?? null,
+    snoozedUntil: doc.snoozedUntil?.toISOString() ?? null,
     ...(doc.avatarUrl ? { avatarUrl: doc.avatarUrl } : {}),
     ...(doc.archived ? { archived: true } : {}),
   })
+
+  const toTask = (doc: TaskDoc): Task | null => {
+    const data = openJson<Pick<Task, 'title' | 'dueAt' | 'source'> | null>(doc.data, null)
+    if (!data) return null
+    return { id: doc.id, title: data.title, dueAt: data.dueAt, done: doc.done, createdAt: doc.createdAt.toISOString(), ...(data.source ? { source: data.source } : {}) }
+  }
+
+  const listTasks = async (userId: ObjectId): Promise<Task[]> => {
+    const docs = await col.tasks.find({ userId }).sort({ createdAt: 1 }).limit(5000).toArray()
+    return docs.map(toTask).filter((t): t is Task => t !== null)
+  }
 
   const toMessage = (doc: MessageDoc): Message => {
     const payload = openJson<MessagePayload>(doc.payload, { body: UNREADABLE })
@@ -376,6 +388,50 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return doc && toThread(doc)
     },
 
+    /** Done and snoozed, as set on any device; returns the chat, or null if there's no such chat. */
+    async setThreadState(
+      userId: ObjectId,
+      threadId: string,
+      patch: { doneAt?: string | null; snoozedUntil?: string | null },
+    ): Promise<Thread | null> {
+      const set: Partial<ThreadDoc> = {}
+      const unset: Record<string, ''> = {}
+      for (const key of ['doneAt', 'snoozedUntil'] as const) {
+        if (patch[key] === undefined) continue
+        if (patch[key] === null) unset[key] = ''
+        else set[key] = new Date(patch[key])
+      }
+      const doc = await col.threads.findOneAndUpdate(
+        { userId, id: threadId },
+        { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+        { returnDocument: 'after' },
+      )
+      return doc && toThread(doc)
+    },
+
+    tasks: listTasks,
+
+    /** Adds or replaces a task. */
+    async putTask(userId: ObjectId, task: Task & { source: NonNullable<Task['source']> }): Promise<Task> {
+      await col.tasks.updateOne(
+        { userId, id: task.id },
+        {
+          $set: {
+            threadId: task.source.threadId,
+            data: sealer.sealJson({ title: task.title, dueAt: task.dueAt, source: task.source }),
+            done: task.done,
+          },
+          $setOnInsert: { createdAt: new Date(task.createdAt) },
+        },
+        { upsert: true },
+      )
+      return task
+    },
+
+    async deleteTask(userId: ObjectId, id: string): Promise<boolean> {
+      return (await col.tasks.deleteOne({ userId, id })).deletedCount > 0
+    },
+
     async incrementUnread(userId: ObjectId, threadId: string) {
       await col.threads.updateOne({ userId, id: threadId }, { $inc: { unreadCount: 1 } })
     },
@@ -482,7 +538,16 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         { upsert: true },
       )
       if (result.upsertedCount) {
-        await col.threads.updateOne({ userId, id: message.threadId }, { $max: { lastAt: new Date(message.sentAt) } })
+        const sentAt = new Date(message.sentAt)
+        // Like most inboxes, a new message from them brings a snoozed chat straight back (not one
+        // from history, older than what the chat already had; the chat may already be dated to this one).
+        if (message.senderId !== ME_ID) {
+          await col.threads.updateOne(
+            { userId, id: message.threadId, snoozedUntil: { $exists: true }, lastAt: { $lte: sentAt } },
+            { $unset: { snoozedUntil: '' } },
+          )
+        }
+        await col.threads.updateOne({ userId, id: message.threadId }, { $max: { lastAt: sentAt } })
         untrimmed.set(`${userId.toHexString()}:${message.threadId}`, {
           userId,
           threadId: message.threadId,
@@ -889,6 +954,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
       return {
         threads: threadDocs.map(toThread),
         contacts: contactDocs.map(toContact),
+        tasks: await listTasks(userId),
         messages: [...latest, ...flagged.filter((d) => !seen.has(d.id))].map(toMessage),
         // Every chat's, not only those sent: a device remembers having them all.
         ...deletions(
@@ -931,6 +997,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         col.contacts.deleteMany(match),
         col.avatars.deleteMany(match),
         col.messages.deleteMany({ userId, threadId: match.id }),
+        col.tasks.deleteMany({ userId, threadId: match.id }),
       ])
     },
   }

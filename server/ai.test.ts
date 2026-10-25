@@ -65,7 +65,7 @@ describe.skipIf(!TEST_MONGODB_URI)('shared AI', () => {
       json: { candidates: [{ content: { parts: [{ text: '{"priority":"low","expectsReply":false,"reason":"FYI only."}' }] } }] },
     }))
     const sorted = await browser.post('/api/ai/generate', { ...REQUEST, task: 'priority' })
-    expect(sorted.json.output).toEqual({ priority: 'low', expectsReply: false, reason: 'FYI only.' })
+    expect(sorted.json.output).toEqual({ priority: 'low', expectsReply: false, reason: 'FYI only.', labels: [] })
     expect(gemini.calls.at(-1)!.url).toContain('/models/gemini-light:generateContent')
   })
 

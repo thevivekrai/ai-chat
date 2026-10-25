@@ -4,11 +4,16 @@
  */
 import { z } from 'zod'
 import { LlmError, type LlmOutputs, type LlmTask } from './llm'
+import { CHAT_LABELS } from './types'
 
 const PrioritySchema = z.object({
   priority: z.enum(['urgent', 'normal', 'low']),
   expectsReply: z.boolean().describe('Whether the latest messages expect a reply from the user.'),
   reason: z.string().describe('One plain sentence, under 90 characters.'),
+  // Tags a model leaves out or makes up are dropped rather than failing the whole answer.
+  labels: z
+    .preprocess((v) => (Array.isArray(v) ? v.filter((l) => (CHAT_LABELS as readonly unknown[]).includes(l)) : []), z.array(z.enum(CHAT_LABELS)))
+    .describe('Up to 3 tags for what the chat is about, most telling first.'),
 })
 
 const SummarySchema = z.object({

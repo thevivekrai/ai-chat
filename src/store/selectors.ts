@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import type { Priority, PriorityResult } from '@/ai'
+import type { ChatLabel, Priority, PriorityResult } from '@/ai'
 import { NEEDS_REPLY_FOR } from '@/config'
 import type { Contact, Me, Message, NetworkId, ScheduledMessage, Task, Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
@@ -43,6 +43,8 @@ export interface ThreadView {
   priorityLoading: boolean
   /** For sorting: the fresh priority, else the previous one, else normal. */
   sortPriority: Priority
+  /** What the chat is about, from the fresh classification or else the previous one. */
+  labels: ChatLabel[]
 }
 
 export interface ThreadViewInput {
@@ -130,6 +132,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     stalePriority: fresh ? null : (entry?.result ?? null),
     priorityLoading: aiAllowed && !fresh && entry?.status !== 'error',
     sortPriority: fresh?.priority ?? entry?.result?.priority ?? 'normal',
+    labels: aiAllowed ? ((fresh ?? entry?.result)?.labels ?? []) : [],
   }
 }
 
@@ -157,11 +160,16 @@ export function filterByNetwork<T extends { thread: Thread }>(views: T[], networ
 export function selectViewThreads(
   views: ThreadView[],
   view: View,
-  { networks, query, messages }: { networks: NetworkId[]; query: string; messages: Record<string, Message[]> },
+  {
+    networks,
+    query,
+    messages,
+    tag = null,
+  }: { networks: NetworkId[]; query: string; messages: Record<string, Message[]>; tag?: ChatLabel | null },
 ): ThreadView[] {
   // Archived chats are only in Archived.
   const list = filterByNetwork(views, networks).filter(
-    (v) => !!v.thread.archived === (view === 'archived') && matchesQuery(v, query, messages[v.id]),
+    (v) => !!v.thread.archived === (view === 'archived') && matchesQuery(v, query, messages[v.id]) && (!tag || v.labels.includes(tag)),
   )
   switch (view) {
     case 'needs-reply':

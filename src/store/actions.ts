@@ -310,6 +310,15 @@ export async function scheduleReply(threadId: string, text: string, sendAt: Date
 /* ── AI consent ──────────────────────────────────────────────────────────── */
 
 export function turnOnAi(options: { threadIds?: string[]; quiet?: boolean } = {}) {
+  // Before the chats have loaded there'd be none to allow: wait for them.
+  if (!options.threadIds && useInbox.getState().status !== 'ready') {
+    const off = useInbox.subscribe((s) => {
+      if (s.status !== 'ready') return
+      off()
+      turnOnAi(options)
+    })
+    return
+  }
   const settings = useSettings.getState()
   const allIds = Object.keys(useInbox.getState().threads)
   const ids = options.threadIds ?? (settings.aiThreadIds.length ? settings.aiThreadIds : allIds)

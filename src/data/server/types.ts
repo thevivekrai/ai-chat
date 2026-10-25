@@ -1,4 +1,4 @@
-import type { Attachment, Contact, Message, MessageStatus, QuotedMessage, Reaction, Thread } from '../types'
+import type { Attachment, Contact, Message, MessageStatus, QuotedMessage, Reaction, Task, Thread } from '../types'
 
 /**
  * What the Sytext server and the web app send each other. The server (../../../server) imports
@@ -140,6 +140,8 @@ export interface ServerInbox {
   /** The server's time when this was taken, for the device to remember (see deletedSince). */
   at?: string
   accounts: PublicAccount[]
+  /** Tasks added from these chats, kept with the account. */
+  tasks?: Task[]
 }
 
 /** Pushed to a signed-in browser over server-sent events. */
@@ -150,6 +152,9 @@ export type ServerEvent =
   | { type: 'message.deleted'; threadId: string; messageId: string }
   | { type: 'thread.updated'; thread: Thread }
   | { type: 'contact.updated'; contact: Contact }
+  /** A task from a linked chat, added or changed on any device. */
+  | { type: 'task.updated'; task: Task }
+  | { type: 'task.removed'; taskId: string }
   | { type: 'account.updated'; account: PublicAccount }
   /** A fresh QR code while linking by QR (a data: URL). */
   | { type: 'account.qr'; network: LinkedNetwork; qr: string }

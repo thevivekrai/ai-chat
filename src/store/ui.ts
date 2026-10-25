@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { ChatLabel } from '@/ai'
 import type { NetworkId } from '@/data/types'
 
 export type View = 'needs-reply' | 'all' | 'waiting' | 'scheduled' | 'tasks' | 'starred' | 'archived'
@@ -25,6 +26,8 @@ interface UiState {
   /** Network filter chips; empty means all networks. */
   networks: NetworkId[]
   listQuery: string
+  /** Show only chats with this tag. */
+  listTag: ChatLabel | null
   selectedThreadId: string | null
   /** Small screens show one pane at a time: true while a conversation is on screen. */
   mobileThreadOpen: boolean
@@ -60,6 +63,7 @@ interface UiState {
   toggleNetwork(network: NetworkId): void
   clearNetworks(): void
   setListQuery(query: string): void
+  setListTag(tag: ChatLabel | null): void
   selectThread(threadId: string | null): void
   closeMobileThread(): void
   moveSelection(delta: 1 | -1): void
@@ -93,6 +97,7 @@ export const useUi = create<UiState>()(
       view: 'needs-reply',
       networks: [],
       listQuery: '',
+      listTag: null,
       selectedThreadId: null,
       mobileThreadOpen: false,
       sidebarOpen: false,
@@ -114,13 +119,14 @@ export const useUi = create<UiState>()(
       settingsTab: 'accounts',
       connectHintDismissed: false,
 
-      setView: (view) => set({ view, sidebarOpen: false, listQuery: '' }),
+      setView: (view) => set({ view, sidebarOpen: false, listQuery: '', listTag: null }),
       toggleNetwork: (network) =>
         set((s) => ({
           networks: s.networks.includes(network) ? s.networks.filter((n) => n !== network) : [...s.networks, network],
         })),
       clearNetworks: () => set({ networks: [] }),
       setListQuery: (listQuery) => set({ listQuery }),
+      setListTag: (listTag) => set({ listTag }),
 
       selectThread(threadId) {
         const index = threadId ? get().navThreadIds.indexOf(threadId) : -1

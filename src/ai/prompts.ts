@@ -1,10 +1,10 @@
 /**
- * Prompts for each AI function when Claude is connected (see llm.ts). The response shapes are
- * enforced by structured outputs (claude.ts), so prompts describe judgement, not JSON syntax.
+ * Prompts for each AI function when a real AI is chosen (see llm.ts). The response shapes are
+ * enforced by structured output (see schemas.ts), so prompts describe judgement, not JSON syntax.
  */
 import { NETWORKS } from '@/lib/networks'
 import type { LlmRequest } from './llm'
-import type { AiSearchSource, AiTask, AiThread, Tone } from './types'
+import { MAX_LABELS, type AiSearchSource, type AiTask, type AiThread, type Tone } from './types'
 
 /** At most this many open tasks go with a question about tasks. */
 const TASKS_IN_ANSWER = 30
@@ -52,17 +52,68 @@ export function buildDraftsPrompt(thread: AiThread, variant: number): LlmRequest
   }
 }
 
+const LABEL_GUIDE = [
+  'question: they asked the user something',
+  'follow-up: they are chasing the user (asked again, "??", "any update?", several messages in a row)',
+  'deadline: a date or time something is due or happens (today, by Friday, kal 11 baje)',
+  'payment: money, bills, invoices, refunds, UPI, prices or quotes',
+  'order: an order, delivery, parcel, booking or tracking',
+  'meeting: a call, meeting, visit or plan to meet',
+  'work: work, business or customers',
+  'personal: family and friends',
+  'promo: marketing, offers, newsletters and other automated messages',
+  'fyi: news or an update that needs nothing from the user',
+].join('; ')
+
+/** Facts a model is easy to get wrong from timestamps alone: who is waiting, and for how long. */
+export function waitingFacts(thread: AiThread, now: Date): string {
+  const pending: AiThread['messages'] = []
+  for (let i = thread.messages.length - 1; i >= 0 && !thread.messages[i]!.fromMe; i--) pending.unshift(thread.messages[i]!)
+  const last = thread.messages[thread.messages.length - 1]
+  if (!last) return 'The chat is empty.'
+  if (last.fromMe) return 'The user wrote last; nothing new has come in since.'
+  const since = Math.max(0, now.getTime() - Date.parse(pending[0]!.sentAt))
+  const hours = since / 3_600_000
+  const waited = hours < 1 ? `${Math.max(1, Math.round(since / 60_000))} minutes` : hours < 48 ? `${Math.round(hours)} hours` : `${Math.round(hours / 24)} days`
+  const mentioned = thread.isGroup && pending.some((m) => m.body.toLowerCase().includes(thread.me.name.split(' ')[0]!.toLowerCase()))
+  return [
+    `${pending.length} message${pending.length === 1 ? '' : 's'} from others since the user last wrote, the first ${waited} ago.`,
+    thread.isGroup ? (mentioned ? 'Someone mentions the user by name.' : 'Nobody mentions the user by name.') : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 export function buildPriorityPrompt(thread: AiThread, now: Date): LlmRequest<'priority'> {
   return {
     task: 'priority',
     system: [
-      'You triage a personal inbox. Decide whether the latest messages expect a reply from the user, and how urgent it is.',
-      '"reason" is one plain sentence under 90 characters, written to the user.',
-      'Urgent: money, customers, deadlines within 48 hours, or someone important waiting more than 2 days.',
-      'Low: announcements, automated messages, acknowledgements and casual chatter.',
-      'In group chats, only expect a reply when someone addresses the user.',
-    ].join(' '),
-    user: `Current time: ${now.toISOString()}\n${describeThread(thread)}\n\n${formatTranscript(thread, 30)}`,
+      "You triage the user's personal inbox (WhatsApp, Telegram and similar; English, Hindi or Hinglish).",
+      'Decide whether the latest messages expect a reply or action from the user, how urgent that is, and tag the chat.',
+      '',
+      'priority:',
+      '- urgent: needs the user soon. An emergency, health or safety matter; someone says it is urgent',
+      '  (urgent, asap, important, right now, jaldi, turant, abhi, "call me"); a deadline, appointment or',
+      '  payment due within 48 hours (today, tonight, tomorrow, kal); money at stake (a failed or due',
+      '  payment, refund, overdue invoice); a customer or client with a problem or complaint; someone',
+      '  chasing the user ("??", "hello?", "any update?", asking again); or a direct question left',
+      '  unanswered for more than a day.',
+      '- normal: a reply is expected but nothing presses: a question, request or plan without a near deadline.',
+      '- low: nothing is needed from the user: news, announcements, forwards, greetings, "ok"/"thanks"/👍,',
+      '  casual chatter, automated messages (OTPs, bank alerts, offers, newsletters), or the user wrote last.',
+      'When a reply is expected and it is unclear whether it is urgent or normal, choose urgent if any of',
+      'the urgent signals above is present, and normal otherwise. Do not mark a chat low while a question',
+      'to the user is unanswered.',
+      '',
+      'expectsReply: true when the latest messages ask or need something from the user. In group chats, only',
+      'when someone addresses the user (by name, or replying to them). False when the user wrote last.',
+      '',
+      '"reason" is one plain sentence under 90 characters, written to the user, naming the concrete reason',
+      '(who is waiting, for what, and any deadline).',
+      '',
+      `labels: up to ${MAX_LABELS} tags, most telling first, only ones that clearly apply: ${LABEL_GUIDE}.`,
+    ].join('\n'),
+    user: `Current time: ${now.toISOString()}\n${describeThread(thread)}\n${waitingFacts(thread, now)}\n\n${formatTranscript(thread, 30)}`,
     effort: 'low',
   }
 }
