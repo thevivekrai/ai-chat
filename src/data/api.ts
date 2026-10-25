@@ -107,6 +107,7 @@ export interface ConnectionsState {
     status: ConnectorStatus
     whatsapp: PublicAccount | null
     telegram: PublicAccount | null
+    guffshuff: PublicAccount | null
   } | null
 }
 
@@ -143,6 +144,8 @@ export interface ConnectionsApi {
   requestTelegramQr(): Promise<{ qr: string }>
   verifyTelegramCode(code: string): Promise<TelegramVerifyResult>
   verifyTelegramPassword(password: string): Promise<TelegramVerifyResult>
+  /** Linking Guffshuff: the username and password of the user's own chat site. */
+  linkGuffshuff(username: string, password: string): Promise<{ username: string; fullName: string }>
   /** Logs the server out of that account and deletes its chats there. */
   unlink(network: LinkedNetwork): Promise<void>
 }

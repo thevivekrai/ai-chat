@@ -34,7 +34,7 @@ export function createHoldingApp({
     res.json({ ok: true, database: false })
   })
   api.get('/config', (_req, res) => {
-    const features: ServerFeatures = { googleClientId: null, whatsapp: false, telegram: false, uploads: false, database: false }
+    const features: ServerFeatures = { googleClientId: null, whatsapp: false, telegram: false, guffshuff: false, uploads: false, database: false }
     const current = problem()
     res.json(current ? { ...features, databaseProblem: current } : features)
   })

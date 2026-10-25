@@ -37,3 +37,5 @@ services:
         sync: false
       - key: AI_API
         sync: false
+      - key: GUFFSHUFF_URL
+        sync: false

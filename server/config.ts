@@ -31,6 +31,11 @@ export interface Config {
    */
   temporaryStorage: boolean
   /**
+   * The user's own chat site, bridged as another network: where it lives, e.g.
+   * https://guffshuff.onrender.com. Without it, Guffshuff isn't offered.
+   */
+  guffshuffUrl?: string
+  /**
    * Turns on the shared AI for everyone signed in: an OpenRouter key (sk-or-…) or a Google Gemini
    * key in AI_API (or GEMINI_API_KEY); AI_PROVIDER=openrouter|gemini says which, if the key's
    * shape doesn't. AI_MODEL and AI_TRIAGE_MODEL choose the models.
@@ -82,6 +87,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
     keepAwakeUrl: isOff(env.KEEP_AWAKE) ? undefined : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
     temporaryStorage: !isOff(env.TEMPORARY_STORAGE),
+    guffshuffUrl: isOff(env.GUFFSHUFF_URL) ? undefined : env.GUFFSHUFF_URL?.trim() || undefined,
     ai: aiKey ? sharedAi(aiKey, env) : undefined,
   }
 }

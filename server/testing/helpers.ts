@@ -4,6 +4,8 @@ import type { Server } from 'node:http'
 import { Readable } from 'node:stream'
 import { exportJWK, generateKeyPair, SignJWT, createLocalJWKSet } from 'jose'
 import type { SharedAi } from '../ai.ts'
+import { createGuffshuff, type Guffshuff } from '../networks/guffshuff.ts'
+import { fakeGuffshuff } from './fakeGuffshuff.ts'
 import type { AuthenticationState, BaileysEventMap, WAMessage, WAMessageKey } from '@whiskeysockets/baileys'
 import { createApp } from '../app.ts'
 import { createGoogleVerifier } from '../auth/google.ts'
@@ -430,9 +432,10 @@ export interface TestServer {
   database: Database
   sockets: FakeWaSocket[]
   telegram: ReturnType<typeof fakeTelegram>
+  guffshuff: ReturnType<typeof fakeGuffshuff>
   google: Awaited<ReturnType<typeof fakeGoogle>>
   /** The parts running now (rebuilt by `restart`). */
-  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram }
+  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff }
   /** Builds the network managers again over the same database, as after a restart. */
   restart(): Promise<void>
   close(): Promise<void>
@@ -454,11 +457,12 @@ export async function startTestServer({
   const sockets: FakeWaSocket[] = []
   const phone = sharedPhone ? new Map<string, WAMessage>() : undefined
   const telegram = fakeTelegram()
+  const guffshuff = fakeGuffshuff()
   const google = await fakeGoogle()
   const tokens = createSessionTokens('x'.repeat(40))
 
   let server: Server
-  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram }
+  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff }
 
   async function boot(port = 0) {
     const hub = createHub()
@@ -496,7 +500,8 @@ export async function startTestServer({
       api: { apiId: 1, apiHash: 'hash' },
       createClient: telegram.create,
     })
-    managers = { store, whatsapp, telegram: tg }
+    const gs = createGuffshuff({ sealer, store, accounts, hub, avatars, files, api: guffshuff.api })
+    managers = { store, whatsapp, telegram: tg, guffshuff: gs }
     const app = createApp({
       col: database.col,
       tokens,
@@ -509,6 +514,7 @@ export async function startTestServer({
       hub,
       whatsapp,
       telegram: tg,
+      guffshuff: gs,
       files,
       maxFileBytes: MAX_TEST_FILE_BYTES,
       secureCookies: false,
@@ -525,6 +531,7 @@ export async function startTestServer({
   const url = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`
 
   async function shutdown() {
+    managers?.guffshuff.stopAll()
     hub.closeAll()
     await managers.whatsapp.stopAll()
     await managers.telegram.stopAll()
@@ -537,6 +544,7 @@ export async function startTestServer({
     database,
     sockets,
     telegram,
+    guffshuff,
     google,
     current: () => managers,
     async restart() {
@@ -545,6 +553,7 @@ export async function startTestServer({
       ;({ hub } = await boot(port))
       await managers.whatsapp.resumeAll()
       await managers.telegram.resumeAll()
+      await managers.guffshuff.resumeAll()
     },
     async close() {
       await shutdown()

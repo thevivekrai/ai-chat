@@ -5,10 +5,10 @@ import { Button } from '@/components/ui/Button'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { api, type PublicAccount } from '@/data/api'
 import { deviceUsage } from '@/data/server/deviceStore'
-import { MESSAGES_KEPT_PER_CHAT, type DatabaseProblem, type WhatsAppLinkResult } from '@/data/server/types'
+import { MESSAGES_KEPT_PER_CHAT, type DatabaseProblem, type LinkedNetwork, type WhatsAppLinkResult } from '@/data/server/types'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
-import { linkedNetworkConnected, unlinkNetwork } from '@/store/actions'
+import { LINKED_NAMES, linkedNetworkConnected, unlinkNetwork } from '@/store/actions'
 import { useConnections } from '@/store/connections'
 import { useSession } from '@/store/session'
 import { Code, DatabaseHelp } from './DatabaseHelp'
@@ -44,6 +44,7 @@ export function LinkedAccounts() {
       {features?.storage === 'temporary' && <TemporaryStorage problem={features.databaseProblem} />}
       <WhatsAppCard account={server?.whatsapp ?? null} />
       <TelegramCard account={server?.telegram ?? null} enabled={!!features?.telegram} />
+      <GuffshuffCard account={server?.guffshuff ?? null} enabled={!!features?.guffshuff} />
       <WhereChatsAreKept />
     </>
   )
@@ -499,7 +500,7 @@ function TelegramCard({ account, enabled }: { account: PublicAccount | null; ena
 /* ── Shared ────────────────────────────────────────────────────────────────── */
 
 /** Runs once when an account finishes linking (not when the page opens on a linked account). */
-function useLinkedOnce(network: 'whatsapp' | 'telegram', status: PublicAccount['status'] | null, then: () => void) {
+function useLinkedOnce(network: LinkedNetwork, status: PublicAccount['status'] | null, then: () => void) {
   const previous = useRef(status)
   const callback = useRef(then)
   useEffect(() => {
@@ -532,9 +533,9 @@ function LinkStatusPill({ account }: { account: PublicAccount }) {
   )
 }
 
-function LinkedFooter({ account, network }: { account: PublicAccount; network: 'whatsapp' | 'telegram' }) {
+function LinkedFooter({ account, network }: { account: PublicAccount; network: LinkedNetwork }) {
   const unlink = useAsync()
-  const name = network === 'whatsapp' ? 'WhatsApp' : 'Telegram'
+  const name = LINKED_NAMES[network]
   return (
     <div className="mt-3 space-y-3 border-t border-line pt-3">
       {account.detail && (
@@ -559,8 +560,75 @@ function LinkedFooter({ account, network }: { account: PublicAccount; network: '
   )
 }
 
+/** Guffshuff, the user's own chat site: it signs in the way its own website does. */
+function GuffshuffCard({ account, enabled }: { account: PublicAccount | null; enabled: boolean }) {
+  const status = account?.status ?? null
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [show, setShow] = useState(false)
+  const link = useAsync()
+  const linked = status === 'connected' || status === 'error'
+
+  useLinkedOnce('guffshuff', status, () => {
+    setUsername('')
+    setPassword('')
+  })
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    void link.run(() => api.connections.linkGuffshuff(username, password))
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        icon={<NetworkIcon network="guffshuff" className="size-5" />}
+        title={linked && account?.label ? `Guffshuff · ${account.label}` : 'Guffshuff'}
+        aside={account && <LinkStatusPill account={account} />}
+      >
+        {linked
+          ? 'Signed in as you. Your Guffshuff chats come in here, and replies go out as you.'
+          : 'Your own chat site. Sign in with the username and password you use there; your chats then sit alongside the rest.'}
+      </CardHeader>
+
+      {linked ? (
+        <LinkedFooter account={account!} network="guffshuff" />
+      ) : !enabled ? (
+        <p className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-muted">
+          Not set up on this server yet: it needs the site&rsquo;s address in <Code>GUFFSHUFF_URL</Code>.
+        </p>
+      ) : (
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          <Field label="Guffshuff username">
+            <Input
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="your username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Password"
+            hint="Kept encrypted on your Sytext server, so the link signs itself in again when Guffshuff&rsquo;s weekly session runs out."
+          >
+            <PasswordInput value={password} onChange={setPassword} visible={show} onToggle={() => setShow((v) => !v)} autoComplete="off" />
+          </Field>
+          {link.error && <ErrorText>{link.error}</ErrorText>}
+          <Button type="submit" size="sm" variant="primary" disabled={link.busy || !username.trim() || !password}>
+            {link.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />} Sign in and link
+          </Button>
+          <p className="text-[11px] leading-relaxed text-faint">
+            Linking reads your conversations in, which marks them read on Guffshuff, as opening them there would.
+          </p>
+        </form>
+      )}
+    </Card>
+  )
+}
+
 /** Why an account isn't linked any more, and a way to remove what's left of it. */
-function StoppedNote({ account, network }: { account: PublicAccount; network: 'whatsapp' | 'telegram' }) {
+function StoppedNote({ account, network }: { account: PublicAccount; network: LinkedNetwork }) {
   const forget = useAsync()
   return (
     <div className="space-y-1.5">

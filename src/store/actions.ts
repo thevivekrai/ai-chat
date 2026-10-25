@@ -7,7 +7,7 @@ import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/d
 import type { MessageAction } from '@/data/types'
 import { myReaction } from '@/data/reactions'
 import { serverApi } from '@/data/server/serverApi'
-import { MAX_CAPTION } from '@/data/server/types'
+import { LINKED_PREFIXES, MAX_CAPTION } from '@/data/server/types'
 import { isAtLeast } from '@/lib/media'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
@@ -393,10 +393,11 @@ export async function applyConnectorFix(id: ConnectorId, fixId: string) {
 
 /* ── Accounts linked on the server ────────────────────────────────────────── */
 
-export const LINKED_NAMES: Record<LinkedNetwork, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram' }
+export const LINKED_NAMES: Record<LinkedNetwork, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram', guffshuff: 'Guffshuff' }
+
 
 /** Chats linked on the server (as opposed to the demo or this browser's connectors). */
-export const isServerThread = (threadId: string) => threadId.startsWith('wa:') || threadId.startsWith('tga:')
+export const isServerThread = (threadId: string) => Object.values(LINKED_PREFIXES).some((prefix) => threadId.startsWith(prefix))
 
 /** Called when a link finishes; the chats arrive as they sync. */
 export function linkedNetworkConnected(network: LinkedNetwork) {
@@ -405,7 +406,7 @@ export function linkedNetworkConnected(network: LinkedNetwork) {
 
 export async function unlinkNetwork(network: LinkedNetwork) {
   await api.connections.unlink(network)
-  const prefix = network === 'whatsapp' ? 'wa:' : 'tga:'
+  const prefix = LINKED_PREFIXES[network]
   forgetThreadsHere((id) => id.startsWith(prefix))
   toast({
     title: `${LINKED_NAMES[network]} unlinked`,

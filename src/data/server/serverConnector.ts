@@ -24,6 +24,24 @@ import {
 
 type MessageChange = Extract<ConnectorEvent, { type: 'message.created' | 'message.updated' }>
 
+/**
+ * Guffshuff is the user's own site: text and photos, and it tells people when their messages were
+ * read. It has no replies, reactions, edits, unsending or "typing…", and it hands over a whole
+ * conversation at once, so there is never more history to fetch. Pinning and starring are kept by
+ * the Sytext server, as they are for every network that has no such thing.
+ */
+const GUFFSHUFF_CAPABILITIES: ChatCapabilities = {
+  reply: false,
+  react: false,
+  typing: false,
+  history: false,
+  files: true,
+  edit: false,
+  delete: true,
+  pin: true,
+  star: true,
+}
+
 /** WhatsApp and Telegram, linked on the server, both do all of it. */
 const LINKED_CAPABILITIES: ChatCapabilities = {
   reply: true,
@@ -50,7 +68,7 @@ const GAP_PAGES = 3
 const NOTE_HERE_EVERY_MS = 5 * 60_000
 const GAP_CHATS = 20
 
-const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:' }
+const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:' }
 
 const hintOf = (m: Message, withBody = false): MessageHint => ({
   id: m.id,
@@ -164,8 +182,8 @@ export class ServerConnector implements Connector {
     return this.qrEvents.on(({ network, qr }) => listener(network, qr))
   }
 
-  capabilities(): ChatCapabilities {
-    return LINKED_CAPABILITIES
+  capabilities(threadId: string): ChatCapabilities {
+    return threadId.startsWith(PREFIX.guffshuff) ? GUFFSHUFF_CAPABILITIES : LINKED_CAPABILITIES
   }
 
   start() {

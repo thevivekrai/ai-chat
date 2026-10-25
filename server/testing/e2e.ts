@@ -372,6 +372,11 @@ createServer(async (req, res) => {
         }),
       )
       return
+    } else if (req.url === '/guffshuff/sent') {
+      res.writeHead(200).end(JSON.stringify(server.guffshuff.state.sent))
+      return
+    } else if (req.url === '/guffshuff/message') {
+      server.guffshuff.write(input.from ?? 'u-asha', input.text)
     } else if (req.url === '/ai/calls') {
       res.writeHead(200).end(JSON.stringify(aiCalls))
       return
