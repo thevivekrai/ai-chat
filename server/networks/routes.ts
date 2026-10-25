@@ -33,6 +33,9 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
   const guffshuffLimit = limited('guffshuff', 10)
   // Instagram locks an account out after a few failed sign-ins, so this is the slowest of all.
   const instagramLimit = limited('instagram', 8)
+  // Typing the code it sent is not guessing at a password, and a security check can take a few
+  // goes, so that has room of its own rather than eating the sign-in's.
+  const instagramCodeLimit = limited('instagram:code', 20)
 
   router.get('/accounts', signedIn, async (_req, res) => {
     res.json({ accounts: await accounts.list(userIdOf(res)) })
@@ -86,7 +89,7 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
     res.json(await instagram.link(userIdOf(res), { username, password }))
   })
 
-  router.post('/link/instagram/verify', signedIn, instagramLimit, async (req, res) => {
+  router.post('/link/instagram/verify', signedIn, instagramCodeLimit, async (req, res) => {
     res.json(await instagram.verifyCode(userIdOf(res), field(req.body, 'code', { max: 16 })))
   })
 
