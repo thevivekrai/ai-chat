@@ -52,6 +52,34 @@ describe.skipIf(!TEST_MONGODB_URI)('Instagram DMs', () => {
     }
   })
 
+  it('finds the token in the page’s own data when no cookie comes with it', async () => {
+    const ig = server.instagram
+    const browser = await newUser('ig-csrf@example.com')
+    ig.state.csrfVia = 'shared_data'
+    try {
+      const result = await link(browser)
+      expect(result.json.error ?? null).toBeNull()
+      expect(result.status).toBe(200)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'connected', label: '@aarav.mehta' })
+    } finally {
+      ig.state.csrfVia = 'page'
+    }
+  })
+
+  it('says so plainly when Instagram turns the server away', async () => {
+    const ig = server.instagram
+    const browser = await newUser('ig-blocked@example.com')
+    ig.state.blocked = true
+    try {
+      const refused = await link(browser)
+      expect(refused.status).toBe(502)
+      expect(refused.json.error).toMatch(/turned this server away \(403\)/i)
+      expect(refused.json.error).toMatch(/nothing to do with your password/i)
+    } finally {
+      ig.state.blocked = false
+    }
+  })
+
   it('links, brings the DMs in, and sends and receives', async () => {
     const ig = server.instagram
     ig.write(PRIYA_THREAD, PRIYA, 'Are the planters still available?')

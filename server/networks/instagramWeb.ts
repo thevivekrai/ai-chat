@@ -120,7 +120,7 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
   async function send(
     state: Saved,
     path: string,
-    { form, headers }: { form?: Record<string, string>; headers?: Record<string, string> } = {},
+    { form, headers, follow }: { form?: Record<string, string>; headers?: Record<string, string>; follow?: boolean } = {},
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     let res: Response
     try {
@@ -139,7 +139,9 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
           ...(Object.keys(state.jar).length ? { cookie: cookieHeader(state.jar) } : {}),
         },
         ...(form ? { body: new URLSearchParams(form).toString() } : {}),
-        redirect: 'manual',
+        // Pages send you round the houses (a language or consent hop) before setting cookies; the
+        // XHR endpoints answer where they stand, and a redirect from one is worth seeing.
+        redirect: follow ? 'follow' : 'manual',
       })
     } catch {
       throw new HttpError(503, "Couldn't reach Instagram.")
@@ -175,16 +177,36 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
 
   /* ── Signing in ──────────────────────────────────────────────────────────── */
 
-  /** A fresh visit: Instagram hands out the csrf token and device cookies the login needs. */
+/**
+   * A fresh visit, for the csrf token and device cookies the login needs. Instagram gives the token
+   * out in different ways depending on what it makes of the caller — as a cookie on a page, or
+   * inside a page's own bootstrap data — so this tries each in turn and takes the first that comes.
+   */
   async function visit(): Promise<Saved> {
     const state: Saved = { jar: {}, userAgent: USER_AGENT }
-    await send(state, '/accounts/login/', { headers: { accept: 'text/html' } })
-    if (!state.jar.csrftoken) {
-      // Some edges answer the login page without setting it; this endpoint always does.
-      await send(state, '/api/v1/public/landing_info/')
+    const tried: { path: string; status: number }[] = []
+    for (const path of ['/accounts/login/', '/', '/data/shared_data/', '/api/v1/public/landing_info/']) {
+      const page = !path.startsWith('/api/') && path !== '/data/shared_data/'
+      const { status, body } = await send(state, path, {
+        follow: true,
+        ...(page ? { headers: { accept: 'text/html,application/xhtml+xml' } } : {}),
+      })
+      tried.push({ path, status })
+      const token = state.jar.csrftoken ?? csrfIn(body)
+      if (token) state.jar.csrftoken = token
+      if (state.jar.csrftoken) return state
     }
-    if (!state.jar.csrftoken) throw new HttpError(502, "Instagram didn't start a session. Try again in a few minutes.")
-    return state
+    const where = tried.map(({ path, status }) => `${path} ${status}`).join(', ')
+    console.warn('[instagram] no csrf token:', where)
+    // Hosts' addresses are blocked wholesale, which is worth saying: it isn't the password, and
+    // waiting won't help either.
+    if (tried.every(({ status }) => status === 403 || status === 429)) {
+      throw new HttpError(
+        502,
+        `Instagram turned this server away (${tried[0]!.status}). It blocks addresses belonging to hosting providers like Render, so signing in from the server may not be possible at all — nothing to do with your password.`,
+      )
+    }
+    throw new HttpError(502, `Instagram didn't start a session (${where}). Try again in a few minutes.`)
   }
 
   /**
@@ -325,6 +347,13 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
 }
 
 /* ── Reading what Instagram sends ────────────────────────────────────────────── */
+
+/** The csrf token as a page's bootstrap data carries it, when no cookie came with it. */
+function csrfIn(body: Record<string, unknown>): string | undefined {
+  const config = (body.config ?? {}) as Record<string, unknown>
+  const token = config.csrf_token ?? body.csrf_token
+  return typeof token === 'string' && token.length > 8 ? token : undefined
+}
 
 const str = (value: unknown) => (typeof value === 'string' ? value : typeof value === 'number' ? String(value) : undefined)
 
