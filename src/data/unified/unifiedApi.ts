@@ -344,6 +344,7 @@ export function createUnifiedApi(): InboxApi {
       matrix: connectors.get('matrix')?.connector.status() ?? null,
       server: server && {
         status: server.connector.status(),
+        known: server.connector.accountsKnown(),
         whatsapp: linked.find((a) => a.network === 'whatsapp') ?? null,
         telegram: linked.find((a) => a.network === 'telegram') ?? null,
         guffshuff: linked.find((a) => a.network === 'guffshuff') ?? null,

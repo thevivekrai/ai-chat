@@ -112,6 +112,8 @@ export class ServerConnector implements Connector {
   private messages = new Map<string, Message>()
   private contacts = new Map<string, Contact>()
   private linked = new Map<LinkedNetwork, PublicAccount>()
+  /** Whether the server has said which accounts are linked; until it has, nothing is claimed. */
+  private knowLinked = false
   private readonly events = new Emitter<ConnectorEvent>()
   /** The server's clock less this device's, as of the last load (see noteHere). */
   private serverOffset: number | null = null
@@ -173,6 +175,14 @@ export class ServerConnector implements Connector {
     return [...this.linked.values()]
   }
 
+  /**
+   * Whether the server has said what's linked yet. Until it has, the app says it's looking rather
+   * than that nothing is linked: on a server waking up, the inbox can take a minute to answer.
+   */
+  accountsKnown(): boolean {
+    return this.knowLinked
+  }
+
   onAccounts(listener: (accounts: PublicAccount[]) => void) {
     return this.accountEvents.on(listener)
   }
@@ -190,7 +200,25 @@ export class ServerConnector implements Connector {
     if (this.running) return
     this.running = true
     void this.device()
+    void this.askWhatsLinked()
     this.open()
+  }
+
+  /**
+   * Which accounts are linked, asked for on its own: a tiny answer that arrives long before the
+   * whole inbox does, so Settings doesn't offer to link what is already linked.
+   */
+  private async askWhatsLinked() {
+    try {
+      const accounts = await serverApi.accounts()
+      if (!this.running || this.forgotten || this.knowLinked) return
+      this.linked = new Map(accounts.map((a) => [a.network, a]))
+      this.knowLinked = true
+      this.accountEvents.emit(this.accounts())
+    } catch (error) {
+      // The inbox load that follows says what's wrong; a lost session is worth acting on now.
+      if (isSignedOut(error)) this.signedOut()
+    }
   }
 
   stop() {
@@ -361,6 +389,7 @@ export class ServerConnector implements Connector {
     this.contacts.clear()
     this.tasks.clear()
     this.linked.clear()
+    this.knowLinked = false
     if (this.restoring) await (await this.restoring.catch(() => null))?.clear()
     else await wipeDeviceStore()
   }
@@ -535,6 +564,7 @@ export class ServerConnector implements Connector {
 
     if (inbox.tasks) this.tasks = new Map(inbox.tasks.map((t) => [t.id, t]))
     this.linked = new Map(inbox.accounts.map((a) => [a.network, a]))
+    this.knowLinked = true
     this.accountEvents.emit(this.accounts())
     this.setStatus({ state: 'online' })
     this.events.emit({ type: 'reloaded' })
