@@ -1,5 +1,6 @@
 import type {
   AuthResult,
+  InstagramLinkResult,
   MessageHint,
   PublicAccount,
   PublicUser,
@@ -174,6 +175,10 @@ export const serverApi = {
   telegramVerify: (code: string) => request<TelegramVerifyResult>('POST', '/link/telegram/verify', { code }),
   telegramPassword: (password: string) => request<TelegramVerifyResult>('POST', '/link/telegram/password', { password }),
   unlinkTelegram: () => request<{ ok: true }>('DELETE', '/link/telegram'),
+  linkInstagram: (username: string, password: string) =>
+    request<InstagramLinkResult>('POST', '/link/instagram', { username, password }),
+  instagramVerify: (code: string) => request<InstagramLinkResult>('POST', '/link/instagram/verify', { code }),
+  unlinkInstagram: () => request<{ ok: true }>('DELETE', '/link/instagram'),
   linkGuffshuff: (username: string, password: string) =>
     request<{ username: string; fullName: string }>('POST', '/link/guffshuff', { username, password }),
   unlinkGuffshuff: () => request<{ ok: true }>('DELETE', '/link/guffshuff'),

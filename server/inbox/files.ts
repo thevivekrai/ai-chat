@@ -24,6 +24,7 @@ export type FileSource =
   | { n: 'wa'; key: { remoteJid: string; id: string; fromMe: boolean; participant?: string }; type: string; media: Record<string, string | number> }
   | { n: 'tg'; chat: string; id: number }
   | { n: 'gs'; url: string }
+  | { n: 'ig'; url: string }
 
 export type FileRef = FileSource & { name: string; mime?: string }
 

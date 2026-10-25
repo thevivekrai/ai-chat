@@ -1,0 +1,417 @@
+import { randomUUID } from 'node:crypto'
+import { HttpError } from '../http.ts'
+
+/**
+ * Instagram's own web API — the one instagram.com talks to — as the bridge needs it.
+ *
+ * There is no official way in: Meta's Messaging API covers business accounts' incoming DMs only,
+ * never a person's own inbox. So this signs in the way the website does and reads the endpoints
+ * its Direct page reads. Meta doesn't support that, a sign-in from a server is often challenged,
+ * and the endpoints change without notice — so every answer here is turned into something the
+ * user can act on rather than a stack trace.
+ */
+
+const BASE = 'https://www.instagram.com'
+/** The web app's own id. These endpoints answer only with it. */
+const APP_ID = '936619743392459'
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+/** How many chats, and how much of each, one look at the inbox brings back. */
+const THREADS = 20
+const PER_THREAD = 20
+
+export interface Credentials {
+  username: string
+  password: string
+}
+
+export interface IgUser {
+  id: string
+  username: string
+  fullName?: string
+  pictureUrl?: string
+}
+
+export interface IgMessage {
+  id: string
+  threadId: string
+  /** Who sent it, as an Instagram user id. */
+  userId: string
+  text?: string
+  photoUrl?: string
+  /** Milliseconds. */
+  sentAt: number
+}
+
+export interface IgThread {
+  id: string
+  title?: string
+  group: boolean
+  people: IgUser[]
+  unread: number
+  /** Milliseconds. */
+  lastAt: number
+  /** Oldest first. */
+  messages: IgMessage[]
+}
+
+/** A sign-in Instagram wants a code for, carried back to the user and in again with the code. */
+export interface PendingSignIn {
+  username: string
+  identifier: string
+  /** Where Instagram sent the code. */
+  via: 'app' | 'sms' | 'email'
+  state: string
+}
+
+export type SignInResult = { done: true; session: InstagramSession } | { done: false; pending: PendingSignIn }
+
+/** One signed-in account. `save()` is sealed and kept, so a restart needs no password. */
+export interface InstagramSession {
+  save(): string
+  /** The chats, newest first, with the latest messages of each — and who this is. */
+  inbox(): Promise<{ me: IgUser; threads: IgThread[] }>
+  sendText(threadId: string, text: string): Promise<IgMessage>
+  markSeen(threadId: string, messageId: string): Promise<void>
+  /** A photo or profile picture from Instagram's image hosts. */
+  fetchImage(url: string): Promise<{ data: Buffer; contentType: string } | null>
+}
+
+/** Instagram, as the bridge talks to it. Tests stand in for this. */
+export interface InstagramSite {
+  signIn(credentials: Credentials): Promise<SignInResult>
+  /** The code Instagram asked for: two-factor, or one it sent to confirm the sign-in. */
+  submitCode(pending: PendingSignIn, code: string): Promise<SignInResult>
+  /** A session from what `save()` gave, ready to use. */
+  restore(saved: string): InstagramSession
+}
+
+interface Jar {
+  [name: string]: string
+}
+
+interface Saved {
+  jar: Jar
+  /** The same browser each time: changing it mid-session is what gets a session thrown out. */
+  userAgent: string
+}
+
+export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fetch?: typeof fetch; baseUrl?: string } = {}): InstagramSite {
+  /* ── Requests ────────────────────────────────────────────────────────────── */
+
+  const cookieHeader = (jar: Jar) =>
+    Object.entries(jar)
+      .map(([name, value]) => `${name}=${value}`)
+      .join('; ')
+
+  /** Keeps whatever Instagram sets, so the session (and its csrf token) stays current. */
+  function keepCookies(jar: Jar, res: Response) {
+    const headers = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? []
+    const all = headers.length ? headers : [res.headers.get('set-cookie') ?? '']
+    for (const header of all) {
+      for (const part of header.split(/,(?=[^;]+=)/)) {
+        const [name, ...rest] = (part.split(';')[0] ?? '').trim().split('=')
+        const value = rest.join('=')
+        if (name && value && value !== '""') jar[name] = value
+      }
+    }
+  }
+
+  async function send(
+    state: Saved,
+    path: string,
+    { form, headers }: { form?: Record<string, string>; headers?: Record<string, string> } = {},
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    let res: Response
+    try {
+      res = await call(`${baseUrl}${path}`, {
+        method: form ? 'POST' : 'GET',
+        headers: {
+          'user-agent': state.userAgent,
+          accept: '*/*',
+          'accept-language': 'en-US,en;q=0.9',
+          'x-ig-app-id': APP_ID,
+          'x-requested-with': 'XMLHttpRequest',
+          'x-csrftoken': state.jar.csrftoken ?? '',
+          referer: `${baseUrl}/`,
+          ...(form ? { 'content-type': 'application/x-www-form-urlencoded', origin: baseUrl } : {}),
+          ...headers,
+          ...(Object.keys(state.jar).length ? { cookie: cookieHeader(state.jar) } : {}),
+        },
+        ...(form ? { body: new URLSearchParams(form).toString() } : {}),
+        redirect: 'manual',
+      })
+    } catch {
+      throw new HttpError(503, "Couldn't reach Instagram.")
+    }
+    keepCookies(state.jar, res)
+    const text = await res.text().catch(() => '')
+    let body: Record<string, unknown> = {}
+    try {
+      body = JSON.parse(text) as Record<string, unknown>
+    } catch {
+      // A login page or a block page rather than JSON: the caller says what that means.
+    }
+    return { status: res.status, body }
+  }
+
+  /** The signed-in calls. A session Instagram has thrown out says so plainly. */
+  async function asUser(state: Saved, path: string, form?: Record<string, string>) {
+    const { status, body } = await send(state, path, {
+      ...(form ? { form } : {}),
+      headers: { referer: `${baseUrl}/direct/inbox/` },
+    })
+    if (status === 401 || status === 403 || body.message === 'login_required') {
+      throw new HttpError(401, 'Instagram signed this session out. Link Instagram again.')
+    }
+    if (status === 429 || body.message === 'feedback_required') {
+      throw new HttpError(429, 'Instagram is asking this account to slow down. It will try again in a while.')
+    }
+    if (status >= 400 || (body.status && body.status !== 'ok')) {
+      throw new HttpError(502, `Instagram answered with an error (${status}) for ${path.split('?')[0]}.`)
+    }
+    return body
+  }
+
+  /* ── Signing in ──────────────────────────────────────────────────────────── */
+
+  /** A fresh visit: Instagram hands out the csrf token and device cookies the login needs. */
+  async function visit(): Promise<Saved> {
+    const state: Saved = { jar: {}, userAgent: USER_AGENT }
+    await send(state, '/accounts/login/', { headers: { accept: 'text/html' } })
+    if (!state.jar.csrftoken) {
+      // Some edges answer the login page without setting it; this endpoint always does.
+      await send(state, '/api/v1/public/landing_info/')
+    }
+    if (!state.jar.csrftoken) throw new HttpError(502, "Instagram didn't start a session. Try again in a few minutes.")
+    return state
+  }
+
+  /**
+   * The password as the website sends it: Instagram's own browser form sends it in the clear
+   * inside HTTPS, tagged with the time, when no public key is in play.
+   */
+  const encode = (password: string) => `#PWD_INSTAGRAM_BROWSER:0:${Math.floor(Date.now() / 1000)}:${password}`
+
+  function signedIn(state: Saved): InstagramSession | null {
+    return state.jar.sessionid ? session(state) : null
+  }
+
+  /** What Instagram said about a sign-in attempt, in words the user can do something with. */
+  function refuse(status: number, body: Record<string, unknown>): never {
+    const message = typeof body.message === 'string' ? body.message : ''
+    if (message === 'checkpoint_required' || body.checkpoint_url) {
+      throw new HttpError(
+        409,
+        'Instagram wants you to confirm this sign-in. Open Instagram on your phone (or instagram.com), approve the login it is asking about, then link again.',
+      )
+    }
+    if (body.user === false) throw new HttpError(401, "Instagram doesn't know that username.")
+    if (body.authenticated === false) throw new HttpError(401, 'That password is wrong.')
+    if (status === 429 || /wait a few minutes/i.test(message)) {
+      throw new HttpError(429, 'Instagram asked to wait a few minutes before trying again.')
+    }
+    throw new HttpError(502, message ? `Instagram refused the sign-in: ${message}` : `Instagram refused the sign-in (${status}).`)
+  }
+
+  const twoFactorVia = (info: Record<string, unknown>): PendingSignIn['via'] =>
+    info.totp_two_factor_on ? 'app' : info.sms_two_factor_on ? 'sms' : 'email'
+
+  return {
+    async signIn({ username, password }: Credentials): Promise<SignInResult> {
+      const state = await visit()
+      const { status, body } = await send(state, '/api/v1/web/accounts/login/ajax/', {
+        form: {
+          username,
+          enc_password: encode(password),
+          optIntoOneTap: 'false',
+          queryParams: '{}',
+          trustedDeviceRecords: '{}',
+        },
+      })
+      const session = signedIn(state)
+      if (session) return { done: true, session }
+
+      const info = (body.two_factor_info ?? {}) as Record<string, unknown>
+      if (body.two_factor_required && typeof info.two_factor_identifier === 'string') {
+        return {
+          done: false,
+          pending: { username, identifier: info.two_factor_identifier, via: twoFactorVia(info), state: JSON.stringify(state) },
+        }
+      }
+      refuse(status, body)
+    },
+
+    async submitCode(pending: PendingSignIn, code: string): Promise<SignInResult> {
+      const state = JSON.parse(pending.state) as Saved
+      const { status, body } = await send(state, '/api/v1/web/accounts/login/two_factor/', {
+        form: {
+          username: pending.username,
+          verificationCode: code,
+          identifier: pending.identifier,
+          verification_method: pending.via === 'app' ? '3' : pending.via === 'sms' ? '1' : '6',
+          trust_signal: 'true',
+          queryParams: '{}',
+        },
+      })
+      const session = signedIn(state)
+      if (session) return { done: true, session }
+      if (typeof body.message === 'string' && /code|invalid/i.test(body.message)) {
+        throw new HttpError(401, 'That code was not accepted. Instagram can send another one.')
+      }
+      refuse(status, body)
+    },
+
+    restore(saved: string) {
+      return session(JSON.parse(saved) as Saved)
+    },
+  }
+
+  /* ── A signed-in account ─────────────────────────────────────────────────── */
+
+  function session(state: Saved): InstagramSession {
+    return {
+      save: () => JSON.stringify(state),
+
+      async inbox() {
+        const query = new URLSearchParams({
+          visual_message_return_type: 'unseen',
+          persistentBadging: 'true',
+          folder: '0',
+          limit: String(THREADS),
+          thread_message_limit: String(PER_THREAD),
+        })
+        const body = await asUser(state, `/api/v1/direct_v2/inbox/?${query.toString()}`)
+        const viewer = (body.viewer ?? {}) as Record<string, unknown>
+        const me = personOf(viewer)
+        if (!me) throw new HttpError(502, "Instagram didn't say whose inbox that is.")
+        const inbox = (body.inbox ?? {}) as Record<string, unknown>
+        const threads = Array.isArray(inbox.threads) ? inbox.threads : []
+        return { me, threads: threads.map((t) => threadOf(t as Record<string, unknown>, me.id)).filter((t): t is IgThread => !!t) }
+      },
+
+      async sendText(threadId, text) {
+        const context = randomUUID()
+        const body = await asUser(state, '/api/v1/direct_v2/threads/broadcast/text/', {
+          action: 'send_item',
+          thread_ids: `[${threadId}]`,
+          text,
+          client_context: context,
+          mutation_token: context,
+          offline_threading_id: context,
+        })
+        const payload = (body.payload ?? {}) as Record<string, unknown>
+        const id = str(payload.item_id)
+        if (!id) throw new HttpError(502, "Instagram didn't accept the message.")
+        return { id, threadId, userId: '', text, sentAt: millis(payload.timestamp) ?? Date.now() }
+      },
+
+      async markSeen(threadId, messageId) {
+        await asUser(state, `/api/v1/direct_v2/threads/${threadId}/items/${messageId}/seen/`, { use_unified_inbox: 'true' })
+      },
+
+      async fetchImage(url) {
+        try {
+          const res = await call(url, { headers: { 'user-agent': state.userAgent, referer: `${baseUrl}/` } })
+          const contentType = res.headers.get('content-type') ?? ''
+          if (!res.ok || !contentType.startsWith('image/')) return null
+          return { data: Buffer.from(await res.arrayBuffer()), contentType }
+        } catch {
+          return null
+        }
+      },
+    }
+  }
+}
+
+/* ── Reading what Instagram sends ────────────────────────────────────────────── */
+
+const str = (value: unknown) => (typeof value === 'string' ? value : typeof value === 'number' ? String(value) : undefined)
+
+/** Instagram counts in microseconds. */
+function millis(value: unknown): number | undefined {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  return Math.round(n / 1000)
+}
+
+function personOf(user: Record<string, unknown>): IgUser | null {
+  const id = str(user.pk ?? user.pk_id ?? user.id)
+  const username = str(user.username)
+  if (!id || !username) return null
+  return {
+    id,
+    username,
+    ...(str(user.full_name) ? { fullName: str(user.full_name)! } : {}),
+    ...(str(user.profile_pic_url) ? { pictureUrl: str(user.profile_pic_url)! } : {}),
+  }
+}
+
+/** The photo in a message, at the largest size Instagram offers. */
+function photoOf(item: Record<string, unknown>): string | undefined {
+  const media = (item.media ?? item.visual_media ?? {}) as Record<string, unknown>
+  const inner = ((media.media as Record<string, unknown> | undefined) ?? media) as Record<string, unknown>
+  const versions = (inner.image_versions2 ?? {}) as Record<string, unknown>
+  const candidates = Array.isArray(versions.candidates) ? (versions.candidates as Record<string, unknown>[]) : []
+  const best = candidates.reduce<Record<string, unknown> | null>((a, b) => (Number(b.width ?? 0) > Number(a?.width ?? 0) ? b : a), null)
+  return str(best?.url)
+}
+
+function messageOf(item: Record<string, unknown>, threadId: string): IgMessage | null {
+  const id = str(item.item_id)
+  const userId = str(item.user_id)
+  const sentAt = millis(item.timestamp)
+  if (!id || !userId || !sentAt) return null
+  const photoUrl = photoOf(item)
+  const text =
+    str(item.text) ??
+    (item.item_type === 'like' ? '❤️' : undefined) ??
+    str((item.link as Record<string, unknown> | undefined)?.text) ??
+    (photoUrl ? undefined : describe(item))
+  return { id, threadId, userId, sentAt, ...(text ? { text } : {}), ...(photoUrl ? { photoUrl } : {}) }
+}
+
+/** Something Instagram sent that this app can't show: said in words rather than left blank. */
+function describe(item: Record<string, unknown>): string {
+  switch (str(item.item_type)) {
+    case 'voice_media':
+      return '🎤 Voice message — open Instagram to listen'
+    case 'video_call_event':
+      return '📞 Video call'
+    case 'clip':
+    case 'media_share':
+      return '📎 A post, shared — open Instagram to see it'
+    case 'story_share':
+      return '📸 A story, shared — open Instagram to see it'
+    case 'animated_media':
+      return '🎞️ A GIF'
+    default:
+      return '📎 Something Instagram sent that Sytext can’t show yet'
+  }
+}
+
+function threadOf(thread: Record<string, unknown>, meId: string): IgThread | null {
+  const id = str(thread.thread_id)
+  if (!id) return null
+  const users = Array.isArray(thread.users) ? (thread.users as Record<string, unknown>[]) : []
+  const people = users.map(personOf).filter((p): p is IgUser => !!p)
+  const items = Array.isArray(thread.items) ? (thread.items as Record<string, unknown>[]) : []
+  // Instagram sends the newest first; chats read better the other way round.
+  const messages = items
+    .map((item) => messageOf(item, id))
+    .filter((m): m is IgMessage => !!m)
+    .sort((a, b) => a.sentAt - b.sentAt)
+  const group = !!thread.is_group || people.length > 1
+  const mine = ((thread.last_seen_at ?? {}) as Record<string, { timestamp?: unknown }>)[meId]
+  const seenAt = millis(mine?.timestamp) ?? 0
+  const unread = thread.read_state === 1 ? Math.max(1, messages.filter((m) => m.userId !== meId && m.sentAt > seenAt).length) : 0
+  return {
+    id,
+    ...(str(thread.thread_title) ? { title: str(thread.thread_title)! } : {}),
+    group,
+    people,
+    unread,
+    lastAt: millis(thread.last_activity_at) ?? messages.at(-1)?.sentAt ?? Date.now(),
+    messages,
+  }
+}

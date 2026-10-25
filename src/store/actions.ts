@@ -403,7 +403,12 @@ export async function applyConnectorFix(id: ConnectorId, fixId: string) {
 
 /* ── Accounts linked on the server ────────────────────────────────────────── */
 
-export const LINKED_NAMES: Record<LinkedNetwork, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram', guffshuff: 'Guffshuff' }
+export const LINKED_NAMES: Record<LinkedNetwork, string> = {
+  whatsapp: 'WhatsApp',
+  telegram: 'Telegram',
+  guffshuff: 'Guffshuff',
+  instagram: 'Instagram',
+}
 
 
 /** Chats linked on the server (as opposed to the demo or this browser's connectors). */

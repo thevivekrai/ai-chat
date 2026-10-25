@@ -4,6 +4,7 @@ import { field, rateLimit, requireUser, userIdOf } from '../http.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Accounts } from './accounts.ts'
 import type { Guffshuff } from './guffshuff.ts'
+import type { Instagram } from './instagram.ts'
 import type { Telegram } from './telegram.ts'
 import type { WhatsApp } from './whatsapp.ts'
 
@@ -14,10 +15,11 @@ interface LinkDeps {
   whatsapp: WhatsApp
   telegram: Telegram
   guffshuff: Guffshuff
+  instagram: Instagram
 }
 
-/** Linking and unlinking WhatsApp, Telegram and Guffshuff. */
-export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuff }: LinkDeps): Router {
+/** Linking and unlinking WhatsApp, Telegram, Guffshuff and Instagram. */
+export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuff, instagram }: LinkDeps): Router {
   const router = Router()
   const signedIn = requireUser(tokens, col.users)
   /**
@@ -29,6 +31,8 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
   const whatsappLimit = limited('whatsapp')
   const telegramLimit = limited('telegram')
   const guffshuffLimit = limited('guffshuff', 10)
+  // Instagram locks an account out after a few failed sign-ins, so this is the slowest of all.
+  const instagramLimit = limited('instagram', 8)
 
   router.get('/accounts', signedIn, async (_req, res) => {
     res.json({ accounts: await accounts.list(userIdOf(res)) })
@@ -72,6 +76,22 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
 
   router.delete('/link/guffshuff', signedIn, async (_req, res) => {
     await guffshuff.unlink(userIdOf(res))
+    res.json({ ok: true })
+  })
+
+  /** Instagram signs in as its own website does; it often wants a code as well. */
+  router.post('/link/instagram', signedIn, instagramLimit, async (req, res) => {
+    const username = field(req.body, 'username', { max: 64 })
+    const password = field(req.body, 'password', { max: 256, trim: false })
+    res.json(await instagram.link(userIdOf(res), { username, password }))
+  })
+
+  router.post('/link/instagram/verify', signedIn, instagramLimit, async (req, res) => {
+    res.json(await instagram.verifyCode(userIdOf(res), field(req.body, 'code', { max: 16 })))
+  })
+
+  router.delete('/link/instagram', signedIn, async (_req, res) => {
+    await instagram.unlink(userIdOf(res))
     res.json({ ok: true })
   })
 

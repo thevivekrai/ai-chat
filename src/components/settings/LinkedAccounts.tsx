@@ -49,6 +49,7 @@ export function LinkedAccounts() {
         <Checking network="whatsapp" name="WhatsApp" offline={offline} />
         <Checking network="telegram" name="Telegram" offline={offline} />
         {!!features?.guffshuff && <Checking network="guffshuff" name="GuffShuff" offline={offline} />}
+        {!!features?.instagram && <Checking network="instagram" name="Instagram" offline={offline} />}
         <WhereChatsAreKept />
       </>
     )
@@ -60,6 +61,7 @@ export function LinkedAccounts() {
       <WhatsAppCard account={server?.whatsapp ?? null} />
       <TelegramCard account={server?.telegram ?? null} enabled={!!features?.telegram} />
       <GuffshuffCard account={server?.guffshuff ?? null} enabled={!!features?.guffshuff} />
+      <InstagramCard account={server?.instagram ?? null} enabled={!!features?.instagram} />
       <WhereChatsAreKept />
     </>
   )
@@ -655,6 +657,136 @@ function GuffshuffCard({ account, enabled }: { account: PublicAccount | null; en
           <p className="text-[11px] leading-relaxed text-faint">
             Linking reads your conversations in, which marks them read on Guffshuff, as opening them there would.
           </p>
+        </form>
+      )}
+    </Card>
+  )
+}
+
+/* ── Instagram ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Instagram DMs. There is no official way in for a personal account, so Sytext signs in the way
+ * instagram.com does — which Meta doesn't allow, and often challenges. The card says so plainly
+ * rather than leaving it to be found out.
+ */
+function InstagramCard({ account, enabled }: { account: PublicAccount | null; enabled: boolean }) {
+  const status = account?.status ?? null
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [show, setShow] = useState(false)
+  const [code, setCode] = useState('')
+  const [via, setVia] = useState<'app' | 'sms' | 'email'>('sms')
+  const link = useAsync()
+  const linked = status === 'connected' || status === 'error'
+  // A sign-in waiting for its code survives a reload: the server remembers where it got to.
+  const [step, setStep] = useState<'start' | 'code'>(status === 'linking' && account?.step === 'code' ? 'code' : 'start')
+
+  const reset = () => {
+    setUsername('')
+    setPassword('')
+    setCode('')
+    setStep('start')
+  }
+  useLinkedOnce('instagram', status, reset)
+  // A refused sign-in takes the half-made account away again; the typed username stays, so a
+  // mistyped password only costs the password.
+  const [seen, setSeen] = useState(status)
+  if (status !== seen) {
+    setSeen(status)
+    if (status === 'disconnected' || status === null) setStep('start')
+  }
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    void link.run(async () => {
+      const result = step === 'code' ? await api.connections.verifyInstagramCode(code) : await api.connections.linkInstagram(username, password)
+      if ('step' in result) {
+        setVia(result.via)
+        setStep('code')
+        setPassword('')
+      }
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        icon={<NetworkIcon network="instagram" className="size-5" />}
+        title={linked && account?.label ? `Instagram · ${account.label}` : 'Instagram'}
+        aside={account && <LinkStatusPill account={account} />}
+      >
+        {linked
+          ? 'Signed in as you. Your DMs come in here, and replies go out as you. New messages arrive within about a minute.'
+          : 'Your Instagram DMs, signed in to as the website does. Text only, and no reactions, replies or unsending.'}
+      </CardHeader>
+
+      {linked ? (
+        <LinkedFooter account={account!} network="instagram" />
+      ) : !enabled ? (
+        <p className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-muted">
+          Turned off on this server (<Code>INSTAGRAM=off</Code>).
+        </p>
+      ) : (
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          {step === 'start' ? (
+            <>
+              <Field label="Instagram username">
+                <Input
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="your.username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </Field>
+              <Field label="Password" hint="Used once, to sign in. Only the session Instagram gives back is kept, encrypted.">
+                <PasswordInput value={password} onChange={setPassword} visible={show} onToggle={() => setShow((v) => !v)} autoComplete="off" />
+              </Field>
+            </>
+          ) : (
+            <Field
+              label="Instagram code"
+              hint={
+                via === 'app'
+                  ? 'The six digits from your authentication app.'
+                  : `Instagram sent a code by ${via === 'sms' ? 'text message' : 'email'}.`
+              }
+            >
+              <Input
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="123456"
+                maxLength={12}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </Field>
+          )}
+          {status === 'disconnected' && step === 'start' && <StoppedNote account={account!} network="instagram" />}
+          <Warning>
+            Meta doesn&rsquo;t allow apps to sign in to a personal account like this, and a sign-in from a server is
+            often challenged or blocked. It can get the account locked. Instagram may also ask you to confirm this
+            login in the app first.
+          </Warning>
+          {link.error && <ErrorText>{link.error}</ErrorText>}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              variant="primary"
+              disabled={link.busy || (step === 'code' ? !code.trim() : !username.trim() || !password)}
+            >
+              {link.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+              {step === 'code' ? 'Verify' : 'Sign in to Instagram'}
+            </Button>
+            {step === 'code' && (
+              <Button size="sm" variant="ghost" onClick={reset}>
+                Start over
+              </Button>
+            )}
+          </div>
         </form>
       )}
     </Card>

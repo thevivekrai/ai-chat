@@ -7,7 +7,7 @@ vi.mock('@/data/server/deviceStore', () => ({ wipeDeviceStore: vi.fn(async () =>
 
 const { DATABASE_RECHECK_MS, stopWatchingDatabase, useSession } = await import('./session')
 
-const base: ServerFeatures = { googleClientId: null, whatsapp: true, telegram: true, guffshuff: false, uploads: false, database: true }
+const base: ServerFeatures = { googleClientId: null, whatsapp: true, telegram: true, guffshuff: false, instagram: false, uploads: false, database: true }
 const temporary: ServerFeatures = { ...base, storage: 'temporary', databaseProblem: 'unreachable' }
 const ready: ServerFeatures = { ...base, storage: 'database' }
 const holding: ServerFeatures = { ...base, whatsapp: false, telegram: false, database: false, databaseProblem: 'auth' }
