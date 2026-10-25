@@ -71,6 +71,8 @@ let reactionUnknown: boolean
 /** Photos and files uploaded: in what order, and how many at once at most. */
 let uploads: { started: string[]; active: number; most: number }
 let inboxGate: Promise<void>
+/** Holds up the small "what's linked" answer, as a server waking up does. */
+let accountsGate: Promise<void>
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -83,6 +85,7 @@ beforeEach(async () => {
   reactionUnknown = false
   uploads = { started: [], active: 0, most: 0 }
   inboxGate = Promise.resolve()
+  accountsGate = Promise.resolve()
   for (const key of [CONFIG_KEY, LOCAL_KEY, 'tidings.mockdb']) storage.remove(key)
   writeJson(CONFIG_KEY, { demo: false })
   FakeEventSource.instances = []
@@ -97,6 +100,10 @@ beforeEach(async () => {
     const query = Object.fromEntries(url.searchParams)
     requests.push({ method, path: decodeURIComponent(url.pathname), body, ...(url.search ? { query } : {}) })
     if (session === 'expired') return json({ error: 'Sign in to continue.' }, 401)
+    if (url.pathname === '/api/accounts') {
+      await accountsGate
+      return json({ accounts: inbox.accounts })
+    }
     if (url.pathname === '/api/inbox') {
       await inboxGate
       return json(inbox)
@@ -181,6 +188,20 @@ describe('chats linked on the server', () => {
       whatsapp: { status: 'connected', label: '+919876543210' },
       telegram: null,
     })
+    stop()
+  })
+
+  it('says what is linked before the whole inbox answers', async () => {
+    // A server waking up (on a free host) can take a while over the inbox. Until then the app
+    // mustn't look as if nothing is linked — that's what makes people link WhatsApp all over again.
+    let arrive!: () => void
+    inboxGate = new Promise((resolve) => (arrive = resolve))
+    const { api, stop } = await signedIn({ waitForServer: false })
+    expect(api.connections.get().server).toMatchObject({ known: false, whatsapp: null })
+    await eventually(() => expect(api.connections.get().server?.known).toBe(true))
+    expect(api.connections.get().server?.whatsapp).toMatchObject({ status: 'connected', label: '+919876543210' })
+    arrive()
+    await eventually(() => expect(api.connections.get().server?.status.state).toBe('online'))
     stop()
   })
 

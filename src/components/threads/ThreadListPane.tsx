@@ -49,7 +49,15 @@ export function ThreadListPane({ view }: { view: ListView }) {
   const aiEnabled = useSettings((s) => s.aiEnabled)
   const now = useClock((s) => s.now)
   const views = useThreadViews()
-  const { demoShown, connected } = useConnections(useShallow((s) => ({ demoShown: s.demo, connected: hasRealAccount(s) })))
+  const { demoShown, connected, linkedKnown, serverOffline } = useConnections(
+    useShallow((s) => ({
+      demoShown: s.demo,
+      connected: hasRealAccount(s),
+      // Signed in, but the server hasn't said what's linked yet: it isn't "nothing is linked".
+      linkedKnown: !s.server || s.server.known,
+      serverOffline: s.server?.status.state === 'error',
+    })),
+  )
   const signedIn = useSession((s) => s.status === 'signed-in')
   const hintDismissed = useUi((s) => s.connectHintDismissed)
 
@@ -178,6 +186,23 @@ export function ThreadListPane({ view }: { view: ListView }) {
           </EmptyState>
         ) : status !== 'ready' ? (
           <ListSkeleton />
+        ) : views.length === 0 && !linkedKnown ? (
+          // The server is still answering (one waking up takes a moment): it may well have chats.
+          serverOffline ? (
+            <EmptyState
+              icon={<CloudOff className="size-6" />}
+              title="Can't reach the server"
+              actions={
+                <Button size="sm" onClick={() => void useInbox.getState().load()}>
+                  Try again
+                </Button>
+              }
+            >
+              Your linked accounts and their chats are on the server. This keeps trying.
+            </EmptyState>
+          ) : (
+            <ListSkeleton />
+          )
         ) : views.length === 0 ? (
           <EmptyState
             icon={<Link2 className="size-6" />}

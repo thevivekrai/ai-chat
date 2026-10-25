@@ -23,6 +23,8 @@ export function LinkedAccounts() {
   const status = useSession((s) => s.status)
   const features = useSession((s) => s.features)
   const server = useConnections((s) => s.server)
+  // Signing in doesn't mean the server has answered yet: on one waking up, that takes a moment.
+  const known = server?.known ?? false
 
   if (status !== 'signed-in') {
     return (
@@ -39,6 +41,19 @@ export function LinkedAccounts() {
     )
   }
 
+  if (!known) {
+    const offline = server?.status.state === 'error'
+    return (
+      <>
+        {features?.storage === 'temporary' && <TemporaryStorage problem={features.databaseProblem} />}
+        <Checking network="whatsapp" name="WhatsApp" offline={offline} />
+        <Checking network="telegram" name="Telegram" offline={offline} />
+        {!!features?.guffshuff && <Checking network="guffshuff" name="GuffShuff" offline={offline} />}
+        <WhereChatsAreKept />
+      </>
+    )
+  }
+
   return (
     <>
       {features?.storage === 'temporary' && <TemporaryStorage problem={features.databaseProblem} />}
@@ -47,6 +62,25 @@ export function LinkedAccounts() {
       <GuffshuffCard account={server?.guffshuff ?? null} enabled={!!features?.guffshuff} />
       <WhereChatsAreKept />
     </>
+  )
+}
+
+/**
+ * While the server hasn't said what's linked. Offering to link again here would be wrong: the
+ * links are on the server, and they're still there whether or not it has answered yet.
+ */
+function Checking({ network, name, offline }: { network: LinkedNetwork; name: string; offline: boolean }) {
+  return (
+    <Card>
+      <CardHeader icon={<NetworkIcon network={network} className="size-5" />} title={name}>
+        <span className="inline-flex items-center gap-2">
+          {!offline && <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />}
+          {offline
+            ? `Can't reach the server right now. Your ${name} link is still there; it shows again as soon as the server answers.`
+            : `Checking whether ${name} is linked…`}
+        </span>
+      </CardHeader>
+    </Card>
   )
 }
 

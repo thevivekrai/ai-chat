@@ -1,6 +1,7 @@
 import type {
   AuthResult,
   MessageHint,
+  PublicAccount,
   PublicUser,
   ServerFeatures,
   ServerInbox,
@@ -91,6 +92,8 @@ export const serverApi = {
   /* ── Linked chats ────────────────────────────────────────────────────────── */
 
   inbox: () => request<ServerInbox>('GET', '/inbox'),
+  /** Only which accounts are linked: a small answer, while the whole inbox can take a while. */
+  accounts: async () => (await request<{ accounts: PublicAccount[] }>('GET', '/accounts')).accounts,
   /**
    * The hints say what this device knows of a message, for the server to act on it if it no longer
    * keeps it (it keeps only the latest of each chat).

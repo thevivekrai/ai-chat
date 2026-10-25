@@ -105,6 +105,8 @@ export interface ConnectionsState {
   /** While signed in to a Sytext server: the connection to it, and the accounts linked there. */
   server: {
     status: ConnectorStatus
+    /** Whether the server has said what's linked yet: before that, the three below are unknown. */
+    known: boolean
     whatsapp: PublicAccount | null
     telegram: PublicAccount | null
     guffshuff: PublicAccount | null
