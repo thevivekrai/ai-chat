@@ -12,6 +12,9 @@ import { HttpError } from '../http.ts'
  */
 
 const BASE = 'https://www.instagram.com'
+/** When a security check can't be answered from here, this is the only way through it. */
+const BY_HAND =
+  "Instagram is asking for a security check Sytext can't answer. Open instagram.com (or the app), sign in as yourself and clear whatever it asks there, then link again."
 /** The web app's own id. These endpoints answer only with it. */
 const APP_ID = '936619743392459'
 const USER_AGENT =
@@ -58,6 +61,9 @@ export interface IgThread {
 /** A sign-in Instagram wants a code for, carried back to the user and in again with the code. */
 export interface PendingSignIn {
   username: string
+  /** The account's own two-factor code, or one sent to get this sign-in past a security check. */
+  kind: 'two-factor' | 'challenge'
+  /** The two-factor identifier, or the path of the security check being answered. */
   identifier: string
   /** Where Instagram sent the code. */
   via: 'app' | 'sms' | 'email'
@@ -222,12 +228,7 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
   /** What Instagram said about a sign-in attempt, in words the user can do something with. */
   function refuse(status: number, body: Record<string, unknown>): never {
     const message = typeof body.message === 'string' ? body.message : ''
-    if (message === 'checkpoint_required' || body.checkpoint_url) {
-      throw new HttpError(
-        409,
-        'Instagram wants you to confirm this sign-in. Open Instagram on your phone (or instagram.com), approve the login it is asking about, then link again.',
-      )
-    }
+    if (message === 'checkpoint_required' || body.checkpoint_url) throw new HttpError(409, BY_HAND)
     if (body.user === false) throw new HttpError(401, "Instagram doesn't know that username.")
     if (body.authenticated === false) throw new HttpError(401, 'That password is wrong.')
     if (status === 429 || /wait a few minutes/i.test(message)) {
@@ -238,6 +239,77 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
 
   const twoFactorVia = (info: Record<string, unknown>): PendingSignIn['via'] =>
     info.totp_two_factor_on ? 'app' : info.sms_two_factor_on ? 'sms' : 'email'
+
+  /* ── Security checks ─────────────────────────────────────────────────────── */
+
+  /**
+   * One step of a security check. Instagram answers these as JSON for its own web app, at the path
+   * it gave or the same path under /api/v1 depending on which check it is.
+   */
+  async function challengeStep(state: Saved, path: string, form?: Record<string, string>) {
+    const candidates = path.startsWith('/api/') ? [path] : [path, `/api/v1${path}`]
+    let last = { status: 0, body: {} as Record<string, unknown>, path }
+    for (const candidate of candidates) {
+      const { status, body } = await send(state, candidate, {
+        ...(form ? { form } : {}),
+        headers: { referer: `${baseUrl}${path}` },
+        follow: true,
+      })
+      last = { status, body, path: candidate }
+      if (body.step_name || body.status === 'ok' || body.logged_in_user || state.jar.sessionid) return last
+    }
+    return last
+  }
+
+  const stepData = (body: Record<string, unknown>) => (body.step_data ?? {}) as Record<string, unknown>
+
+  const waitingForCode = (state: Saved, username: string, path: string, via: PendingSignIn['via']): SignInResult => ({
+    done: false,
+    pending: { username, kind: 'challenge', identifier: path, via, state: JSON.stringify(state) },
+  })
+
+  /**
+   * Instagram asking to check this sign-in. It is not a prompt in the app: Instagram expects
+   * whoever is signing in to answer the check itself, either by saying the login was theirs or by
+   * typing a code it sends. Both are done here; the code is asked of the user like a two-factor one.
+   */
+  async function clearCheck(state: Saved, username: string, url: string): Promise<SignInResult> {
+    const path = url.startsWith('http') ? new URL(url).pathname : url
+    const start = await challengeStep(state, path)
+    let step = str(start.body.step_name)
+    let data = stepData(start.body)
+    let at = start.path
+    if (!step && !state.jar.sessionid) throw new HttpError(409, BY_HAND)
+
+    // "Was this you?": it was — this sign-in is what it's asking about.
+    if (step === 'delta_login_review') {
+      const answered = await challengeStep(state, at, { choice: '0' })
+      const session = signedIn(state)
+      if (session) return { done: true, session }
+      step = str(answered.body.step_name)
+      data = stepData(answered.body)
+      at = answered.path
+    }
+
+    // Instagram will send a code: to the email address if it offers one, otherwise by text.
+    if (step === 'select_verify_method') {
+      const byEmail = !!str(data.email)
+      const chosen = await challengeStep(state, at, { choice: byEmail ? '1' : '0' })
+      step = str(chosen.body.step_name) ?? step
+      at = chosen.path
+      if (!step || !/verify/i.test(step)) throw new HttpError(409, BY_HAND)
+      return waitingForCode(state, username, at, byEmail ? 'email' : 'sms')
+    }
+
+    if (step && /verify_(code|email)/i.test(step)) {
+      const where = `${step} ${str(data.form_type) ?? ''} ${str(data.contact_point) ?? ''}`
+      return waitingForCode(state, username, at, /email|@/i.test(where) ? 'email' : 'sms')
+    }
+
+    const session = signedIn(state)
+    if (session) return { done: true, session }
+    throw new HttpError(409, step ? `${BY_HAND} (Instagram calls this step “${step}”.)` : BY_HAND)
+  }
 
   return {
     async signIn({ username, password }: Credentials): Promise<SignInResult> {
@@ -258,14 +330,36 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
       if (body.two_factor_required && typeof info.two_factor_identifier === 'string') {
         return {
           done: false,
-          pending: { username, identifier: info.two_factor_identifier, via: twoFactorVia(info), state: JSON.stringify(state) },
+          pending: {
+            username,
+            kind: 'two-factor',
+            identifier: info.two_factor_identifier,
+            via: twoFactorVia(info),
+            state: JSON.stringify(state),
+          },
         }
       }
+
+      // A security check: answered here, rather than waiting for a prompt that never comes.
+      const checkpoint = str(body.checkpoint_url) ?? str((body.challenge as Record<string, unknown> | undefined)?.api_path)
+      if (checkpoint || body.message === 'checkpoint_required') return clearCheck(state, username, checkpoint ?? '/challenge/')
       refuse(status, body)
     },
 
     async submitCode(pending: PendingSignIn, code: string): Promise<SignInResult> {
       const state = JSON.parse(pending.state) as Saved
+      if (pending.kind === 'challenge') {
+        const { status, body } = await challengeStep(state, pending.identifier, { security_code: code })
+        const session = signedIn(state)
+        if (session) return { done: true, session }
+        if (/code|invalid/i.test(str(body.message) ?? '')) {
+          throw new HttpError(401, 'That code was not accepted. Instagram can send another one.')
+        }
+        if (body.status === 'ok') {
+          throw new HttpError(409, 'Instagram took the code but gave no session. Sign in again — it should go straight through now.')
+        }
+        refuse(status, body)
+      }
       const { status, body } = await send(state, '/api/v1/web/accounts/login/two_factor/', {
         form: {
           username: pending.username,

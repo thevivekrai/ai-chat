@@ -37,14 +37,55 @@ describe.skipIf(!TEST_MONGODB_URI)('Instagram DMs', () => {
     expect(unknown.json.error).toMatch(/doesn’t know that username|doesn't know that username/i)
   })
 
-  it('says to confirm the login in the app when Instagram asks for that', async () => {
+  it('answers a “was this you?” check itself', async () => {
+    const ig = server.instagram
+    const browser = await newUser('ig-delta@example.com')
+    ig.state.checkpoint = 'delta'
+    try {
+      // Instagram asks about the sign-in rather than prompting anyone: it's this one, so it's
+      // answered here and the link goes through without bothering the user.
+      const linked = await link(browser)
+      expect(linked.json.error ?? null).toBeNull()
+      expect(linked.status).toBe(200)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'connected', label: '@aarav.mehta' })
+    } finally {
+      ig.state.checkpoint = false
+    }
+  })
+
+  it('asks for the code Instagram sends to check a sign-in', async () => {
+    const ig = server.instagram
+    const browser = await newUser('ig-check-code@example.com')
+    ig.state.checkpoint = 'code'
+    ig.state.codeSent = false
+    try {
+      // No prompt arrives in the app for this: Instagram sends a code, and says where to.
+      const asked = await link(browser)
+      expect(asked.json).toEqual({ step: 'code', via: 'email' })
+      expect(ig.state.codeSent).toBe(true)
+
+      const wrong = await browser.post('/api/link/instagram/verify', { code: '000000' })
+      expect(wrong.status).toBe(401)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'linking', step: 'code' })
+
+      const verified = await browser.post('/api/link/instagram/verify', { code: ig.state.code })
+      expect(verified.status).toBe(200)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'connected', label: '@aarav.mehta' })
+    } finally {
+      ig.state.checkpoint = false
+      ig.state.codeSent = false
+    }
+  })
+
+  it('says to clear a check it can’t answer in a browser', async () => {
     const ig = server.instagram
     const browser = await newUser('ig-checkpoint@example.com')
-    ig.state.checkpoint = true
+    ig.state.checkpoint = 'by-hand'
     try {
       const refused = await link(browser)
       expect(refused.status).toBe(409)
-      expect(refused.json.error).toMatch(/confirm this sign-in/i)
+      expect(refused.json.error).toMatch(/security check Sytext can’t answer|can't answer/i)
+      expect(refused.json.error).toMatch(/instagram\.com/i)
       // Nothing half-linked is left behind.
       expect((await browser.get('/api/accounts')).json.accounts).toEqual([])
     } finally {

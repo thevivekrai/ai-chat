@@ -32,7 +32,8 @@
  *   POST /instagram/message {"text"}  a new Instagram DM from Priya ("photo": a photo instead)
  *   POST /instagram/group {"text"}    a message in the Instagram group chat, from Priya
  *   POST /instagram/two-factor {"on"} Instagram asks for a code when linking (the code is 123456)
- *   POST /instagram/checkpoint {"on"} Instagram wants the login confirmed in the app instead
+ *   POST /instagram/checkpoint {"kind"} Instagram wants this sign-in checked first: "delta" (was
+ *                                     this you?), "code" (one it sends) or "by-hand"; {"on":false} off
  *   POST /instagram/signed-out {"on"} Instagram throws the saved session out
  *   POST /trim                        the server trims chats to what it keeps, now
  * Telegram's login code is 12345 and the two-step password hunter2.
@@ -419,7 +420,9 @@ createServer(async (req, res) => {
     } else if (req.url === '/instagram/two-factor') {
       server.instagram.state.twoFactor = input.on !== false
     } else if (req.url === '/instagram/checkpoint') {
-      server.instagram.state.checkpoint = input.on !== false
+      server.instagram.state.checkpoint =
+        input.on === false ? false : ((input.kind as 'delta' | 'code' | 'by-hand' | undefined) ?? 'by-hand')
+      server.instagram.state.codeSent = false
     } else if (req.url === '/instagram/signed-out') {
       server.instagram.state.signedOut = input.on !== false
     } else if (req.url === '/telegram/message') {

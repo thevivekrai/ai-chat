@@ -395,8 +395,12 @@ is nothing stored that could sign in by itself.
 | Read receipts | Opening a chat tells Instagram — unless Incognito mode is on. |
 | Not there | Replies, reactions, edits, unsending, "typing…", older history and sending photos. Starring, pinning, deleting for me and archiving are kept by Sytext itself. |
 
-If Instagram asks you to confirm the login in the app, Settings says so and the link waits: approve
-it on your phone (or instagram.com), then link again.
+**Security checks.** Instagram often wants a sign-in from a server checked before it allows it. That
+check is not a prompt in the app — nothing arrives on your phone — so Sytext answers it the way the
+website does: a "was this you?" review is answered on the spot (it's this sign-in being asked
+about), and when Instagram wants a code instead it sends one to your email or phone and the card
+asks for it. If it insists on a check that only works in a browser, Settings says so: sign in on
+instagram.com, clear it there, then link again.
 
 ## More connections, from the browser
 

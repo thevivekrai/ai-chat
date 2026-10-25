@@ -11,6 +11,8 @@ export const GROUP_THREAD = '340282366841710301244276050000000002'
 const PHOTO = 'https://scontent.cdninstagram.com/v/parcel.jpg'
 /** As long as Instagram's own, which the client checks for before trusting one. */
 const CSRF = 'QkPzL7mD4xTn2bVhR8sWc1Ye6Ja0Ugfi'
+/** Where Instagram sends a sign-in it wants checked. */
+const CHALLENGE = '/challenge/17841400000000001/Zm9vYmFy/'
 /** A real (if tiny) PNG, so a browser showing one of these chats has something to draw. */
 const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 
@@ -43,8 +45,13 @@ export function fakeInstagram() {
     /** Instagram wants a two-factor code as well. */
     twoFactor: false,
     code: '123456',
-    /** Instagram wants the sign-in confirmed in the app instead. */
-    checkpoint: false,
+    /**
+     * Instagram wants this sign-in checked first: "was this you?" (`delta`), a code it sends
+     * (`code`), or a check it will only show in a browser (`by-hand`).
+     */
+    checkpoint: false as false | 'delta' | 'code' | 'by-hand',
+    /** Whether the code for a security check has been asked for. */
+    codeSent: false,
     /** Instagram is refusing everything for a while. */
     rateLimited: false,
     /** The session was thrown out: every signed-in call is refused. */
@@ -153,7 +160,7 @@ export function fakeInstagram() {
       const password = String(body.enc_password).split(':').slice(3).join(':')
       if (body.username !== state.username) return json({ user: false, status: 'fail' })
       if (password !== state.password) return json({ user: true, authenticated: false, status: 'ok' })
-      if (state.checkpoint) return json({ message: 'checkpoint_required', checkpoint_url: '/challenge/abc/', status: 'fail' }, 400)
+      if (state.checkpoint) return json({ message: 'checkpoint_required', checkpoint_url: CHALLENGE, status: 'fail' }, 400)
       if (state.twoFactor) {
         return json({
           two_factor_required: true,
@@ -162,6 +169,34 @@ export function fakeInstagram() {
         })
       }
       return json({ authenticated: true, user: true, userId: ME, status: 'ok' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+    }
+
+    // A security check, answered the way Instagram's own pages answer it.
+    if (path === CHALLENGE || path === `/api/v1${CHALLENGE}`) {
+      if (state.checkpoint === 'by-hand') {
+        return new Response('<html>challenge</html>', { headers: { 'content-type': 'text/html' } })
+      }
+      const body = form(init)
+      if (body.security_code) {
+        if (!state.codeSent) return json({ message: 'No code was sent', status: 'fail' }, 400)
+        if (body.security_code !== state.code) return json({ message: 'Please check the security code and try again.', status: 'fail' }, 400)
+        return json({ status: 'ok', location: 'instagram://checkpoint/dismiss' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+      }
+      if (body.choice !== undefined) {
+        // "It was me" clears the check; choosing where to send a code makes Instagram send one.
+        if (state.checkpoint === 'delta') {
+          return json({ status: 'ok', location: 'instagram://checkpoint/dismiss' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+        }
+        state.codeSent = true
+        return json({ step_name: 'verify_code', step_data: { contact_point: 'a***@example.com', form_type: 'email' }, status: 'ok' })
+      }
+      return json({
+        step_name: state.checkpoint === 'delta' ? 'delta_login_review' : 'select_verify_method',
+        step_data: state.checkpoint === 'delta' ? { choice: '' } : { choice: '', email: 'a***@example.com', phone_number: '' },
+        user_id: Number(ME),
+        nav_chain: '',
+        status: 'ok',
+      })
     }
 
     if (path === '/api/v1/web/accounts/login/two_factor/') {
