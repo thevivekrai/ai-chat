@@ -9,6 +9,7 @@
 import type { ConnectorId, ConnectorStatus, OlderMessages, SendOptions } from './connectors/types'
 import type { MatrixLogin } from './connectors/matrix/matrixConnector'
 import type {
+  InstagramLinkResult,
   LinkedNetwork,
   PublicAccount,
   PublicUser,
@@ -110,6 +111,7 @@ export interface ConnectionsState {
     whatsapp: PublicAccount | null
     telegram: PublicAccount | null
     guffshuff: PublicAccount | null
+    instagram: PublicAccount | null
   } | null
 }
 
@@ -148,6 +150,9 @@ export interface ConnectionsApi {
   verifyTelegramPassword(password: string): Promise<TelegramVerifyResult>
   /** Linking Guffshuff: the username and password of the user's own chat site. */
   linkGuffshuff(username: string, password: string): Promise<{ username: string; fullName: string }>
+  /** Linking Instagram: its username and password. Instagram often asks for a code as well. */
+  linkInstagram(username: string, password: string): Promise<InstagramLinkResult>
+  verifyInstagramCode(code: string): Promise<InstagramLinkResult>
   /** Logs the server out of that account and deletes its chats there. */
   unlink(network: LinkedNetwork): Promise<void>
 }

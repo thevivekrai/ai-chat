@@ -16,6 +16,7 @@ import type { Media } from './media.ts'
 import type { Accounts } from './networks/accounts.ts'
 import { linkRoutes } from './networks/routes.ts'
 import type { Guffshuff } from './networks/guffshuff.ts'
+import type { Instagram } from './networks/instagram.ts'
 import type { Telegram } from './networks/telegram.ts'
 import type { WhatsApp } from './networks/whatsapp.ts'
 import type { Hub } from './realtime.ts'
@@ -33,6 +34,7 @@ export interface AppDeps {
   whatsapp: WhatsApp
   telegram: Telegram
   guffshuff: Guffshuff
+  instagram: Instagram
   /** Links to photos and files in chats. */
   files: FileLinks
   /** Largest photo or file that can be sent (tests use a small one). */
@@ -71,6 +73,7 @@ export function createApp(deps: AppDeps): Express {
       whatsapp: true,
       telegram: deps.telegram.enabled,
       guffshuff: deps.guffshuff.enabled,
+      instagram: deps.instagram.enabled,
       uploads: !!deps.media,
       database: true,
       storage: deps.temporaryStorage ? 'temporary' : 'database',

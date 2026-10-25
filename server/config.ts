@@ -36,6 +36,11 @@ export interface Config {
    */
   guffshuffUrl?: string
   /**
+   * Offer Instagram DMs, signed in to as its website does. INSTAGRAM=off takes it off the
+   * Settings page (Meta doesn't allow this way in, so a server can turn it off for everyone).
+   */
+  instagram: boolean
+  /**
    * Turns on the shared AI for everyone signed in: an OpenRouter key (sk-or-…) or a Google Gemini
    * key in AI_API (or GEMINI_API_KEY); AI_PROVIDER=openrouter|gemini says which, if the key's
    * shape doesn't. AI_MODEL and AI_TRIAGE_MODEL choose the models.
@@ -88,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     keepAwakeUrl: isOff(env.KEEP_AWAKE) ? undefined : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,
     temporaryStorage: !isOff(env.TEMPORARY_STORAGE),
     guffshuffUrl: isOff(env.GUFFSHUFF_URL) ? undefined : env.GUFFSHUFF_URL?.trim() || undefined,
+    instagram: !isOff(env.INSTAGRAM),
     ai: aiKey ? sharedAi(aiKey, env) : undefined,
   }
 }

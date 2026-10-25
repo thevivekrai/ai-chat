@@ -5,7 +5,10 @@ import { Readable } from 'node:stream'
 import { exportJWK, generateKeyPair, SignJWT, createLocalJWKSet } from 'jose'
 import type { SharedAi } from '../ai.ts'
 import { createGuffshuff, type Guffshuff } from '../networks/guffshuff.ts'
+import { createInstagram, type Instagram } from '../networks/instagram.ts'
+import { createInstagramWeb } from '../networks/instagramWeb.ts'
 import { fakeGuffshuff } from './fakeGuffshuff.ts'
+import { fakeInstagram } from './fakeInstagram.ts'
 import type { AuthenticationState, BaileysEventMap, WAMessage, WAMessageKey } from '@whiskeysockets/baileys'
 import { createApp } from '../app.ts'
 import { createGoogleVerifier } from '../auth/google.ts'
@@ -433,9 +436,10 @@ export interface TestServer {
   sockets: FakeWaSocket[]
   telegram: ReturnType<typeof fakeTelegram>
   guffshuff: ReturnType<typeof fakeGuffshuff>
+  instagram: ReturnType<typeof fakeInstagram>
   google: Awaited<ReturnType<typeof fakeGoogle>>
   /** The parts running now (rebuilt by `restart`). */
-  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff }
+  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram }
   /** Builds the network managers again over the same database, as after a restart. */
   restart(): Promise<void>
   close(): Promise<void>
@@ -451,7 +455,15 @@ export async function startTestServer({
   sharedPhone = false,
   ai,
   guffshuffCatchUpMs,
-}: { port?: number; staticDir?: string; sharedPhone?: boolean; ai?: SharedAi; guffshuffCatchUpMs?: number } = {}): Promise<TestServer> {
+  instagramCatchUpMs,
+}: {
+  port?: number
+  staticDir?: string
+  sharedPhone?: boolean
+  ai?: SharedAi
+  guffshuffCatchUpMs?: number
+  instagramCatchUpMs?: number
+} = {}): Promise<TestServer> {
   const dbName = `tidings_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const database = await connectDatabase(TEST_MONGODB_URI!, dbName)
   const sealer = createSealer(Buffer.alloc(32, 7))
@@ -459,11 +471,12 @@ export async function startTestServer({
   const phone = sharedPhone ? new Map<string, WAMessage>() : undefined
   const telegram = fakeTelegram()
   const guffshuff = fakeGuffshuff()
+  const instagram = fakeInstagram()
   const google = await fakeGoogle()
   const tokens = createSessionTokens('x'.repeat(40))
 
   let server: Server
-  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff }
+  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram }
 
   async function boot(port = 0) {
     const hub = createHub()
@@ -510,7 +523,17 @@ export async function startTestServer({
       files,
       api: { ...guffshuff.api, ...(guffshuffCatchUpMs ? { catchUpMs: guffshuffCatchUpMs } : {}) },
     })
-    managers = { store, whatsapp, telegram: tg, guffshuff: gs }
+    const ig = createInstagram({
+      sealer,
+      store,
+      accounts,
+      hub,
+      avatars,
+      files,
+      site: createInstagramWeb({ fetch: instagram.fetch }),
+      ...(instagramCatchUpMs ? { catchUpMs: instagramCatchUpMs } : {}),
+    })
+    managers = { store, whatsapp, telegram: tg, guffshuff: gs, instagram: ig }
     const app = createApp({
       col: database.col,
       tokens,
@@ -524,6 +547,7 @@ export async function startTestServer({
       whatsapp,
       telegram: tg,
       guffshuff: gs,
+      instagram: ig,
       files,
       maxFileBytes: MAX_TEST_FILE_BYTES,
       secureCookies: false,
@@ -541,6 +565,7 @@ export async function startTestServer({
 
   async function shutdown() {
     managers?.guffshuff.stopAll()
+    managers?.instagram.stopAll()
     hub.closeAll()
     await managers.whatsapp.stopAll()
     await managers.telegram.stopAll()
@@ -554,6 +579,7 @@ export async function startTestServer({
     sockets,
     telegram,
     guffshuff,
+    instagram,
     google,
     current: () => managers,
     async restart() {
@@ -563,6 +589,7 @@ export async function startTestServer({
       await managers.whatsapp.resumeAll()
       await managers.telegram.resumeAll()
       await managers.guffshuff.resumeAll()
+      await managers.instagram.resumeAll()
     },
     async close() {
       await shutdown()

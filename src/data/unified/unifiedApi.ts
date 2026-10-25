@@ -348,6 +348,7 @@ export function createUnifiedApi(): InboxApi {
         whatsapp: linked.find((a) => a.network === 'whatsapp') ?? null,
         telegram: linked.find((a) => a.network === 'telegram') ?? null,
         guffshuff: linked.find((a) => a.network === 'guffshuff') ?? null,
+        instagram: linked.find((a) => a.network === 'instagram') ?? null,
       },
     }
   }
@@ -517,13 +518,29 @@ export function createUnifiedApi(): InboxApi {
       return result
     },
 
+    async linkInstagram(username, password) {
+      const connector = requireServer()
+      const result = await serverApi.linkInstagram(username, password)
+      await connector.refreshAccounts()
+      return result
+    },
+
+    async verifyInstagramCode(code) {
+      const connector = requireServer()
+      const result = await serverApi.instagramVerify(code)
+      await connector.refreshAccounts()
+      return result
+    },
+
     async unlink(network) {
       const connector = requireServer()
       await (network === 'whatsapp'
         ? serverApi.unlinkWhatsApp()
         : network === 'guffshuff'
           ? serverApi.unlinkGuffshuff()
-          : serverApi.unlinkTelegram())
+          : network === 'instagram'
+            ? serverApi.unlinkInstagram()
+            : serverApi.unlinkTelegram())
       // Done/snoozed state and scheduled sends for that network's chats go too.
       const prefix = LINKED_PREFIXES[network]
       local = {

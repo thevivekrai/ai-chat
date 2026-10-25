@@ -42,6 +42,19 @@ const GUFFSHUFF_CAPABILITIES: ChatCapabilities = {
   star: true,
 }
 
+/** Instagram, through its own website: text in and out, and nothing it won't let this do. */
+const INSTAGRAM_CAPABILITIES: ChatCapabilities = {
+  reply: false,
+  react: false,
+  typing: false,
+  history: false,
+  files: false,
+  edit: false,
+  delete: true,
+  pin: true,
+  star: true,
+}
+
 /** WhatsApp and Telegram, linked on the server, both do all of it. */
 const LINKED_CAPABILITIES: ChatCapabilities = {
   reply: true,
@@ -68,7 +81,7 @@ const GAP_PAGES = 3
 const NOTE_HERE_EVERY_MS = 5 * 60_000
 const GAP_CHATS = 20
 
-const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:' }
+const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:', instagram: 'ig:' }
 
 const hintOf = (m: Message, withBody = false): MessageHint => ({
   id: m.id,
@@ -193,7 +206,9 @@ export class ServerConnector implements Connector {
   }
 
   capabilities(threadId: string): ChatCapabilities {
-    return threadId.startsWith(PREFIX.guffshuff) ? GUFFSHUFF_CAPABILITIES : LINKED_CAPABILITIES
+    if (threadId.startsWith(PREFIX.guffshuff)) return GUFFSHUFF_CAPABILITIES
+    if (threadId.startsWith(PREFIX.instagram)) return INSTAGRAM_CAPABILITIES
+    return LINKED_CAPABILITIES
   }
 
   start() {

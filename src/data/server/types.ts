@@ -6,12 +6,15 @@ import type { Attachment, Contact, Message, MessageStatus, QuotedMessage, Reacti
  */
 
 /** Chat networks linked on the server, as the user's own account. */
-export type LinkedNetwork = 'whatsapp' | 'telegram' | 'guffshuff'
+export type LinkedNetwork = 'whatsapp' | 'telegram' | 'guffshuff' | 'instagram'
 
 /** How each linked network's chat ids start. Everything else belongs to a browser connector or the demo. */
-export const LINKED_PREFIXES: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:' }
+export const LINKED_PREFIXES: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:', instagram: 'ig:' }
 
 export type AccountStatus = 'linking' | 'connected' | 'error' | 'disconnected'
+
+/** Signing in to Instagram: done, or waiting for the code it sent. */
+export type InstagramLinkResult = { step: 'code'; via: 'app' | 'sms' | 'email' } | { username: string; fullName: string }
 
 /** A linked network as the browser sees it. "unlinked" is only ever sent, never stored. */
 export interface PublicAccount {
@@ -68,6 +71,8 @@ export interface ServerFeatures {
   telegram: boolean
   /** The user's own chat site, when this server knows where it is (GUFFSHUFF_URL). */
   guffshuff: boolean
+  /** Instagram DMs, signed in to as the website does (INSTAGRAM=off turns it off). */
+  instagram: boolean
   uploads: boolean
   /**
    * False while the server has no database at all: the site works, but signing in and linked

@@ -29,6 +29,11 @@
  *                                     asked of the phone again
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
+ *   POST /instagram/message {"text"}  a new Instagram DM from Priya ("photo": a photo instead)
+ *   POST /instagram/group {"text"}    a message in the Instagram group chat, from Priya
+ *   POST /instagram/two-factor {"on"} Instagram asks for a code when linking (the code is 123456)
+ *   POST /instagram/checkpoint {"on"} Instagram wants the login confirmed in the app instead
+ *   POST /instagram/signed-out {"on"} Instagram throws the saved session out
  *   POST /trim                        the server trims chats to what it keeps, now
  * Telegram's login code is 12345 and the two-step password hunter2.
  */
@@ -69,6 +74,8 @@ const server = await startTestServer({
   ai: { provider: 'openrouter', apiKey: 'e2e-key', model: 'openrouter/free', triageModel: 'free-light', fetch: fakeOpenRouter },
   // Short enough to watch a broken site put itself right by hand.
   guffshuffCatchUpMs: 3000,
+  // Instagram has no stream, so the inbox is looked at often enough to watch by hand.
+  instagramCatchUpMs: 1500,
 })
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'
@@ -403,6 +410,18 @@ createServer(async (req, res) => {
       } as never)
     } else if (req.url === '/telegram/scan') {
       server.telegram.state.scanQr()
+    } else if (req.url === '/instagram/message') {
+      const { PRIYA, PRIYA_THREAD } = await import('./fakeInstagram.ts')
+      server.instagram.write(PRIYA_THREAD, PRIYA, String(input.text ?? 'Are the planters still available?'), { photo: !!input.photo })
+    } else if (req.url === '/instagram/group') {
+      const { PRIYA, GROUP_THREAD } = await import('./fakeInstagram.ts')
+      server.instagram.write(GROUP_THREAD, PRIYA, String(input.text ?? 'Who is booking the cab?'))
+    } else if (req.url === '/instagram/two-factor') {
+      server.instagram.state.twoFactor = input.on !== false
+    } else if (req.url === '/instagram/checkpoint') {
+      server.instagram.state.checkpoint = input.on !== false
+    } else if (req.url === '/instagram/signed-out') {
+      server.instagram.state.signedOut = input.on !== false
     } else if (req.url === '/telegram/message') {
       server.telegram.emit({ type: 'message', message: { id: Date.now() % 1e6, chat: server.telegram.asha, out: false, text: input.text, date: now() } })
     } else {
