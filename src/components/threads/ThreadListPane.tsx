@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Archive, CloudOff, Hourglass, Link2, Loader2, MessagesSquare, Search, Sparkles, X } from 'lucide-react'
+import { Archive, CloudOff, Hourglass, Link2, Loader2, MessagesSquare, Search, Sparkles, Tag, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
+import type { ChatLabel } from '@/ai'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Panel } from '@/components/ui/Panel'
 import { useTickEffect } from '@/hooks/useTickEffect'
+import { LABELS } from '@/lib/chatLabels'
+import { cn } from '@/lib/cn'
 import { NETWORKS } from '@/lib/networks'
 import { isAtLeast } from '@/lib/media'
 import { turnOnAi } from '@/store/actions'
@@ -50,9 +53,18 @@ export function ThreadListPane({ view }: { view: ListView }) {
   const signedIn = useSession((s) => s.status === 'signed-in')
   const hintDismissed = useUi((s) => s.connectHintDismissed)
 
+  const listTag = useUi((s) => s.listTag)
+  // The tags in this list (before filtering by one), most common first.
+  const tagCounts = useMemo(() => {
+    const counts = new Map<ChatLabel, number>()
+    for (const v of selectViewThreads(views, view, { networks, query, messages })) {
+      for (const label of v.labels) counts.set(label, (counts.get(label) ?? 0) + 1)
+    }
+    return [...counts].sort((a, b) => b[1] - a[1])
+  }, [views, view, networks, query, messages])
   const list = useMemo(
-    () => selectViewThreads(views, view, { networks, query, messages }),
-    [views, view, networks, query, messages],
+    () => selectViewThreads(views, view, { networks, query, messages, tag: listTag }),
+    [views, view, networks, query, messages, listTag],
   )
   const ids = useMemo(() => list.map((v) => v.id), [list])
   const waitingCount = useMemo(() => views.filter((v) => v.waitingOnThem).length, [views])
@@ -108,6 +120,30 @@ export function ThreadListPane({ view }: { view: ListView }) {
             <Kbd className="hidden md:inline-flex">/</Kbd>
           )}
         </label>
+        {aiEnabled && (tagCounts.length > 0 || listTag) && (
+          <div role="group" aria-label="Filter by tag" className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]">
+            {(listTag && !tagCounts.some(([t]) => t === listTag) ? [[listTag, 0] as const, ...tagCounts] : tagCounts).map(([tag, count]) => {
+              const { label, icon: Icon } = LABELS[tag]
+              const on = listTag === tag
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => useUi.getState().setListTag(on ? null : tag)}
+                  className={cn(
+                    'inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-medium ring-1 ring-inset transition-colors',
+                    on ? 'bg-accent text-white ring-accent' : 'bg-surface-2/60 text-muted ring-line hover:text-fg',
+                  )}
+                >
+                  <Icon className="size-3.5" aria-hidden />
+                  {label}
+                  <span className={cn('tabular-nums', on ? 'text-white/80' : 'text-faint')}>{count}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
         {networks.length > 0 && (
           <p className="text-xs text-muted">
             Showing {networks.map((n) => NETWORKS[n].name).join(', ')} ·{' '}
@@ -161,6 +197,18 @@ export function ThreadListPane({ view }: { view: ListView }) {
         ) : list.length === 0 ? (
           query ? (
             <NoMatches query={query} onClear={() => setQuery('')} />
+          ) : listTag ? (
+            <EmptyState
+              icon={<Tag className="size-6" />}
+              title={`No ${LABELS[listTag].label.toLowerCase()} chats here`}
+              actions={
+                <Button size="sm" onClick={() => useUi.getState().setListTag(null)}>
+                  Show all
+                </Button>
+              }
+            >
+              None of the chats in this list has that tag right now.
+            </EmptyState>
           ) : view === 'needs-reply' ? (
             <AllCaughtUp waitingCount={waitingCount} />
           ) : view === 'waiting' ? (

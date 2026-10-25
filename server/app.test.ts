@@ -1677,6 +1677,108 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
     })
   })
 
+  describe('done, snoozed and tasks', () => {
+    it('are kept with the account: after signing out and in again, and on other devices', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const thread = `wa:${RAVI}`
+      const browser = await newUser('kept-state@example.com')
+      const socket = await linkWhatsApp(browser)
+      const ts = Math.floor(Date.now() / 1000)
+      socket.emit('messaging-history.set', {
+        chats: [{ id: RAVI }],
+        contacts: [],
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'Q1' }, message: { conversation: 'Can you send the invoice?' }, messageTimestamp: ts - 120 }],
+        isLatest: true,
+        syncType: 0,
+      } as never)
+      const threads = async (b: Browser) => byId((await b.get('/api/inbox')).json.threads)
+      await waitFor(async () => expect((await threads(browser))[thread]).toMatchObject({ doneAt: null, snoozedUntil: null }))
+
+      // Another device sees it as it happens.
+      const other = new Browser(server.url)
+      expect((await other.post('/api/auth/login', { email: 'kept-state@example.com', password: 'long enough' })).status).toBe(200)
+      const events = await other.events()
+
+      const doneAt = new Date().toISOString()
+      const done = await browser.post(`/api/threads/${enc(thread)}/state`, { doneAt })
+      expect(done.json.thread).toMatchObject({ id: thread, doneAt, snoozedUntil: null })
+      await events.next((e) => e.type === 'thread.updated' && e.thread.id === thread && e.thread.doneAt === doneAt)
+
+      const task = { id: 't_kept1', title: 'Send the invoice', dueAt: null, done: false, createdAt: doneAt, source: { threadId: thread, messageId: `${thread}:Q1` } }
+      expect((await browser.put(`/api/tasks/${task.id}`, task)).json.task).toEqual(task)
+      await events.next((e) => e.type === 'task.updated' && e.task.id === task.id)
+
+      // Signed out and in again: still done, and the task is still there.
+      await browser.post('/api/auth/logout', {})
+      expect((await browser.get('/api/inbox')).status).toBe(401)
+      expect((await browser.post('/api/auth/login', { email: 'kept-state@example.com', password: 'long enough' })).status).toBe(200)
+      const inbox = (await browser.get('/api/inbox')).json
+      expect(byId(inbox.threads)[thread].doneAt).toBe(doneAt)
+      expect(inbox.tasks).toEqual([task])
+
+      // Ticked off, then deleted.
+      expect((await browser.put(`/api/tasks/${task.id}`, { ...task, done: true })).json.task.done).toBe(true)
+      expect((await browser.get('/api/inbox')).json.tasks[0].done).toBe(true)
+      await browser.delete(`/api/tasks/${task.id}`)
+      await events.next((e) => e.type === 'task.removed' && e.taskId === task.id)
+      expect((await browser.get('/api/inbox')).json.tasks).toEqual([])
+
+      // Snoozed: a new message from them brings it back; one from history doesn't.
+      const until = new Date(Date.now() + 86_400_000).toISOString()
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { snoozedUntil: until })).json.thread).toMatchObject({ doneAt, snoozedUntil: until })
+      socket.emit('messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'OLD' }, message: { conversation: 'From last year' }, messageTimestamp: ts - 86_400 * 300 }],
+        isLatest: false,
+        syncType: 6,
+      } as never)
+      await waitFor(async () => expect((await browser.get(`/api/threads/${enc(thread)}/messages?before=${enc(`${thread}:Q1`)}`)).json.messages.map((m: { id: string }) => m.id)).toContain(`${thread}:OLD`))
+      expect((await threads(browser))[thread].snoozedUntil).toBe(until)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'Q2' }, message: { conversation: 'Hello?' }, messageTimestamp: ts }],
+      } as never)
+      await waitFor(async () => expect((await threads(browser))[thread].snoozedUntil).toBeNull())
+
+      // Undone.
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { doneAt: null })).json.thread.doneAt).toBeNull()
+    })
+
+    it('are checked, and only ever the owner\'s', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const thread = `wa:${RAVI}`
+      const owner = await newUser('kept-owner@example.com')
+      const socket = await linkWhatsApp(owner)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'X1' }, message: { conversation: 'Hi' }, messageTimestamp: Math.floor(Date.now() / 1000) }],
+      } as never)
+      await waitFor(async () => expect(byId((await owner.get('/api/inbox')).json.threads)[thread]).toBeDefined())
+
+      expect((await owner.post(`/api/threads/${enc(thread)}/state`, { doneAt: 'yesterday' })).status).toBe(400)
+      expect((await owner.post(`/api/threads/${enc('wa:nobody@s.whatsapp.net')}/state`, { doneAt: null })).status).toBe(404)
+      const task = { title: 'X', dueAt: null, done: false, createdAt: new Date().toISOString(), source: { threadId: thread, messageId: 'm' } }
+      expect((await owner.put('/api/tasks/bad id!', task)).status).toBe(400)
+      expect((await owner.put('/api/tasks/t1', { ...task, source: undefined })).status).toBe(400)
+      expect((await owner.put('/api/tasks/t1', { ...task, title: '' })).status).toBe(400)
+      expect((await owner.put('/api/tasks/t1', { ...task, dueAt: 'soon' })).status).toBe(400)
+      expect((await owner.put('/api/tasks/t1', task)).status).toBe(200)
+
+      // Someone else can't see or change them.
+      const stranger = await newUser('kept-stranger@example.com')
+      expect((await stranger.post(`/api/threads/${enc(thread)}/state`, { doneAt: null })).status).toBe(404)
+      expect((await stranger.put('/api/tasks/t1', task)).status).toBe(404)
+      await stranger.delete('/api/tasks/t1')
+      expect((await stranger.get('/api/inbox')).json.tasks).toEqual([])
+      expect((await owner.get('/api/inbox')).json.tasks).toHaveLength(1)
+
+      // Unlinking WhatsApp takes its tasks too.
+      await owner.delete('/api/link/whatsapp')
+      await waitFor(async () => expect((await owner.get('/api/inbox')).json.tasks).toEqual([]))
+    })
+  })
+
   describe('archiving chats', () => {
     const archive = (browser: Browser, threadId: string, archived: unknown) =>
       browser.post(`/api/threads/${enc(threadId)}/archive`, { archived })

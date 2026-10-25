@@ -37,12 +37,21 @@ export interface AiMessage {
   attachments?: string[]
 }
 
+/** What a chat is about, or what it asks of the user: shown as tags next to its priority. */
+export const CHAT_LABELS = ['question', 'follow-up', 'deadline', 'payment', 'order', 'meeting', 'work', 'personal', 'promo', 'fyi'] as const
+export type ChatLabel = (typeof CHAT_LABELS)[number]
+
+/** At most this many tags per chat. */
+export const MAX_LABELS = 3
+
 export interface PriorityResult {
   priority: Priority
   /** Whether the latest messages expect something from me. Drives the Needs-reply queue. */
   expectsReply: boolean
   /** One short sentence shown in the AI panel. */
   reason: string
+  /** What the chat is about (most telling first). Older results have none. */
+  labels?: ChatLabel[]
 }
 
 export interface ThreadSummary {

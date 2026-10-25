@@ -84,6 +84,22 @@ export interface ThreadDoc {
    * at first: those have no date.)
    */
   deletedIds?: (string | { id: string; at: Date })[]
+  /** Cleared from Needs reply at this time (a newer message from them brings it back). */
+  doneAt?: Date
+  /** Out of Needs reply until then, or until they write again. */
+  snoozedUntil?: Date
+}
+
+/** A task the user added from a linked chat, kept so it's there on every device and after signing out. */
+export interface TaskDoc {
+  userId: ObjectId
+  id: string
+  /** The chat it came from, for removing it with the chat's network. */
+  threadId: string
+  /** Sealed { title, dueAt, source }. */
+  data: string
+  done: boolean
+  createdAt: Date
 }
 
 export interface ContactDoc {
@@ -165,6 +181,7 @@ export interface Collections {
   contacts: Collection<ContactDoc>
   messages: Collection<MessageDoc>
   avatars: Collection<AvatarDoc>
+  tasks: Collection<TaskDoc>
 }
 
 export interface Database {
@@ -206,6 +223,7 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
     contacts: db.collection('contacts'),
     messages: db.collection('messages'),
     avatars: db.collection('avatars'),
+    tasks: db.collection('tasks'),
   }
   try {
     await ensureIndexes(col)
@@ -301,6 +319,7 @@ async function ensureIndexes(col: Collections) {
     index(col.messages, { userId: 1, id: 1 }, { unique: true }),
     index(col.messages, { userId: 1, threadId: 1, sentAt: -1 }),
     index(col.avatars, { userId: 1, id: 1 }, { unique: true }),
+    index(col.tasks, { userId: 1, id: 1 }, { unique: true }),
   ])
 }
 

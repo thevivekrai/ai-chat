@@ -27,7 +27,8 @@ import {
  * - Reads merge every source; writes are routed by id prefix ("tg:", "mx:", "wa:"/"tga:" for
  *   accounts linked on the Sytext server, none for demo chats).
  * - Done/snoozed state, tasks and "send later" for real accounts live on this device, since the
- *   networks have no such thing. Scheduled messages go out while the app is open; one that was
+ *   networks have no such thing; for chats linked on the Sytext server, done/snoozed and tasks
+ *   are kept with the account instead, so signing out and back in (or another device) keeps them. Scheduled messages go out while the app is open; one that was
  *   due while it was closed waits for the user rather than arriving hours late.
  * - Connectors keep syncing in the background and push changes through `subscribe`.
  */
@@ -107,9 +108,13 @@ export function createUnifiedApi(): InboxApi {
 
   const hasSource = (source: SourceId) => (source === 'server' ? !!server : source !== 'demo' && connectors.has(source))
 
-  /** Adds this device's done/snoozed state to a connector's thread. */
+  /** Chats whose done/snoozed state and tasks the server keeps with the account. */
+  const keptWithAccount = (threadId: string) => sourceOf(threadId) === 'server' && !!server
+
+  /** Adds this device's done/snoozed state to a connector's thread (the account's, for linked chats). */
   function withLocalState(thread: Thread): Thread {
     threadCache.set(thread.id, thread)
+    if (keptWithAccount(thread.id)) return local.archived.includes(thread.id) ? { ...thread, archived: true } : thread
     const state = local.threadState[thread.id]
     return {
       ...thread,
@@ -122,16 +127,23 @@ export function createUnifiedApi(): InboxApi {
   function onConnectorEvent(event: ConnectorEvent) {
     switch (event.type) {
       case 'reloaded':
-        void reloadAll()
+        void reloadAll().then(moveToAccount)
         return
       case 'thread.updated':
         emit({ type: 'thread.updated', thread: withLocalState(event.thread) })
         return
       case 'message.created': {
         emit(event)
-        // Like most inboxes, a new message brings a snoozed chat straight back.
-        const state = local.threadState[event.message.threadId]
+        // Like most inboxes, a new message brings a snoozed chat straight back (the server does the
+        // same for the chats it keeps).
         const cached = threadCache.get(event.message.threadId)
+        if (keptWithAccount(event.message.threadId)) {
+          if (event.message.senderId !== ME_ID && cached?.snoozedUntil) {
+            emit({ type: 'thread.updated', thread: withLocalState({ ...cached, snoozedUntil: null }) })
+          }
+          return
+        }
+        const state = local.threadState[event.message.threadId]
         if (event.message.senderId !== ME_ID && state?.snoozedUntil) {
           state.snoozedUntil = null
           persistLocal()
@@ -142,6 +154,38 @@ export function createUnifiedApi(): InboxApi {
       default:
         emit(event)
     }
+  }
+
+  /**
+   * Done/snoozed state and tasks kept on this device for linked chats (before the account kept
+   * them) move to the account, once its chats have loaded. What can't be moved stays here.
+   */
+  let moving = false
+  async function moveToAccount() {
+    const connector = server?.connector
+    if (!connector || moving) return
+    const known = new Set(connector.snapshot().threads.map((t) => t.id))
+    const states = Object.entries(local.threadState).filter(([id]) => sourceOf(id) === 'server' && known.has(id))
+    const tasks = local.tasks.filter((t) => t.source && sourceOf(t.source.threadId) === 'server' && known.has(t.source.threadId))
+    if (!states.length && !tasks.length) return
+    moving = true
+    try {
+      const moved = new Set<string>()
+      for (const [id, state] of states) {
+        if (await connector.setThreadState(id, state).then(() => true, () => false)) moved.add(id)
+      }
+      const movedTasks = new Set<string>()
+      for (const task of tasks) if (await connector.putTask(task).then(() => true, () => false)) movedTasks.add(task.id)
+      local = {
+        ...local,
+        threadState: Object.fromEntries(Object.entries(local.threadState).filter(([id]) => !moved.has(id))),
+        tasks: local.tasks.filter((t) => !movedTasks.has(t.id)),
+      }
+      persistLocal()
+    } finally {
+      moving = false
+    }
+    await reloadAll()
   }
 
   async function snapshot(): Promise<InboxSnapshot> {
@@ -155,7 +199,12 @@ export function createUnifiedApi(): InboxApi {
     const demoThreadIds = new Set(demoSnapshot?.threads.map((t) => t.id))
     // Tasks from demo chats show with them: not while they're hidden, or after a regenerated demo
     // dropped the chat they point into (they'd have nowhere to go).
-    const tasks = local.tasks.filter((t) => !t.source || sourceOf(t.source.threadId) !== 'demo' || demoThreadIds.has(t.source.threadId))
+    const kept = parts.flatMap((p) => p.tasks ?? [])
+    const keptIds = new Set(kept.map((t) => t.id))
+    const tasks = [
+      ...local.tasks.filter((t) => !keptIds.has(t.id) && (!t.source || sourceOf(t.source.threadId) !== 'demo' || demoThreadIds.has(t.source.threadId))),
+      ...kept,
+    ]
     return {
       me: {
         id: ME_ID,
@@ -531,6 +580,7 @@ export function createUnifiedApi(): InboxApi {
 
     async updateThreadState(threadId, patch) {
       if (sourceOf(threadId) === 'demo') return demoApi.updateThreadState(threadId, patch)
+      if (keptWithAccount(threadId)) return withLocalState(await requireServer().setThreadState(threadId, patch))
       const current = local.threadState[threadId] ?? { doneAt: null, snoozedUntil: null }
       local = { ...local, threadState: { ...local.threadState, [threadId]: { ...current, ...patch } } }
       persistLocal()
@@ -598,12 +648,15 @@ export function createUnifiedApi(): InboxApi {
 
     async addTask(input) {
       const task: Task = { id: newId('t'), done: false, createdAt: new Date().toISOString(), ...input }
+      if (task.source && keptWithAccount(task.source.threadId)) return requireServer().putTask(task)
       local = { ...local, tasks: [...local.tasks, task] }
       persistLocal()
       return task
     },
 
     async updateTask(taskId, patch) {
+      const keptTask = server?.connector.snapshot().tasks?.find((t) => t.id === taskId)
+      if (keptTask) return requireServer().putTask({ ...keptTask, ...patch })
       const task = local.tasks.find((t) => t.id === taskId)
       if (!task) throw new Error(`Unknown task ${taskId}`)
       const updated = { ...task, ...patch }
@@ -613,6 +666,7 @@ export function createUnifiedApi(): InboxApi {
     },
 
     async deleteTask(taskId) {
+      if (server?.connector.hasTask(taskId)) return requireServer().deleteTask(taskId)
       local = { ...local, tasks: local.tasks.filter((t) => t.id !== taskId) }
       persistLocal()
     },

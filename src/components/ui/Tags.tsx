@@ -1,5 +1,6 @@
 import { AlarmClock, CalendarClock, Clock } from 'lucide-react'
-import type { Priority } from '@/ai'
+import type { ChatLabel, Priority } from '@/ai'
+import { LABELS } from '@/lib/chatLabels'
 import { cn } from '@/lib/cn'
 import { formatDuration } from '@/lib/time'
 
@@ -21,6 +22,21 @@ export function PriorityTag({ priority, reason }: { priority: Priority; reason?:
     <span className={cn(PILL, style.className)} title={reason ? `AI priority: ${reason}` : 'AI priority'}>
       <span className={cn('size-1.5 rounded-full', style.dot)} />
       {style.label}
+    </span>
+  )
+}
+
+/** One of the AI's tags for what a chat is about. Those that need something from you stand out. */
+export function LabelTag({ label }: { label: ChatLabel }) {
+  const { label: text, icon: Icon, hint } = LABELS[label]
+  const asks = label === 'follow-up' || label === 'deadline'
+  return (
+    <span
+      className={cn(PILL, asks ? 'bg-violet-500/10 text-violet-700 ring-violet-500/20 dark:text-violet-300' : 'bg-surface-2/70 text-muted ring-line')}
+      title={`AI tag: ${hint}`}
+    >
+      <Icon className="size-3" aria-hidden />
+      {text}
     </span>
   )
 }

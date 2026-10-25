@@ -8,7 +8,7 @@ import {
   type SendOptions,
 } from '../connectors/types'
 import { withMyReactionOn } from '../reactions'
-import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Thread } from '../types'
+import type { ChatCapabilities, Contact, Message, MessageAction, ReadOptions, Task, Thread, ThreadStatePatch } from '../types'
 import { ME_ID, withAction } from '../types'
 import { openDeviceStore, wipeDeviceStore, type DeviceStore } from './deviceStore'
 import { isSignedOut, serverApi } from './serverApi'
@@ -89,6 +89,8 @@ const copyOf = (m: Message): MessageHint => ({
 export class ServerConnector implements Connector {
   readonly id = 'server'
   private threads = new Map<string, Thread>()
+  /** Tasks from these chats, kept with the account (not on this device). */
+  private tasks = new Map<string, Task>()
   private messages = new Map<string, Message>()
   private contacts = new Map<string, Contact>()
   private linked = new Map<LinkedNetwork, PublicAccount>()
@@ -144,6 +146,7 @@ export class ServerConnector implements Connector {
       threads: [...this.threads.values()],
       contacts: [...this.contacts.values()],
       messages: [...this.messages.values()],
+      tasks: [...this.tasks.values()],
     }
   }
 
@@ -262,6 +265,28 @@ export class ServerConnector implements Connector {
     return thread
   }
 
+  async setThreadState(threadId: string, patch: ThreadStatePatch): Promise<Thread> {
+    const { thread } = await this.signedIn(serverApi.threadState(threadId, patch))
+    this.keepThreads([thread])
+    return thread
+  }
+
+  async putTask(task: Task): Promise<Task> {
+    const { task: kept } = await this.signedIn(serverApi.putTask(task))
+    this.tasks.set(kept.id, kept)
+    return kept
+  }
+
+  async deleteTask(taskId: string) {
+    await this.signedIn(serverApi.deleteTask(taskId))
+    this.tasks.delete(taskId)
+  }
+
+  /** Whether a task is kept here (with the account). */
+  hasTask(taskId: string) {
+    return this.tasks.has(taskId)
+  }
+
   /** Deleted for me: gone from this device's copy too. */
   private forgetMessage(messageId: string) {
     this.messages.delete(messageId)
@@ -316,6 +341,7 @@ export class ServerConnector implements Connector {
     this.threads.clear()
     this.messages.clear()
     this.contacts.clear()
+    this.tasks.clear()
     this.linked.clear()
     if (this.restoring) await (await this.restoring.catch(() => null))?.clear()
     else await wipeDeviceStore()
@@ -489,6 +515,7 @@ export class ServerConnector implements Connector {
       this.noteHere()
     }
 
+    if (inbox.tasks) this.tasks = new Map(inbox.tasks.map((t) => [t.id, t]))
     this.linked = new Map(inbox.accounts.map((a) => [a.network, a]))
     this.accountEvents.emit(this.accounts())
     this.setStatus({ state: 'online' })
@@ -571,6 +598,14 @@ export class ServerConnector implements Connector {
         return
       case 'contact.updated':
         this.keepContacts([event.contact])
+        this.events.emit(event)
+        return
+      case 'task.updated':
+        this.tasks.set(event.task.id, event.task)
+        this.events.emit(event)
+        return
+      case 'task.removed':
+        this.tasks.delete(event.taskId)
         this.events.emit(event)
         return
       case 'account.updated':

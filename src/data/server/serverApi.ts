@@ -9,7 +9,7 @@ import type {
   TelegramVerifyResult,
   WhatsAppLinkResult,
 } from './types'
-import type { Message, MessageAction, Thread } from '../types'
+import type { Message, MessageAction, Task, Thread, ThreadStatePatch } from '../types'
 
 /**
  * The Sytext server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
@@ -28,7 +28,7 @@ export class ServerError extends Error {
 /** True when the session is missing or expired. */
 export const isSignedOut = (error: unknown) => error instanceof ServerError && error.status === 401
 
-async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
@@ -149,6 +149,11 @@ export const serverApi = {
   typing: (threadId: string, typing: boolean) => request<{ ok: true }>('POST', `/threads/${segment(threadId)}/typing`, { typing }),
   archive: (threadId: string, archived: boolean) =>
     request<{ thread: Thread }>('POST', `/threads/${segment(threadId)}/archive`, { archived }),
+  /** Done and snoozed, kept with the account. */
+  threadState: (threadId: string, patch: ThreadStatePatch) =>
+    request<{ thread: Thread }>('POST', `/threads/${segment(threadId)}/state`, patch),
+  putTask: (task: Task) => request<{ task: Task }>('PUT', `/tasks/${segment(task.id)}`, task),
+  deleteTask: (taskId: string) => request<{ ok: true }>('DELETE', `/tasks/${segment(taskId)}`),
   older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
     const query = new URLSearchParams({ before: before.id })
     if (before.senderId && before.sentAt) {

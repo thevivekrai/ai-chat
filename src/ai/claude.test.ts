@@ -46,12 +46,23 @@ afterEach(() => {
 describe('Claude requests', () => {
   it('sorts with the triage model, structured output and server-side fallbacks', async () => {
     const calls = fakeApi(() => ({
-      json: message({ priority: 'urgent', expectsReply: true, reason: ' Customer waiting on a late order. ' }),
+      json: message({
+        priority: 'urgent',
+        expectsReply: true,
+        reason: ' Customer waiting on a late order. ',
+        // Made-up and repeated tags are dropped.
+        labels: ['order', 'follow-up', 'order', 'gossip', 'work', 'question'],
+      }),
     }))
 
     const result = await classifyPriority(aiThread('priya'))
 
-    expect(result).toEqual({ priority: 'urgent', expectsReply: true, reason: 'Customer waiting on a late order.' })
+    expect(result).toEqual({
+      priority: 'urgent',
+      expectsReply: true,
+      reason: 'Customer waiting on a late order.',
+      labels: ['order', 'follow-up', 'work'],
+    })
     expect(calls).toHaveLength(1)
     const [{ url, headers, body }] = calls
     expect(url).toBe('https://api.anthropic.com/v1/messages?beta=true')
@@ -68,6 +79,9 @@ describe('Claude requests', () => {
     expect(body).not.toHaveProperty('temperature')
     expect(body).not.toHaveProperty('thinking')
     expect(JSON.stringify(body.messages)).toContain('label created')
+    // The tags it may choose from, and how long they've been waiting.
+    expect(JSON.stringify(body.output_config)).toContain('follow-up')
+    expect(JSON.stringify(body.messages)).toMatch(/messages? from others since the user last wrote/)
   })
 
   it('drafts all three tones in one call', async () => {

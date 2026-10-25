@@ -623,6 +623,7 @@ export class Browser {
 
   get = (path: string) => this.request('GET', path)
   post = (path: string, body: unknown = {}) => this.request('POST', path, body)
+  put = (path: string, body: unknown = {}) => this.request('PUT', path, body)
   delete = (path: string) => this.request('DELETE', path, {})
 
   /** Opens /api/events and collects what arrives. */
