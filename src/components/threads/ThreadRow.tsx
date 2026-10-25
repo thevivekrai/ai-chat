@@ -35,7 +35,9 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
 
   const { priority, stalePriority } = view
   const tags = [
+    // Done: Urgent no longer applies (Normal and Low stay); it comes back with a new message.
     view.aiAllowed &&
+      !(view.done && (priority ?? stalePriority)?.priority === 'urgent') &&
       (priority ? (
         <PriorityTag key="p" priority={priority.priority} reason={priority.reason} />
       ) : stalePriority ? (

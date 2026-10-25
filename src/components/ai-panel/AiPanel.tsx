@@ -115,6 +115,27 @@ function PrioritySection({ threadId }: { threadId: string }) {
   const result = entry?.result
   const waiting = view?.needsReply && view.waitingSince ? now - view.waitingSince : 0
 
+  if (view?.done) {
+    const calm = result && result.priority !== 'urgent' ? result.priority : null
+    return (
+      <Section title="Priority">
+        <div className="rounded-xl border border-line p-3">
+          {(calm || view.labels.length > 0) && (
+            <div className="mb-2 flex flex-wrap gap-1.5" aria-label="Tags">
+              {calm && <PriorityTag priority={calm} />}
+              {view.labels.map((label) => (
+                <LabelTag key={label} label={label} />
+              ))}
+            </div>
+          )}
+          <p className="text-[13px] leading-relaxed text-muted">
+            Marked done: Urgent and tags like Deadline or Payment are cleared. If they write again, it's sorted afresh.
+          </p>
+        </div>
+      </Section>
+    )
+  }
+
   return (
     <Section title="Priority">
       {entry?.status === 'error' && (

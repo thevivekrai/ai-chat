@@ -4,6 +4,7 @@ import { wipeDeviceStore } from '@/data/server/deviceStore'
 import { serverApi } from '@/data/server/serverApi'
 import type { PublicUser, ServerFeatures } from '@/data/server/types'
 import { storage } from '@/data/storage'
+import { restoreAiConsent } from './aiConsent'
 import { useInbox } from './inbox'
 import { useUi } from './ui'
 
@@ -96,6 +97,7 @@ export const useSession = create<SessionState>()((set, get) => ({
     // Someone else's unsaved key (they were signed out before saving it) isn't shown to this user.
     const key = get().recoveryKey
     set({ status: 'signed-in', user, notice: null, ...(key && key.userId !== user.id ? { recoveryKey: null } : {}) })
+    restoreAiConsent(user.id)
     await api.connections.setServerSession(user)
   },
 

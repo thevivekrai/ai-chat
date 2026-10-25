@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import type { ChatLabel, Priority, PriorityResult } from '@/ai'
+import { CALM_LABELS, type ChatLabel, type Priority, type PriorityResult } from '@/ai'
 import { NEEDS_REPLY_FOR } from '@/config'
 import type { Contact, Me, Message, NetworkId, ScheduledMessage, Task, Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
@@ -27,6 +27,8 @@ export interface ThreadView {
   /** When the oldest message I haven't answered arrived (null if I wrote last). */
   waitingSince: number | null
   snoozed: boolean
+  /** Marked done since their last message: Urgent and tags that ask something no longer apply. */
+  done: boolean
   scheduledCount: number
   /**
    * Last message is theirs, from the past week (NEEDS_REPLY_FOR, or a week since a snooze ended),
@@ -109,6 +111,7 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     fromMeLast,
     waitingSince: waitingFrom ? toMs(waitingFrom.sentAt) : null,
     snoozed,
+    done: doneSinceLast,
     scheduledCount,
     needsReply:
       !thread.archived &&
@@ -130,11 +133,15 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     aiAllowed,
     priority: fresh,
     stalePriority: fresh ? null : (entry?.result ?? null),
-    priorityLoading: aiAllowed && !fresh && entry?.status !== 'error',
+    // Done chats aren't sorted again until someone writes (see useAiAutopilot).
+    priorityLoading: aiAllowed && !fresh && entry?.status !== 'error' && !doneSinceLast,
     sortPriority: fresh?.priority ?? entry?.result?.priority ?? 'normal',
-    labels: aiAllowed ? ((fresh ?? entry?.result)?.labels ?? []) : [],
+    labels: aiAllowed ? withoutAsks((fresh ?? entry?.result)?.labels ?? [], doneSinceLast) : [],
   }
 }
+
+/** Done: tags like Deadline or Payment go; Work, Personal, Promo and FYI stay. */
+const withoutAsks = (labels: ChatLabel[], done: boolean) => (done ? labels.filter((l) => CALM_LABELS.includes(l)) : labels)
 
 export function buildThreadViews(input: ThreadViewInput): ThreadView[] {
   return Object.values(input.threads).map((t) => buildThreadView(t, input))
