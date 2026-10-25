@@ -42,7 +42,7 @@ import { mediaMessage, PIXEL, startTestServer, TEST_MONGODB_URI } from './helper
 
 if (!TEST_MONGODB_URI) throw new Error('Set TEST_MONGODB_URI')
 
-/** A stand-in for Google's Gemini behind the shared AI: answers each task, and counts calls. */
+/** Canned answers for the shared AI's stand-in (below), and the calls it got. */
 const aiCalls: { model: string; task: string }[] = []
 let aiDown = false
 const CANNED: Record<string, unknown> = {
@@ -52,20 +52,21 @@ const CANNED: Record<string, unknown> = {
   drafts: { short: 'Shipping Monday.', friendly: 'Hi Ravi! Both planters ship Monday 🙂', professional: 'Hello Ravi, both planters will ship on Monday.' },
   answer: { answer: 'Ravi asked for **2 more planters**.', citedMessageIds: [] },
 }
-const fakeGemini = (async (url: string | URL | Request, init?: RequestInit) => {
+/** A stand-in for OpenRouter's chat API (what the shared AI uses with an sk-or- key). */
+const fakeOpenRouter = (async (url: string | URL | Request, init?: RequestInit) => {
   const body = JSON.parse(String(init?.body ?? '{}'))
-  const required: string[] = body.generationConfig?.responseJsonSchema?.required ?? []
-  const task = Object.keys(CANNED).find((t) => Object.keys(CANNED[t] as object).join() === required.join()) ?? 'summary'
-  aiCalls.push({ model: String(url).split('/models/')[1]!.split(':')[0]!, task })
-  if (aiDown) return Response.json({ error: { code: 429, message: 'Quota exceeded' } }, { status: 429 })
-  return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(CANNED[task]) }] } }] })
+  const task: string = body.response_format?.json_schema?.name ?? 'summary'
+  aiCalls.push({ model: body.model, task })
+  if (aiDown) return Response.json({ error: { code: 429, message: 'Rate limit exceeded: free-models-per-min' } }, { status: 429 })
+  void url
+  return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(CANNED[task]) } }] })
 }) as typeof fetch
 
 const server = await startTestServer({
   port: 5180,
   staticDir: resolve('dist'),
   sharedPhone: true,
-  ai: { apiKey: 'e2e-key', model: 'gemini-main', triageModel: 'gemini-light', fetch: fakeGemini },
+  ai: { provider: 'openrouter', apiKey: 'e2e-key', model: 'openrouter/free', triageModel: 'free-light', fetch: fakeOpenRouter },
 })
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'

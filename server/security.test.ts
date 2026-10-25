@@ -73,6 +73,22 @@ describe('Google ID tokens', () => {
 })
 
 describe('config', () => {
+  it('turns on the shared AI from AI_API, telling OpenRouter and Gemini keys apart', () => {
+    const base = { MONGODB_URI: 'mongodb://localhost/x', JWT_SECRET: 'x'.repeat(40) }
+    expect(loadConfig(base).ai).toBeUndefined()
+    expect(loadConfig({ ...base, AI_API: ' sk-or-v1-test ' }).ai).toEqual({
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'openrouter/free',
+      triageModel: 'openrouter/free',
+    })
+    expect(loadConfig({ ...base, AI_API: 'AIza-test' }).ai).toMatchObject({ provider: 'gemini', model: 'gemini-flash-latest' })
+    // A model named for both, unless sorting gets its own; the provider named outright.
+    expect(loadConfig({ ...base, AI_API: 'sk-or-v1-test', AI_MODEL: 'qwen/qwen3:free' }).ai).toMatchObject({ model: 'qwen/qwen3:free', triageModel: 'qwen/qwen3:free' })
+    expect(loadConfig({ ...base, AI_API: 'custom-key', AI_PROVIDER: 'OpenRouter' }).ai?.provider).toBe('openrouter')
+    expect(() => loadConfig({ ...base, AI_API: 'k', AI_PROVIDER: 'other' })).toThrow(/AI_PROVIDER/)
+  })
+
   it('needs a database and a long secret', () => {
     expect(() => loadConfig({})).toThrow(/MONGODB_URI and JWT_SECRET/)
     expect(() => loadConfig({ MONGODB_URI: 'mongodb://x', JWT_SECRET: 'short' })).toThrow(/32 characters/)

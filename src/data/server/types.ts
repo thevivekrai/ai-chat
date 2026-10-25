@@ -79,6 +79,8 @@ export interface ServerFeatures {
   databaseProblem?: DatabaseProblem
   /** The server offers its shared AI to everyone signed in. */
   ai?: boolean
+  /** Who answers for the shared AI, in words for users ("free AI models on OpenRouter"). */
+  aiBy?: string
 }
 
 /**

@@ -16,6 +16,10 @@ export interface OpenAiOptions {
   baseUrl: string
   /** The name used in messages. */
   name: string
+  /** Sent with every request (OpenRouter asks apps to name themselves). */
+  headers?: Record<string, string>
+  /** The server's shared AI passes its own; tests stand in for the service. */
+  fetch?: typeof fetch
 }
 
 type Mode = 'schema' | 'json' | 'plain'
@@ -31,12 +35,12 @@ interface ChatResponse {
 export async function runOpenAi<K extends LlmTask>(options: OpenAiOptions, request: LlmRequest<K>): Promise<LlmOutputs[K]> {
   const url = `${trimSlash(options.baseUrl)}/chat/completions`
   const known = `${url} ${options.model}`
-  const headers = { authorization: `Bearer ${options.apiKey}` }
+  const headers = { ...options.headers, authorization: `Bearer ${options.apiKey}` }
 
   let data: ChatResponse | undefined
   for (const mode of MODES.slice(MODES.indexOf(accepted.get(known) ?? 'schema'))) {
     try {
-      data = (await postJson(url, headers, body(options.model, request, mode), options.name)) as ChatResponse
+      data = (await postJson(url, headers, body(options.model, request, mode), options.name, options.fetch)) as ChatResponse
       accepted.set(known, mode)
       break
     } catch (error) {

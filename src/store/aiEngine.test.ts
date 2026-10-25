@@ -42,14 +42,20 @@ describe('the AI engine', () => {
   describe('choosing', () => {
     beforeEach(() => useSession.setState({ status: 'signed-out', features: null }))
 
-    it('uses the shared AI only for a signed-in user of a server that offers it', () => {
+    it('starts on the demo AI, and uses the shared AI only for a signed-in user of a server that offers it', () => {
       useSettings.getState().setAi(DEFAULT_AI)
+      expect(DEFAULT_AI.choice).toBe('demo')
+      useSession.setState({ status: 'signed-in', features: { ai: true } as never })
+      expect(currentAiEngine().kind).toBe('demo')
+      useSession.setState({ status: 'signed-out', features: null })
+
+      useSettings.getState().setAi({ choice: 'shared' })
       expect(currentAiEngine().kind).toBe('demo')
       expect(llmConfigured()).toBe(false)
       useSession.setState({ status: 'signed-in', features: { ai: false } as never })
       expect(currentAiEngine().kind).toBe('demo')
-      useSession.setState({ features: { ai: true } as never })
-      expect(currentAiEngine()).toEqual({ kind: 'shared', name: 'Shared AI' })
+      useSession.setState({ features: { ai: true, aiBy: 'free AI models on OpenRouter' } as never })
+      expect(currentAiEngine()).toEqual({ kind: 'shared', name: 'Shared AI', by: 'free AI models on OpenRouter' })
       expect(llmConfigured()).toBe(true)
     })
 

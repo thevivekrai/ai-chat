@@ -36,7 +36,8 @@ interface SettingsState {
   setAi(patch: Partial<AiSettings>): void
 }
 
-export const DEFAULT_AI: AiSettings = { choice: 'shared', keys: {}, models: {}, baseUrl: '' }
+/** The built-in demo AI until the user picks another: no chat leaves the device unasked. */
+export const DEFAULT_AI: AiSettings = { choice: 'demo', keys: {}, models: {}, baseUrl: '' }
 
 export const useSettings = create<SettingsState>()(
   persist(
@@ -59,9 +60,14 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: 'tidings.settings',
-      version: 3,
-      // v1 had no AI settings and v2 only a Claude key; a saved Claude key stays the choice.
-      migrate: (persisted) => persisted as SettingsState,
+      version: 4,
+      // v1 had no AI settings and v2 only a Claude key; a saved Claude key stays the choice. In v3
+      // the shared AI was the default, so "shared" there wasn't chosen: v4 starts on the demo AI.
+      migrate: (persisted, version) => {
+        const saved = persisted as Partial<SettingsState> | undefined
+        if (version === 3 && saved?.ai?.choice === 'shared') return { ...saved, ai: { ...saved.ai, choice: 'demo' } } as SettingsState
+        return persisted as SettingsState
+      },
       merge: (persisted, current) => {
         const { claude, ...saved } = (persisted ?? {}) as Partial<SettingsState> & { claude?: LegacyClaude }
         return { ...current, ...saved, ai: savedAi(saved.ai, claude) }
@@ -83,7 +89,7 @@ interface LegacyClaude {
 
 function savedAi(ai: Partial<AiSettings> | undefined, claude: LegacyClaude | undefined): AiSettings {
   if (ai) {
-    const choice = ai.choice === 'shared' || ai.choice === 'demo' || isKeyProvider(ai.choice ?? '') ? ai.choice! : 'shared'
+    const choice = ai.choice === 'shared' || ai.choice === 'demo' || isKeyProvider(ai.choice ?? '') ? ai.choice! : 'demo'
     return { ...DEFAULT_AI, ...ai, choice }
   }
   const key = claude?.apiKey?.trim()

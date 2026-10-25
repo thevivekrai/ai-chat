@@ -26,7 +26,7 @@ describe.skipIf(!TEST_MONGODB_URI)('shared AI', () => {
 
   beforeAll(async () => {
     server = await startTestServer({
-      ai: { apiKey: 'server-key', model: 'gemini-main', triageModel: 'gemini-light', fetch: gemini.fetch },
+      ai: { provider: 'gemini', apiKey: 'server-key', model: 'gemini-main', triageModel: 'gemini-light', fetch: gemini.fetch },
     })
   })
   afterAll(() => server?.close())
@@ -135,5 +135,44 @@ describe.skipIf(!TEST_MONGODB_URI)('without AI_API', () => {
     } finally {
       await server.close()
     }
+  })
+})
+
+describe.skipIf(!TEST_MONGODB_URI)('shared AI on OpenRouter', () => {
+  let server: TestServer
+  const calls: { url: string; headers: Headers; body: any }[] = []
+  let reply: { status: number; json: unknown } = { status: 200, json: {} }
+  const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body ?? '{}')) })
+    return new Response(JSON.stringify(reply.json), { status: reply.status, headers: { 'content-type': 'application/json' } })
+  }) as typeof globalThis.fetch
+
+  beforeAll(async () => {
+    server = await startTestServer({
+      ai: { provider: 'openrouter', apiKey: 'sk-or-server', model: 'openrouter/free', triageModel: 'openrouter/free', fetch },
+    })
+  })
+  afterAll(() => server?.close())
+
+  it("answers with free models on OpenRouter and the server's key", async () => {
+    const browser = new Browser(server.url)
+    expect((await browser.post('/api/auth/register', { name: 'Or', email: 'ai-or@example.com', password: 'long enough' })).status).toBe(200)
+    expect((await browser.get('/api/config')).json).toMatchObject({ ai: true, aiBy: 'free AI models on OpenRouter' })
+
+    reply = { status: 200, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(SUMMARY) } }] } }
+    const res = await browser.post('/api/ai/generate', REQUEST)
+    expect(res.json).toEqual({ output: SUMMARY })
+    const [call] = calls
+    expect(call!.url).toBe('https://openrouter.ai/api/v1/chat/completions')
+    expect(call!.headers.get('authorization')).toBe('Bearer sk-or-server')
+    expect(call!.headers.get('x-title')).toBe('Sytext')
+    expect(call!.body).toMatchObject({ model: 'openrouter/free', response_format: { type: 'json_schema', json_schema: { name: 'summary' } } })
+    expect(res.text).not.toContain('sk-or-server')
+
+    // A free model's own quota, and a bad key, are explained as the shared AI's.
+    reply = { status: 429, json: { error: { code: 429, message: 'Rate limit exceeded: free-models-per-day' } } }
+    expect((await browser.post('/api/ai/generate', REQUEST)).json.kind).toBe('rate_limit')
+    reply = { status: 401, json: { error: { code: 401, message: 'No auth credentials found' } } }
+    expect((await browser.post('/api/ai/generate', REQUEST)).json).toMatchObject({ kind: 'permission' })
   })
 })

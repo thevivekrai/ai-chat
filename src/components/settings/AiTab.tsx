@@ -11,7 +11,7 @@ import { cn } from '@/lib/cn'
 import { NETWORK_ORDER, NETWORKS } from '@/lib/networks'
 import { setThreadAiAccess, turnOffAi, turnOnAi, updateAi } from '@/store/actions'
 import { useAi } from '@/store/ai'
-import { modelsOf, sharedAiAvailable, useAiEngine } from '@/store/aiEngine'
+import { modelsOf, sharedAiAvailable, sharedAiBy, useAiEngine } from '@/store/aiEngine'
 import { useInbox } from '@/store/inbox'
 import { threadPicture } from '@/store/selectors'
 import { useSession } from '@/store/session'
@@ -40,6 +40,8 @@ function EngineCard() {
   const session = useSession((s) => s.status)
   const sharedOffered = useSession((s) => !!s.features?.ai)
   const sharedReady = useSession(sharedAiAvailable)
+  const by = useSession(sharedAiBy)
+  const By = by.charAt(0).toUpperCase() + by.slice(1)
   const engine = useAiEngine()
   const problem = useAi((s) => s.problem)
   // The provider picked under "Your own API key", remembered while another option is on.
@@ -52,9 +54,9 @@ function EngineCard() {
       value: 'shared',
       title: 'Shared AI · free',
       detail: sharedReady
-        ? "Google's Gemini, run by this app's server. Nothing to set up."
+        ? `${By}, through this app's server. Nothing to set up; the chats you allow are sent there.`
         : sharedOffered
-          ? 'Sign in to use it: Google’s Gemini, run by this app’s server.'
+          ? `Sign in to use it: ${by}, through this app's server.`
           : "This server doesn't offer a shared AI.",
       disabled: !sharedOffered,
     },
