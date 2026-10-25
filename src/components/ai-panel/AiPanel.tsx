@@ -156,9 +156,9 @@ function PrioritySection({ threadId }: { threadId: string }) {
             </span>
           </div>
           <p className="mt-2 text-[13px] leading-relaxed">{result.reason}</p>
-          {!!result.labels?.length && (
+          {!!view?.labels.length && (
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Tags">
-              {result.labels.map((label) => (
+              {view.labels.map((label) => (
                 <LabelTag key={label} label={label} />
               ))}
             </div>

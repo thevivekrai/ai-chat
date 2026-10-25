@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { CALM_LABELS, type ChatLabel, type Priority, type PriorityResult } from '@/ai'
+import type { Priority, PriorityResult } from '@/ai'
 import { NEEDS_REPLY_FOR } from '@/config'
-import type { Contact, Me, Message, NetworkId, ScheduledMessage, Task, Thread } from '@/data/types'
+import { CALM_LABELS, type ChatLabel, type Contact, type Me, type Message, type NetworkId, type ScheduledMessage, type Task, type Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
 import { expectsReply, firstOpenMessage, hasQuestion, hasRequest } from '@/lib/replyRules'
 import { DAY, toMs } from '@/lib/time'
@@ -45,7 +45,7 @@ export interface ThreadView {
   priorityLoading: boolean
   /** For sorting: the fresh priority, else the previous one, else normal. */
   sortPriority: Priority
-  /** What the chat is about, from the fresh classification or else the previous one. */
+  /** What the chat is about: the tags put on it by hand, then the AI's. */
   labels: ChatLabel[]
 }
 
@@ -133,15 +133,14 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     aiAllowed,
     priority: fresh,
     stalePriority: fresh ? null : (entry?.result ?? null),
-    // Done chats aren't sorted again until someone writes (see useAiAutopilot).
-    priorityLoading: aiAllowed && !fresh && entry?.status !== 'error' && !doneSinceLast,
+    priorityLoading: aiAllowed && !fresh && entry?.status !== 'error',
     sortPriority: fresh?.priority ?? entry?.result?.priority ?? 'normal',
-    labels: aiAllowed ? withoutAsks((fresh ?? entry?.result)?.labels ?? [], doneSinceLast) : [],
+    labels: withoutAsks([...(thread.labels ?? []), ...(aiAllowed ? ((fresh ?? entry?.result)?.labels ?? []) : [])], doneSinceLast),
   }
 }
 
-/** Done: tags like Deadline or Payment go; Work, Personal, Promo and FYI stay. */
-const withoutAsks = (labels: ChatLabel[], done: boolean) => (done ? labels.filter((l) => CALM_LABELS.includes(l)) : labels)
+/** Each tag once, most telling first; a done chat keeps only the ones that ask nothing (CALM_LABELS). */
+const withoutAsks = (labels: ChatLabel[], done: boolean) => [...new Set(done ? labels.filter((l) => CALM_LABELS.includes(l)) : labels)]
 
 export function buildThreadViews(input: ThreadViewInput): ThreadView[] {
   return Object.values(input.threads).map((t) => buildThreadView(t, input))

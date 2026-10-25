@@ -97,19 +97,43 @@ describe('Needs reply (without AI)', () => {
     expect(needsReplyIds({ ...input, threads: doneThreads, messages, now: NOW + 2000 })).toContain('rohan')
   })
 
+  it('shows the chat\'s own tags alongside the AI\'s, each once', () => {
+    const input = viewInput({
+      canRead: () => true,
+      threads: { ...viewInput().threads, rohan: { ...viewInput().threads.rohan, labels: ['personal', 'meeting'] } },
+      priority: {
+        rohan: { key: 'rohan-2', status: 'ready', result: { priority: 'normal', expectsReply: true, reason: '', labels: ['meeting', 'question'] } },
+      },
+    })
+    // The chat's own first, then the AI's; "meeting" is on both and shows once.
+    expect(buildThreadViews(input).find((v) => v.id === 'rohan')!.labels).toEqual(['personal', 'meeting', 'question'])
+  })
+
+  it('keeps a done chat sorted, so its Normal or Low stays', () => {
+    const base = viewInput({ canRead: () => true })
+    const input = {
+      ...base,
+      threads: { ...base.threads, rohan: { ...base.threads.rohan, doneAt: new Date(NOW).toISOString() } },
+      priority: { rohan: { key: 'rohan-2', status: 'loading' as const } },
+    }
+    // Classifying a chat that's already done still shows as in progress, rather than nothing at all.
+    expect(buildThreadViews(input).find((v) => v.id === 'rohan')).toMatchObject({ done: true, priorityLoading: true })
+  })
+
   it('drops the tags that ask something of a done chat (and leaves it out of their filters) until they write again', () => {
     const input = viewInput({
       canRead: () => true,
       priority: {
         rohan: { key: 'rohan-2', status: 'ready', result: { priority: 'urgent', expectsReply: true, reason: '', labels: ['deadline', 'payment', 'work'] } },
       },
+      threads: { ...viewInput().threads, rohan: { ...viewInput().threads.rohan, labels: ['personal', 'meeting'] } },
     })
     const rohan = (i: typeof input) => buildThreadViews(i).find((v) => v.id === 'rohan')!
-    expect(rohan(input)).toMatchObject({ done: false, labels: ['deadline', 'payment', 'work'] })
+    expect(rohan(input)).toMatchObject({ done: false, labels: ['personal', 'meeting', 'deadline', 'payment', 'work'] })
 
     const done = { ...input, threads: { ...input.threads, rohan: { ...input.threads.rohan, doneAt: new Date(NOW).toISOString() } } }
-    // Work only describes the chat: it stays.
-    expect(rohan(done)).toMatchObject({ done: true, labels: ['work'], priorityLoading: false })
+    // Only Personal asks nothing of you: Meeting, Work, Deadline and Payment all go.
+    expect(rohan(done)).toMatchObject({ done: true, labels: ['personal'] })
     expect(selectViewThreads(buildThreadViews(done), 'all', { ...opts, tag: 'payment' }).map((v) => v.id)).not.toContain('rohan')
 
     const later: Message = { id: 'z', threadId: 'rohan', senderId: 'c-rohan', body: 'Paid?', sentAt: new Date(NOW + 1000).toISOString() }

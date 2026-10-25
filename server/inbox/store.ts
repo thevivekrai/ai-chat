@@ -1,7 +1,7 @@
 import type { ObjectId } from 'mongodb'
 import { MESSAGES_KEPT_PER_CHAT } from '../../src/data/server/types.ts'
 import type { MessageHint } from '../../src/data/server/types.ts'
-import { ME_ID, type Contact, type Message, type MessageAction, type Reaction, type Task, type Thread } from '../../src/data/types.ts'
+import { ME_ID, type ChatLabel, type Contact, type Message, type MessageAction, type Reaction, type Task, type Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, MessageDoc, MessagePayload, TaskDoc, ThreadDoc } from '../db.ts'
 
@@ -205,6 +205,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     snoozedUntil: doc.snoozedUntil?.toISOString() ?? null,
     ...(doc.avatarUrl ? { avatarUrl: doc.avatarUrl } : {}),
     ...(doc.archived ? { archived: true } : {}),
+    ...(doc.labels?.length ? { labels: doc.labels } : {}),
   })
 
   const toTask = (doc: TaskDoc): Task | null => {
@@ -392,7 +393,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     async setThreadState(
       userId: ObjectId,
       threadId: string,
-      patch: { doneAt?: string | null; snoozedUntil?: string | null },
+      patch: { doneAt?: string | null; snoozedUntil?: string | null; labels?: ChatLabel[] },
     ): Promise<Thread | null> {
       const set: Partial<ThreadDoc> = {}
       const unset: Record<string, ''> = {}
@@ -400,6 +401,11 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         if (patch[key] === undefined) continue
         if (patch[key] === null) unset[key] = ''
         else set[key] = new Date(patch[key])
+      }
+      // No tags left is no field, rather than an empty list in every chat.
+      if (patch.labels) {
+        if (patch.labels.length) set.labels = patch.labels
+        else unset.labels = ''
       }
       const doc = await col.threads.findOneAndUpdate(
         { userId, id: threadId },

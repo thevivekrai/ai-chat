@@ -4,7 +4,7 @@
  */
 import type { ExtractedTask } from '@/ai'
 import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/data/api'
-import type { MessageAction } from '@/data/types'
+import { MAX_OWN_LABELS, type ChatLabel, type MessageAction } from '@/data/types'
 import { myReaction } from '@/data/reactions'
 import { serverApi } from '@/data/server/serverApi'
 import { LINKED_PREFIXES, MAX_CAPTION } from '@/data/server/types'
@@ -271,6 +271,16 @@ export function snoozeThread(threadId: string, until: Date) {
 
 export function unsnoozeThread(threadId: string) {
   return useInbox.getState().setThreadState(threadId, { snoozedUntil: null })
+}
+
+/** Tags put on a chat by hand. They sit alongside the AI's, and a done chat keeps only the calm ones. */
+export function setThreadLabels(threadId: string, labels: ChatLabel[]) {
+  return useInbox.getState().setThreadState(threadId, { labels: labels.slice(0, MAX_OWN_LABELS) })
+}
+
+export function toggleThreadLabel(threadId: string, label: ChatLabel) {
+  const current = useInbox.getState().threads[threadId]?.labels ?? []
+  return setThreadLabels(threadId, current.includes(label) ? current.filter((l) => l !== label) : [...current, label])
 }
 
 export function reopenThread(threadId: string) {

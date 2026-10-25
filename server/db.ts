@@ -9,6 +9,7 @@ import {
   type ObjectId,
 } from 'mongodb'
 import type { AccountStatus, DatabaseProblem, LinkedNetwork } from '../src/data/server/types.ts'
+import type { ChatLabel } from '../src/data/types.ts'
 import { ConfigError } from './config.ts'
 import type { Attachment, MessageStatus, NetworkId, QuotedMessage, Reaction, ThreadKind } from '../src/data/types.ts'
 
@@ -88,6 +89,8 @@ export interface ThreadDoc {
   doneAt?: Date
   /** Out of Needs reply until then, or until they write again. */
   snoozedUntil?: Date
+  /** Tags put on the chat by hand (the AI's own live in the browser). */
+  labels?: ChatLabel[]
 }
 
 /** A task the user added from a linked chat, kept so it's there on every device and after signing out. */

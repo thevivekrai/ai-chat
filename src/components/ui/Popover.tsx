@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from 'react'
-import type { LucideIcon } from 'lucide-react'
+import { Check, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
 export interface TriggerProps {
@@ -87,8 +87,13 @@ export interface MenuItem {
   icon?: LucideIcon
   /** Something that can't be undone, like deleting: shown in red. */
   danger?: boolean
+  /** A choice that's on or off: shown with a tick, and leaves the menu open for the next one. */
+  checked?: boolean
   onSelect(): void
 }
+
+/** Both kinds of row, for moving through the menu with the arrow keys. */
+const MENU_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]'
 
 export function Menu({
   items,
@@ -117,13 +122,13 @@ export function Menu({
   useEffect(() => {
     if (!open) return
     const frame = requestAnimationFrame(() =>
-      listRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus(),
+      listRef.current?.querySelector<HTMLElement>(MENU_ITEMS)?.focus(),
     )
     return () => cancelAnimationFrame(frame)
   }, [open])
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const nodes = [...(listRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    const nodes = [...(listRef.current?.querySelectorAll<HTMLElement>(MENU_ITEMS) ?? [])]
     const index = nodes.indexOf(document.activeElement as HTMLElement)
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
@@ -152,9 +157,10 @@ export function Menu({
             <button
               key={item.id}
               type="button"
-              role="menuitem"
+              role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+              {...(item.checked === undefined ? {} : { 'aria-checked': item.checked })}
               onClick={() => {
-                setOpen(false)
+                if (item.checked === undefined) setOpen(false)
                 item.onSelect()
               }}
               className={cn(
@@ -165,6 +171,9 @@ export function Menu({
               {item.icon && <item.icon className={cn('size-4', item.danger ? 'text-current' : 'text-muted')} aria-hidden />}
               <span className="flex-1">{item.label}</span>
               {item.hint && <span className="text-xs whitespace-nowrap text-faint">{item.hint}</span>}
+              {item.checked !== undefined && (
+                <Check className={cn('size-4 shrink-0', item.checked ? 'text-accent-ink' : 'invisible')} aria-hidden />
+              )}
             </button>
           ))}
         </div>

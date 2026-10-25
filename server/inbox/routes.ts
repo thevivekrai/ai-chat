@@ -1,7 +1,7 @@
 import express, { Router, type Request, type Response } from 'express'
 import type { ObjectId } from 'mongodb'
 import { MAX_CAPTION, type MessageHint } from '../../src/data/server/types.ts'
-import type { Attachment, MessageAction, MessageStatus, QuotedMessage, Reaction } from '../../src/data/types.ts'
+import { CHAT_LABELS, MAX_OWN_LABELS, type Attachment, type ChatLabel, type MessageAction, type MessageStatus, type QuotedMessage, type Reaction } from '../../src/data/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
 import { field, HttpError, requireUser, userIdOf } from '../http.ts'
@@ -142,6 +142,14 @@ function chatLookup({ store, whatsapp, telegram, guffshuff }: Pick<InboxDeps, 's
   return { networkOf, chatOf }
 }
 
+/** The tags someone put on a chat: known ones only, each once, and not too many. */
+function labelsOf(value: unknown): ChatLabel[] {
+  if (!Array.isArray(value)) throw new HttpError(400, 'labels must be a list.')
+  const known = value.filter((label): label is ChatLabel => (CHAT_LABELS as readonly unknown[]).includes(label))
+  if (known.length !== value.length) throw new HttpError(400, 'Unknown tag.')
+  return [...new Set(known)].slice(0, MAX_OWN_LABELS)
+}
+
 /** A time from the browser: an ISO string, null to clear it, or undefined to leave it as it is. */
 function timeOrNull(value: unknown, name: string): string | null | undefined {
   if (value === undefined || value === null) return value
@@ -241,7 +249,11 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
   /** Done and snoozed: kept with the account, so they're the same on every device and after signing out. */
   router.post('/threads/:id/state', signedIn, async (req, res) => {
     const { userId, threadId } = await chatOf(req, res)
-    const patch = { doneAt: timeOrNull(req.body?.doneAt, 'doneAt'), snoozedUntil: timeOrNull(req.body?.snoozedUntil, 'snoozedUntil') }
+    const patch = {
+      doneAt: timeOrNull(req.body?.doneAt, 'doneAt'),
+      snoozedUntil: timeOrNull(req.body?.snoozedUntil, 'snoozedUntil'),
+      ...(req.body?.labels === undefined ? {} : { labels: labelsOf(req.body.labels) }),
+    }
     const thread = await store.setThreadState(userId, threadId, patch)
     if (!thread) throw new HttpError(404, 'No such chat.')
     hub.publish(userId.toHexString(), { type: 'thread.updated', thread })
