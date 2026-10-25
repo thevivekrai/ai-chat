@@ -67,6 +67,8 @@ const server = await startTestServer({
   staticDir: resolve('dist'),
   sharedPhone: true,
   ai: { provider: 'openrouter', apiKey: 'e2e-key', model: 'openrouter/free', triageModel: 'free-light', fetch: fakeOpenRouter },
+  // Short enough to watch a broken site put itself right by hand.
+  guffshuffCatchUpMs: 3000,
 })
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'
@@ -372,6 +374,8 @@ createServer(async (req, res) => {
         }),
       )
       return
+    } else if (req.url === '/guffshuff/broken') {
+      server.guffshuff.state.broken = Array.isArray(input.paths) ? input.paths : []
     } else if (req.url === '/guffshuff/sent') {
       res.writeHead(200).end(JSON.stringify(server.guffshuff.state.sent))
       return

@@ -32,8 +32,12 @@ export function fakeGuffshuff() {
     password: 'correct horse battery',
     /** The site is down, or signs nobody in. */
     down: false,
+    /** Paths the site answers with a 500, as a half-broken deployment would. */
+    broken: [] as string[],
     /** The cookie the site last handed out; an older one is treated as expired. */
     cookie: 'jwt=token-1',
+    /** Whose session that cookie is: another username is another person, with their own chats. */
+    signedInAs: ME,
     /** Every request the bridge made, as "METHOD /path". */
     calls: [] as string[],
     /** What the bridge sent, in order. */
@@ -49,8 +53,11 @@ export function fakeGuffshuff() {
     { _id: 'u-stranger', fullName: 'Stranger', username: 'stranger', profilePic: '' },
   ]
 
-  const lastAt = (userId: string) =>
-    messages.filter((m) => m.senderId === userId || m.receiverId === userId).at(-1)?.createdAt ?? null
+  /** When `userId` and whoever is signed in last wrote to each other. */
+  const lastAt = (userId: string) => {
+    const me = state.signedInAs
+    return messages.filter((m) => (m.senderId === userId && m.receiverId === me) || (m.senderId === me && m.receiverId === userId)).at(-1)?.createdAt ?? null
+  }
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -91,7 +98,8 @@ export function fakeGuffshuff() {
         if (body.username !== state.username || body.password !== state.password) {
           return json({ message: 'Password is incorrect' }, 400)
         }
-        const me = { _id: ME, fullName: 'Aarav Mehta', username: state.username, profilePic: '' }
+        state.signedInAs = state.username === 'aarav' ? ME : `u-${state.username}`
+        const me = { _id: state.signedInAs, fullName: 'Aarav Mehta', username: state.username, profilePic: '' }
         return new Response(JSON.stringify(me), {
           status: 200,
           headers: { 'content-type': 'application/json', 'set-cookie': `${state.cookie}; Path=/; HttpOnly; SameSite=Strict` },
@@ -101,6 +109,8 @@ export function fakeGuffshuff() {
       // Everything else needs the session cookie the site last handed out.
       const cookie = (init?.headers as Record<string, string> | undefined)?.cookie
       if (cookie !== state.cookie) return json({ message: 'Unauthorized - No Token Provided' }, 401)
+
+      if (state.broken.some((broken) => path.startsWith(broken))) return json({ error: 'Internal server error' }, 500)
 
       if (path === '/api/messages/users') {
         return json(people.map((p) => ({ ...p, lastMessageTime: lastAt(p._id) })))

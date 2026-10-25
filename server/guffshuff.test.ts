@@ -130,6 +130,68 @@ describe.skipIf(!TEST_MONGODB_URI)('Guffshuff (the user’s own site)', () => {
     expect(older.json).toEqual({ messages: [], hasMore: false })
   })
 
+  it('says in Settings when the site signs in but won\'t hand over its chats', async () => {
+    const gs = server.guffshuff
+    const browser = await newUser('gs-broken@example.com')
+    gs.state.broken = ['/api/messages/users']
+    try {
+      // Signing in worked, so the link stands — but it says what went wrong, rather than
+      // sitting there "connected" with an empty inbox.
+      expect((await link(browser)).status).toBe(200)
+      const [account] = (await browser.get('/api/accounts')).json.accounts
+      expect(account).toMatchObject({ network: 'guffshuff', status: 'error', label: '@aarav' })
+      expect(account.detail).toMatch(/answered with an error \(500\) for \/api\/messages\/users/)
+      expect((await browser.get('/api/inbox')).json.threads).toEqual([])
+
+      // Once the site answers again, the next look puts it right.
+      gs.state.broken = []
+      gs.write(ASHA, 'Back up')
+      await waitFor(async () => expect((await browser.get('/api/accounts')).json.accounts[0]?.status).toBe('connected'))
+      expect(byId((await browser.get('/api/inbox')).json.threads)[ASHA_CHAT]).toBeDefined()
+    } finally {
+      gs.state.broken = []
+    }
+  })
+
+  it('still syncs when the site has no unread counts to give', async () => {
+    const gs = server.guffshuff
+    gs.write(KABIR, 'Notes?')
+    const browser = await newUser('gs-nocounts@example.com')
+    gs.state.broken = ['/api/messages/unread']
+    try {
+      expect((await link(browser)).status).toBe(200)
+      const threads = byId((await browser.get('/api/inbox')).json.threads)
+      // The chats are all there; only the badge is missing.
+      expect(threads[`gs:${KABIR}`]).toMatchObject({ title: 'Kabir Shah', unreadCount: 0 })
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ status: 'connected' })
+    } finally {
+      gs.state.broken = []
+    }
+  })
+
+  it('keeps a working link when a re-link is mistyped, and swaps the chats for another account', async () => {
+    const gs = server.guffshuff
+    gs.write(ASHA, 'Still here?')
+    const browser = await newUser('gs-relink@example.com')
+    expect((await link(browser)).status).toBe(200)
+    await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.threads)[ASHA_CHAT]).toBeDefined())
+
+    // A typo on a re-link: the old link carries on, chats and all.
+    expect((await link(browser, 'wrong again')).status).toBe(401)
+    expect(byId((await browser.get('/api/inbox')).json.threads)[ASHA_CHAT]).toBeDefined()
+    expect((await browser.post(`/api/threads/${enc(ASHA_CHAT)}/messages`, { body: 'Yes!' })).status).toBe(200)
+
+    // Linking a different Guffshuff account: the first account's chats aren't this one's.
+    gs.state.username = 'someone-else'
+    try {
+      expect((await browser.post('/api/link/guffshuff', { username: 'someone-else', password: gs.state.password })).status).toBe(200)
+      expect((await browser.get('/api/accounts')).json.accounts[0]).toMatchObject({ label: '@someone-else' })
+      await waitFor(async () => expect((await browser.get('/api/inbox')).json.threads).toEqual([]))
+    } finally {
+      gs.state.username = 'aarav'
+    }
+  })
+
   it('signs itself in again when the weekly session runs out, and unlinks cleanly', async () => {
     const gs = server.guffshuff
     const browser = await newUser('gs-session@example.com')

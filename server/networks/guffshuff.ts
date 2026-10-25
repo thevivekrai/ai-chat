@@ -40,6 +40,8 @@ export interface GuffshuffApi {
   fetch?: typeof fetch
   /** Tests stand in for its live stream. */
   connect?: (url: string, cookie: string) => GuffshuffStream
+  /** How often to look for anything the live stream missed (tests shorten it). */
+  catchUpMs?: number
 }
 
 /** The live stream of new messages: socket.io in production, a fake in tests. */
@@ -82,6 +84,8 @@ interface Session {
   stream?: GuffshuffStream
   timer?: ReturnType<typeof setInterval>
   stopped: boolean
+  /** What's going wrong with syncing, as last told to the user. */
+  problem?: string
   /** Chats already imported, so a catch-up never re-reads (and so re-reads) a whole conversation. */
   imported: Set<string>
   /** The newest message of each chat, as the site last reported it. */
@@ -152,7 +156,7 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
       openStream(s)
       return request(s, path, init, false)
     }
-    if (!res.ok) throw new HttpError(res.status === 404 ? 404 : 502, `${hostOf(baseUrl)} answered with an error (${res.status}).`)
+    if (!res.ok) throw new HttpError(res.status === 404 ? 404 : 502, `${hostOf(baseUrl)} answered with an error (${res.status}) for ${path}.`)
     return res.json().catch(() => null)
   }
 
@@ -249,8 +253,13 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
   async function sync(s: Session, { announce = false } = {}) {
     const people = ((await request(s, '/api/messages/users')) ?? []) as GsUser[]
     if (!Array.isArray(people) || !live(s)) return
-    // Unread counts first: importing a chat clears them on Guffshuff, and they're what the queue shows.
-    const unread = ((await request(s, '/api/messages/unread')) ?? {}) as Record<string, number>
+    // Unread counts first: importing a chat clears them on Guffshuff, and they're what the queue
+    // shows. A Guffshuff without that route (an older one) still syncs, just without counts.
+    const counts = await request(s, '/api/messages/unread').catch((error: unknown) => {
+      console.warn('[guffshuff] no unread counts:', error instanceof Error ? error.message : error)
+      return null
+    })
+    const unread = (counts ?? {}) as Record<string, number>
 
     let changed = false
     for (const person of people) {
@@ -271,7 +280,12 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
 
       const seenBefore = s.latest.get(otherId)
       if (!s.imported.has(otherId) || (seenBefore && person.lastMessageTime > seenBefore)) {
-        await importChat(s, person)
+        // One unreadable conversation shouldn't cost all the others.
+        try {
+          await importChat(s, person)
+        } catch (error) {
+          console.error(`[guffshuff] couldn't read the chat with ${otherId}:`, error instanceof Error ? error.message : error)
+        }
         changed = true
       } else if (!known) {
         changed = true
@@ -295,10 +309,14 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
       if (s.stopped) return
       // Only messages to me arrive here; the other end of the chat is whoever sent it.
       const otherId = String(m.senderId) === String(s.me._id) ? String(m.receiverId) : String(m.senderId)
-      void saveMessage(s, m, otherId, { live: true }).catch((error: unknown) => console.error('[guffshuff] message failed', error))
+      void saveMessage(s, m, otherId, { live: true })
+        // A message means the site is answering again: pick up whatever a failed sync missed,
+        // rather than leaving it until the next look.
+        .then(() => (s.problem ? syncAndNote(s) : undefined))
+        .catch((error: unknown) => console.error('[guffshuff] message failed', error))
     })
     // Messages that arrived while the stream was down are picked up on the next look.
-    stream.on('connect', () => void sync(s).catch(() => undefined))
+    stream.on('connect', () => void syncAndNote(s))
   }
 
   /** The real stream: socket.io, carrying the same session cookie the REST API uses. */
@@ -335,21 +353,49 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
 
   /** Signs in, imports the chats and starts listening. */
   async function start(userId: ObjectId, credentials: Credentials) {
+    // Signed in first, and only then is any running session replaced: a wrong password on a
+    // re-link (after changing it on the site, say) leaves the working link alone.
+    const { cookie, me } = await signIn(credentials)
     const key = userId.toHexString()
     stop(key)
-    const { cookie, me } = await signIn(credentials)
+    // Linking a different Guffshuff account: the chats here are the old account's, so they go.
+    const linked = await accounts.get(userId, 'guffshuff')
+    if (linked?.label && linked.label !== labelOf(me)) {
+      await store.forgetNetwork(userId, PREFIX)
+      avatars.forget(userId, PREFIX)
+    }
     const s: Session = { userId, key, credentials, cookie, me, stopped: false, imported: new Set(), latest: new Map() }
     sessions.set(key, s)
-    await accounts.set(userId, 'guffshuff', { status: 'connected', label: me.username ? `@${me.username}` : (me.fullName ?? 'Guffshuff') })
+    await accounts.set(userId, 'guffshuff', { status: 'connected', label: labelOf(me) })
     openStream(s)
-    s.timer = setInterval(() => void sync(s).catch(() => undefined), CATCH_UP_MS)
+    s.timer = setInterval(() => void syncAndNote(s), api?.catchUpMs ?? CATCH_UP_MS)
     s.timer.unref?.()
-    try {
-      await sync(s, { announce: true })
-    } catch (error) {
-      console.error('[guffshuff] first sync failed', error)
-    }
+    // Whatever the first sync does, the link stands: a later one is tried every couple of minutes.
+    await syncAndNote(s, { announce: true })
     return s
+  }
+
+  const labelOf = (me: GsUser) => (me.username ? `@${me.username}` : (me.fullName ?? 'Guffshuff'))
+
+  /**
+   * Syncs, and says in Settings how it went. Without this a site that signs in but then refuses to
+   * hand over its chats would sit there saying "connected" with an empty inbox.
+   */
+  async function syncAndNote(s: Session, options?: { announce?: boolean }) {
+    let problem: string | undefined
+    try {
+      await sync(s, options)
+    } catch (error) {
+      problem = error instanceof HttpError ? error.message : `Couldn't read your chats from ${hostOf(baseUrl)}.`
+      console.error('[guffshuff] sync failed:', problem)
+    }
+    if (!live(s) || s.problem === problem) return
+    s.problem = problem
+    await accounts.set(s.userId, 'guffshuff', {
+      status: problem ? 'error' : 'connected',
+      label: labelOf(s.me),
+      ...(problem ? { detail: problem } : {}),
+    })
   }
 
   const threadOf = (threadId: string) => threadId.slice(PREFIX.length)
@@ -375,18 +421,36 @@ export function createGuffshuff({ sealer, store, accounts, hub, avatars, files, 
     /** Links the account: signs in once, then keeps the credentials sealed so it can do so again. */
     async link(userId: ObjectId, credentials: Credentials) {
       if (!baseUrl) throw new HttpError(503, 'This server has no Guffshuff address set.')
-      await accounts.set(userId, 'guffshuff', { status: 'linking', detail: `Signing in to ${hostOf(baseUrl)}…` })
+      const before = await accounts.get(userId, 'guffshuff')
+      await accounts.set(userId, 'guffshuff', {
+        status: 'linking',
+        ...(before?.label ? { label: before.label } : {}),
+        detail: `Signing in to ${hostOf(baseUrl)}…`,
+      })
       try {
         const s = await start(userId, credentials)
+        // Signed in, so the link stands; if its chats wouldn't come, Settings says why.
         await accounts.set(userId, 'guffshuff', {
-          status: 'connected',
-          label: s.me.username ? `@${s.me.username}` : (s.me.fullName ?? 'Guffshuff'),
+          status: s.problem ? 'error' : 'connected',
+          label: labelOf(s.me),
+          ...(s.problem ? { detail: s.problem } : {}),
           session: sealer.sealJson(credentials),
         })
         return { username: s.me.username ?? '', fullName: s.me.fullName ?? '' }
       } catch (error) {
-        stop(userId.toHexString())
-        await accounts.remove(userId, 'guffshuff')
+        // A failed attempt doesn't undo a link that was already working: it's put back as it was,
+        // and picks itself up again within a few minutes.
+        if (before?.session) {
+          await accounts.set(userId, 'guffshuff', {
+            status: 'error',
+            ...(before.label ? { label: before.label } : {}),
+            detail: error instanceof HttpError ? error.message : 'Signing in failed.',
+            session: before.session,
+          })
+        } else {
+          stop(userId.toHexString())
+          await accounts.remove(userId, 'guffshuff')
+        }
         throw error
       }
     },
