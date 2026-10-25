@@ -116,7 +116,8 @@ function PrioritySection({ threadId }: { threadId: string }) {
   const waiting = view?.needsReply && view.waitingSince ? now - view.waitingSince : 0
 
   if (view?.done) {
-    const calm = result && result.priority !== 'urgent' ? result.priority : null
+    // Dealt with, so never Urgent: it reads Normal instead (see the thread views).
+    const calm = view.priority?.priority ?? view.stalePriority?.priority ?? null
     return (
       <Section title="Priority">
         <div className="rounded-xl border border-line p-3">

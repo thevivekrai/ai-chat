@@ -109,6 +109,25 @@ describe('Needs reply (without AI)', () => {
     expect(buildThreadViews(input).find((v) => v.id === 'rohan')!.labels).toEqual(['personal', 'meeting', 'question'])
   })
 
+  it('shows a done chat as Normal rather than Urgent, so it never loses its tag', () => {
+    const base = viewInput({
+      canRead: () => true,
+      priority: {
+        rohan: { key: 'rohan-2', status: 'ready', result: { priority: 'urgent', expectsReply: true, reason: 'Waiting on you.', labels: ['deadline'] } },
+      },
+    })
+    expect(buildThreadViews(base).find((v) => v.id === 'rohan')!.priority?.priority).toBe('urgent')
+
+    const done = { ...base, threads: { ...base.threads, rohan: { ...base.threads.rohan, doneAt: new Date(NOW).toISOString() } } }
+    const view = buildThreadViews(done).find((v) => v.id === 'rohan')!
+    expect(view.priority).toMatchObject({ priority: 'normal', reason: 'Waiting on you.' })
+    expect(view.labels).toEqual([])
+
+    // Low stays Low.
+    const low = { ...done, priority: { rohan: { key: 'rohan-2', status: 'ready' as const, result: { priority: 'low' as const, expectsReply: false, reason: '' } } } }
+    expect(buildThreadViews(low).find((v) => v.id === 'rohan')!.priority?.priority).toBe('low')
+  })
+
   it('keeps a done chat sorted, so its Normal or Low stays', () => {
     const base = viewInput({ canRead: () => true })
     const input = {
