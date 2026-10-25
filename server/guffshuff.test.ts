@@ -169,6 +169,50 @@ describe.skipIf(!TEST_MONGODB_URI)('Guffshuff (the user’s own site)', () => {
     }
   })
 
+  it('stops asking for unread counts the site hasn’t got', async () => {
+    // Its own server, so the catch-up comes round often enough to watch several syncs go by.
+    const quick = await startTestServer({ guffshuffCatchUpMs: 300 })
+    try {
+      const gs = quick.guffshuff
+      gs.write(ASHA, 'Anyone there?')
+      const browser = new Browser(quick.url)
+      expect((await browser.post('/api/auth/register', { name: 'Aarav', email: 'gs-quiet@example.com', password: 'long enough' })).status).toBe(200)
+      gs.state.broken = ['/api/messages/unread']
+      expect((await browser.post('/api/link/guffshuff', { username: 'aarav', password: gs.state.password })).status).toBe(200)
+      expect(gs.state.calls).toContain('GET /api/messages/unread')
+
+      // Several catch-ups later it has read the chats again, but never asked for counts again:
+      // one warning in the log, not one every couple of minutes.
+      gs.state.calls.length = 0
+      await waitFor(async () => expect(gs.state.calls.filter((c) => c === 'GET /api/messages/users').length).toBeGreaterThan(1))
+      expect(gs.state.calls).not.toContain('GET /api/messages/unread')
+    } finally {
+      quick.guffshuff.state.broken = []
+      await quick.close()
+    }
+  })
+
+  it('doesn’t re-read every chat when the stream drops and comes back', async () => {
+    const gs = server.guffshuff
+    gs.write(ASHA, 'You there?')
+    const browser = await newUser('gs-flap@example.com')
+    expect((await link(browser)).status).toBe(200)
+    await waitFor(async () => expect(byId((await browser.get('/api/inbox')).json.threads)[ASHA_CHAT]).toBeDefined())
+
+    // Guffshuff on Render drops its websocket often; each return used to re-read the lot.
+    gs.state.calls.length = 0
+    gs.reconnect()
+    gs.reconnect()
+    gs.reconnect()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(gs.state.calls).toEqual([])
+
+    // A message still comes through live, reconnected stream or not.
+    const events = await browser.events()
+    gs.write(ASHA, 'Right here')
+    expect((await events.next((e) => e.type === 'message.created' && e.message.body === 'Right here')).message).toMatchObject({ threadId: ASHA_CHAT })
+  })
+
   it('keeps a working link when a re-link is mistyped, and swaps the chats for another account', async () => {
     const gs = server.guffshuff
     gs.write(ASHA, 'Still here?')
