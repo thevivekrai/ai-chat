@@ -171,4 +171,7 @@ export const serverApi = {
   telegramVerify: (code: string) => request<TelegramVerifyResult>('POST', '/link/telegram/verify', { code }),
   telegramPassword: (password: string) => request<TelegramVerifyResult>('POST', '/link/telegram/password', { password }),
   unlinkTelegram: () => request<{ ok: true }>('DELETE', '/link/telegram'),
+  linkGuffshuff: (username: string, password: string) =>
+    request<{ username: string; fullName: string }>('POST', '/link/guffshuff', { username, password }),
+  unlinkGuffshuff: () => request<{ ok: true }>('DELETE', '/link/guffshuff'),
 }

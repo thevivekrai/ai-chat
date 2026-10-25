@@ -177,12 +177,14 @@ function AccountsStatus() {
   const chats = useInbox(
     useShallow((s) => {
       const ids = Object.keys(s.threads)
-      return { whatsapp: ids.some((id) => id.startsWith('wa:')), telegram: ids.some((id) => id.startsWith('tga:')) }
+      const has = (prefix: string) => ids.some((id) => id.startsWith(prefix))
+      return { whatsapp: has('wa:'), telegram: has('tga:'), guffshuff: has('gs:') }
     }),
   )
   const rows = [
     { id: 'whatsapp', label: 'WhatsApp', status: linkedState(server?.whatsapp, server?.status, chats.whatsapp) },
     { id: 'telegram-linked', label: 'Telegram', status: linkedState(server?.telegram, server?.status, chats.telegram) },
+    { id: 'guffshuff', label: 'Guffshuff', status: linkedState(server?.guffshuff, server?.status, chats.guffshuff) },
     { id: 'telegram', label: 'Telegram bot', status: telegram },
     { id: 'matrix', label: 'Matrix', status: matrix },
   ].filter((r) => r.status)

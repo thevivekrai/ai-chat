@@ -22,6 +22,8 @@ Nothing is ever sent automatically.
   it too.
 - **Incognito mode**, as in Beeper: read messages without sending read receipts, and type
   without showing "typing…".
+- **Your own chat site.** Link **Guffshuff** with the username and password you use there, and its
+  chats sit alongside the rest: messages both ways, photos, and read receipts.
 - **More connections from the browser.** A **Telegram bot**, and a **Matrix** account (through
   Matrix bridges: WhatsApp, Instagram, Slack and SMS).
 - **Real AI.** The built-in demo AI runs by default. Signed in, anyone can switch on the free
@@ -83,6 +85,7 @@ variable. The service's log says which file it read and which features are on:
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Your own profile photo. (Photos and files in chats don't need it.) |
+| `GUFFSHUFF_URL` | Your own chat site's address: turns on linking Guffshuff accounts. `off` turns it off. |
 | `AI_API` | An OpenRouter key (`sk-or-…`) or a Google Gemini key: turns on the shared AI for everyone signed in. `AI_PROVIDER` (`openrouter` or `gemini`) says which if the key doesn't; `AI_MODEL` and `AI_TRIAGE_MODEL` pick its models. |
 | `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
 | `TEMPORARY_STORAGE` | `off` stops the server keeping accounts in temporary storage while the database can't be reached (see below). |
@@ -330,6 +333,31 @@ database can sort and keep them. **Done and snoozed** state and **tasks** from l
 kept with your account too (task text sealed like messages), so they're the same on every device
 and still there after signing out and in. AI results stay in the browser.
 
+## Your own chat site (Guffshuff)
+
+[Guffshuff](https://guffshuff.onrender.com) is my own chat site, and the server bridges it like
+any other network. Set `GUFFSHUFF_URL` to its address, then link it in **Settings → Accounts**
+with the username and password you use there.
+
+It has no bridge API of its own, so the server signs in the way the site's own pages do, and keeps
+**both the username and password encrypted** (`DATA_ENCRYPTION_KEY`, like linked sessions). Its
+cookie only lasts a week and it has no way to refresh one, so without the password the link would
+stop every Monday; with it, the server signs in again by itself. Unlinking deletes both, along
+with its chats.
+
+| | |
+| --- | --- |
+| Chats | Everyone you've exchanged messages with. People on the site you've never written to aren't chats. |
+| Messages | Text and photos, both ways. Photos come through this server (`/api/files/…`), not straight from the site. |
+| Live | Its socket.io stream, with a look at the chat list every couple of minutes in case the stream missed something. |
+| Read receipts | Opening a chat tells the site, as its own pages do — unless Incognito mode is on. |
+| Not there | Replies, reactions, edits, unsending and "typing…": Guffshuff has none, so Sytext hides them rather than failing. Starring, pinning, deleting for me and archiving are kept by Sytext itself. |
+
+**Linking reads your conversations in, which marks them read on Guffshuff** — the same as opening
+them there. It's the only way its API hands over a conversation. Unread counts are read first, so
+the queue still shows what was waiting. After that, new messages come from the live stream, which
+marks nothing read.
+
 ## More connections, from the browser
 
 Also in **Settings → Accounts**. These talk to their networks directly from your browser, without
@@ -500,6 +528,7 @@ server/
   networks/
     whatsapp.ts       ← Baileys: pairing code / QR, sessions in MongoDB, history, live sync
     telegram.ts       ← GramJS: phone + code + 2FA, sessions, dialogs, live sync
+    guffshuff.ts      ← the user's own chat site: its REST API and socket.io stream
     accounts.ts       ← linked accounts and their status
     routes.ts         ← /api/link/…
   inbox/              ← per-user chat store (encrypted fields) and /api/inbox, /api/threads/…
@@ -540,6 +569,9 @@ connected or Claude is chosen.
   on sign-out.
 - **In a browser.** `server/testing/e2e.ts` runs the app against the same fakes, with a control
   port standing in for the phone, for clicking through linking end to end.
+- **Guffshuff.** A stand-in for the site (its REST API in memory and a live stream) checks linking,
+  the chats coming in, sending and receiving, photos both ways, what it refuses, signing in again
+  when the week-old session runs out, and unlinking.
 - **AI requests.** A stubbed `fetch` checks each provider's request shape (for Claude: model,
   effort, structured output, fallbacks, no sampling parameters), refusals and error mapping; the
   shared AI is tested against stand-ins for OpenRouter and Gemini, including its limits and model

@@ -16,10 +16,14 @@ import { fileSize } from '../../src/data/server/types.ts'
  * page; everything else is always a download, and never runs as part of the site.
  */
 
-/** What a network needs to fetch a file again: WhatsApp's media keys, or Telegram's message. */
+/**
+  * What a network needs to fetch a file again: WhatsApp's media keys, Telegram's message, or the
+  * address Guffshuff keeps a photo at.
+  */
 export type FileSource =
   | { n: 'wa'; key: { remoteJid: string; id: string; fromMe: boolean; participant?: string }; type: string; media: Record<string, string | number> }
   | { n: 'tg'; chat: string; id: number }
+  | { n: 'gs'; url: string }
 
 export type FileRef = FileSource & { name: string; mime?: string }
 

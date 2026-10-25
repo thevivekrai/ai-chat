@@ -6,7 +6,10 @@ import type { Attachment, Contact, Message, MessageStatus, QuotedMessage, Reacti
  */
 
 /** Chat networks linked on the server, as the user's own account. */
-export type LinkedNetwork = 'whatsapp' | 'telegram'
+export type LinkedNetwork = 'whatsapp' | 'telegram' | 'guffshuff'
+
+/** How each linked network's chat ids start. Everything else belongs to a browser connector or the demo. */
+export const LINKED_PREFIXES: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:' }
 
 export type AccountStatus = 'linking' | 'connected' | 'error' | 'disconnected'
 
@@ -63,6 +66,8 @@ export interface ServerFeatures {
   googleClientId: string | null
   whatsapp: boolean
   telegram: boolean
+  /** The user's own chat site, when this server knows where it is (GUFFSHUFF_URL). */
+  guffshuff: boolean
   uploads: boolean
   /**
    * False while the server has no database at all: the site works, but signing in and linked

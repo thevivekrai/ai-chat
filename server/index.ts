@@ -13,6 +13,7 @@ import { createFileLinks } from './inbox/files.ts'
 import { createInboxStore } from './inbox/store.ts'
 import { createMedia } from './media.ts'
 import { createAccounts } from './networks/accounts.ts'
+import { createGuffshuff } from './networks/guffshuff.ts'
 import { createTelegram } from './networks/telegram.ts'
 import { createWhatsApp } from './networks/whatsapp.ts'
 import { keepAwake } from './keepAwake.ts'
@@ -159,6 +160,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
   const files = createFileLinks(sealer)
   const whatsapp = createWhatsApp({ col, sealer, store, accounts, hub, avatars, files })
   const telegram = createTelegram({ sealer, store, accounts, hub, avatars, files, api: config.telegram })
+  const guffshuff = createGuffshuff({ sealer, store, accounts, hub, avatars, files, ...(config.guffshuffUrl ? { api: { baseUrl: config.guffshuffUrl } } : {}) })
 
   const app = createApp({
     col,
@@ -172,6 +174,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     hub,
     whatsapp,
     telegram,
+    guffshuff,
     files,
     secureCookies: config.production,
     staticDir,
@@ -182,6 +185,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
   const on = [
     config.googleClientId && 'Google sign-in',
     config.telegram && 'Telegram',
+    config.guffshuffUrl && 'Guffshuff',
     config.cloudinary && 'profile photo uploads',
     config.keepAwakeUrl && 'keep-awake',
     config.ai && `shared AI (${config.ai.provider})`,
@@ -194,6 +198,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
   const resume = () => {
     void whatsapp.resumeAll().catch((e) => console.error('[whatsapp] resume failed', e))
     void telegram.resumeAll().catch((e) => console.error('[telegram] resume failed', e))
+    void guffshuff.resumeAll().catch((e: unknown) => console.error('[guffshuff] resume failed', e))
   }
   resume()
   const timers = [setInterval(resume, RESUME_EVERY_MS)]

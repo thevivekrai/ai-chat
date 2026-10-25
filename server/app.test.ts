@@ -256,6 +256,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         googleClientId: 'test-client.apps.googleusercontent.com',
         whatsapp: true,
         telegram: true,
+        guffshuff: true,
         uploads: false,
         database: true,
         storage: 'database',

@@ -7,7 +7,7 @@ import { createMockApi } from '../mock/mockApi'
 import { searchMessages } from '../search'
 import { serverApi } from '../server/serverApi'
 import { ServerConnector } from '../server/serverConnector'
-import type { PublicUser } from '../server/types'
+import { LINKED_PREFIXES, type PublicUser } from '../server/types'
 import type { InboxEvent, InboxSnapshot, Message, ScheduledMessage, Task, Thread } from '../types'
 import { ME_ID, NO_CAPABILITIES } from '../types'
 import {
@@ -44,7 +44,7 @@ type SourceId = 'demo' | ConnectorId | 'server'
 export function sourceOf(id: string): SourceId {
   if (id.startsWith('tg:')) return 'telegram'
   if (id.startsWith('mx:')) return 'matrix'
-  if (id.startsWith('wa:') || id.startsWith('tga:')) return 'server'
+  if (Object.values(LINKED_PREFIXES).some((prefix) => id.startsWith(prefix))) return 'server'
   return 'demo'
 }
 
@@ -345,6 +345,7 @@ export function createUnifiedApi(): InboxApi {
         status: server.connector.status(),
         whatsapp: linked.find((a) => a.network === 'whatsapp') ?? null,
         telegram: linked.find((a) => a.network === 'telegram') ?? null,
+        guffshuff: linked.find((a) => a.network === 'guffshuff') ?? null,
       },
     }
   }
@@ -507,11 +508,22 @@ export function createUnifiedApi(): InboxApi {
       return result
     },
 
+    async linkGuffshuff(username, password) {
+      const connector = requireServer()
+      const result = await serverApi.linkGuffshuff(username, password)
+      await connector.refreshAccounts()
+      return result
+    },
+
     async unlink(network) {
       const connector = requireServer()
-      await (network === 'whatsapp' ? serverApi.unlinkWhatsApp() : serverApi.unlinkTelegram())
+      await (network === 'whatsapp'
+        ? serverApi.unlinkWhatsApp()
+        : network === 'guffshuff'
+          ? serverApi.unlinkGuffshuff()
+          : serverApi.unlinkTelegram())
       // Done/snoozed state and scheduled sends for that network's chats go too.
-      const prefix = network === 'whatsapp' ? 'wa:' : 'tga:'
+      const prefix = LINKED_PREFIXES[network]
       local = {
         ...local,
         threadState: Object.fromEntries(Object.entries(local.threadState).filter(([id]) => !id.startsWith(prefix))),

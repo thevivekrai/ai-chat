@@ -6,6 +6,7 @@ import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
 import { field, HttpError, requireUser, userIdOf } from '../http.ts'
 import type { Accounts } from '../networks/accounts.ts'
+import type { Guffshuff } from '../networks/guffshuff.ts'
 import type { Telegram } from '../networks/telegram.ts'
 import type { WhatsApp } from '../networks/whatsapp.ts'
 import type { Hub } from '../realtime.ts'
@@ -22,6 +23,7 @@ interface InboxDeps {
   hub: Hub
   whatsapp: WhatsApp
   telegram: Telegram
+  guffshuff: Guffshuff
   files: FileLinks
 }
 
@@ -119,11 +121,12 @@ function attachmentsOf(value: unknown): Attachment[] | undefined {
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
 
 /** The user's chats named in URLs, and the linked network each belongs to. */
-function chatLookup({ store, whatsapp, telegram }: Pick<InboxDeps, 'store' | 'whatsapp' | 'telegram'>) {
+function chatLookup({ store, whatsapp, telegram, guffshuff }: Pick<InboxDeps, 'store' | 'whatsapp' | 'telegram' | 'guffshuff'>) {
   /** Which linked network a chat belongs to, by its id. */
   function networkOf(threadId: string) {
     if (threadId.startsWith('wa:')) return whatsapp
     if (threadId.startsWith('tga:')) return telegram
+    if (threadId.startsWith('gs:')) return guffshuff
     throw new HttpError(404, 'No such chat.')
   }
 
@@ -170,11 +173,11 @@ export function actionOf(value: unknown): MessageAction {
 }
 
 /** The linked chats: a snapshot on load, then live changes as server-sent events. */
-export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsapp, telegram, files }: InboxDeps): Router {
+export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsapp, telegram, guffshuff, files }: InboxDeps): Router {
   const router = Router()
   const signedIn = requireUser(tokens, col.users)
 
-  const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram })
+  const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram, guffshuff })
 
   router.get('/inbox', signedIn, async (_req, res) => {
     const userId = userIdOf(res)
@@ -306,7 +309,7 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
     const userId = userIdOf(res)
     const ref = files.open(userId, String(req.params.token))
     if (!ref) throw new HttpError(404, 'No such file.')
-    const file = await (ref.n === 'wa' ? whatsapp : telegram).openFile(userId, ref)
+    const file = await (ref.n === 'wa' ? whatsapp : ref.n === 'gs' ? guffshuff : telegram).openFile(userId, ref)
     await serveFile(res, file, { download: req.query.download === '1' })
   })
 
@@ -342,13 +345,14 @@ export function uploadRoutes({
   store,
   whatsapp,
   telegram,
+  guffshuff,
   maxFileBytes = MAX_FILE_BYTES,
-}: Pick<InboxDeps, 'col' | 'tokens' | 'store' | 'whatsapp' | 'telegram'> & { maxFileBytes?: number }): Router {
+}: Pick<InboxDeps, 'col' | 'tokens' | 'store' | 'whatsapp' | 'telegram' | 'guffshuff'> & { maxFileBytes?: number }): Router {
   const router = Router()
   const signedIn = requireUser(tokens, col.users)
   const readFile = express.raw({ type: () => true, limit: maxFileBytes })
   const limitText = `${Math.round(maxFileBytes / 1024 / 1024)} MB`
-  const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram })
+  const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram, guffshuff })
 
   router.post(
     '/threads/:id/files',
