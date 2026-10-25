@@ -131,13 +131,20 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
       !snoozed &&
       !doneSinceLast,
     aiAllowed,
-    priority: fresh,
-    stalePriority: fresh ? null : (entry?.result ?? null),
+    priority: calm(fresh, doneSinceLast),
+    stalePriority: fresh ? null : calm(entry?.result ?? null, doneSinceLast),
     priorityLoading: aiAllowed && !fresh && entry?.status !== 'error',
     sortPriority: fresh?.priority ?? entry?.result?.priority ?? 'normal',
     labels: withoutAsks([...(thread.labels ?? []), ...(aiAllowed ? ((fresh ?? entry?.result)?.labels ?? []) : [])], doneSinceLast),
   }
 }
+
+/**
+ * A done chat is never Urgent: whatever it was, it reads Normal once it's dealt with. Its tags go
+ * the same way, so what's left is Normal or Low, and Personal.
+ */
+const calm = (result: PriorityResult | null, done: boolean): PriorityResult | null =>
+  result && done && result.priority === 'urgent' ? { ...result, priority: 'normal' } : result
 
 /** Each tag once, most telling first; a done chat keeps only the ones that ask nothing (CALM_LABELS). */
 const withoutAsks = (labels: ChatLabel[], done: boolean) => [...new Set(done ? labels.filter((l) => CALM_LABELS.includes(l)) : labels)]
