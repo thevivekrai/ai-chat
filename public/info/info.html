@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="Sytext puts every chat in one place, tells you who needs a reply by AI priority, and drafts the response for you." />
-    <meta name="theme-color" content="#e8ebf0" />
-    <title>Sytext — AI inbox</title>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="Sytext puts every chat in one place, tells you who needs a reply by AI priority, and drafts the response for you." />
+  <meta name="theme-color" content="#e8ebf0" />
+  <title>Sytext — AI inbox</title>
 
   <!-- Prevent theme flash -->
   <script>
@@ -101,6 +101,21 @@
     }
     [data-theme="dark"] .noise-overlay { opacity: 0.06; }
 
+    /* ============ MASCOT GLOBAL STYLES ============ */
+    .mascot {
+      position: absolute;
+      z-index: 10;
+      pointer-events: none;
+      filter: drop-shadow(0 15px 25px rgba(0,0,0,0.15));
+      animation: floatMascot 6s ease-in-out infinite;
+      object-fit: contain;
+    }
+    
+    @keyframes floatMascot {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-12px) rotate(3deg); }
+    }
+
     /* ============ TYPOGRAPHY ============ */
     .serif-italic {
       font-family: var(--font-serif);
@@ -130,6 +145,7 @@
     .container {
       width: min(100% - 40px, 1120px);
       margin-inline: auto;
+      position: relative;
     }
     .center { text-align: center; }
     .section { padding: 100px 0; }
@@ -147,7 +163,7 @@
     }
     
     .navbar {
-      position: relative; /* Added for dropdown positioning */
+      position: relative;
       pointer-events: auto;
       display: flex;
       align-items: center;
@@ -248,7 +264,6 @@
       gap: 4px;
       min-width: 220px;
       
-      /* Animation */
       opacity: 0;
       transform: translateY(-10px) scale(0.95);
       pointer-events: none;
@@ -287,6 +302,13 @@
       text-align: center;
     }
     
+    /* Hero Mascot Positioning */
+    .mascot-hero {
+      top: -20px;
+      right: -20px;
+      width: 160px;
+    }
+
     .hero-badge {
       display: inline-flex;
       align-items: center;
@@ -472,7 +494,16 @@
       max-width: 760px;
       margin: 0 auto;
       text-align: left;
+      position: relative;
     }
+    
+    /* How Mascot Positioning */
+    .mascot-how {
+      top: -40px;
+      right: -140px;
+      width: 140px;
+    }
+
     .section-label {
       display: block;
       font-size: 12px;
@@ -549,7 +580,19 @@
     .explore-link svg { width: 18px; height: 18px; }
 
     /* ============ CORE FEATURES ============ */
-    .section-header { text-align: center; margin-bottom: 64px; }
+    .section-header { 
+      text-align: center; 
+      margin-bottom: 64px; 
+      position: relative;
+    }
+    
+    /* Features Mascot Positioning */
+    .mascot-features {
+      top: -60px;
+      right: 40px;
+      width: 120px;
+    }
+
     .section-header .h2 { margin-bottom: 16px; }
     .section-header .text-muted { max-width: 600px; margin: 0 auto; }
 
@@ -586,13 +629,12 @@
     .stat-fill {
       height: 100%;
       border-radius: 6px;
-      width: 0; /* Start at 0 for animation */
+      width: 0;
       transition: width 1.5s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .stat-fill.dark { background: var(--text-main); }
     .stat-fill.light { background: var(--text-light); opacity: 0.5; }
 
-    /* Animate class added via JS */
     .stat-card.animate .stat-fill.dark { width: 85%; }
     .stat-card.animate .stat-fill.light { width: 4%; }
     
@@ -651,6 +693,14 @@
 
     /* ============ PRIVACY ============ */
     .privacy { padding: 100px 0; }
+    
+    /* Privacy Mascot Positioning */
+    .mascot-privacy {
+      top: -40px;
+      left: -80px;
+      width: 130px;
+    }
+
     .states-wrapper {
       display: flex;
       flex-direction: column;
@@ -768,6 +818,13 @@
     .social-links svg { width: 20px; height: 20px; }
 
     /* ============ RESPONSIVE ============ */
+    @media (max-width: 1024px) {
+      .mascot-hero { width: 120px; right: -10px; }
+      .mascot-how { right: -60px; width: 110px; }
+      .mascot-features { right: 20px; width: 90px; top: -40px; }
+      .mascot-privacy { left: -30px; width: 100px; }
+    }
+
     @media (max-width: 768px) {
       .nav-wrapper { top: 16px; }
       .navbar { padding: 8px 12px 8px 16px; width: calc(100% - 24px); }
@@ -775,6 +832,12 @@
       .hamburger { display: flex; }
       
       .hero { padding-top: 120px; padding-bottom: 60px; }
+      
+      /* Mascot Mobile Sizing */
+      .mascot-hero { width: 80px; right: -10px; top: 0; }
+      .mascot-how { width: 70px; right: 0px; top: -20px; }
+      .mascot-features { width: 60px; right: 10px; top: -20px; }
+      .mascot-privacy { width: 60px; left: 0px; top: -20px; }
       
       .laptop-frame { border-radius: 16px; }
       .browser-header { padding: 8px 12px; }
@@ -830,6 +893,9 @@
   <section class="hero">
     <div class="container">
       
+      <!-- Mascot 1 -->
+      <img src="../m1.png" alt="Sytext Mascot" class="mascot mascot-hero" />
+
       <div class="hero-badge">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 3l1.9 5.8L20 10l-5.8 1.9L12 18l-1.9-5.8L4 10l5.8-1.9L12 3z"/>
@@ -926,6 +992,10 @@
   <section class="how-it-works" id="how-it-works">
     <div class="container">
       <div class="how-container">
+        
+        <!-- Mascot 2 -->
+        <img src="../m2.png" alt="Sytext Mascot" class="mascot mascot-how" />
+
         <span class="section-label">HOW IT WORKS</span>
         <h2 class="h2">
           Connect.<br />
@@ -973,6 +1043,10 @@
   <section class="section" id="features">
     <div class="container">
       <div class="section-header">
+        
+        <!-- Mascot 3 -->
+        <img src="../m3.png" alt="Sytext Mascot" class="mascot mascot-features" />
+
         <h2 class="h2">
           Scattered. Noisy.<br />
           <span class="serif-italic">Filtered.</span>
@@ -1041,6 +1115,10 @@
   <!-- 隐私与安全 -->
   <section class="privacy" id="privacy">
     <div class="container center">
+      
+      <!-- Mascot 4 -->
+      <img src="../m4.png" alt="Sytext Mascot" class="mascot mascot-privacy" />
+
       <h2 class="h2">
         Your Chats <br />
         <span class="serif-italic">~ Your Privacy.</span>
