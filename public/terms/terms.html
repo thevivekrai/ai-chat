@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terms & Conditions — Sytext</title>
+  <meta name="description" content="Sytext Terms & Conditions — the rules for using our AI-first unified inbox." />
+  <meta name="color-scheme" content="dark" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ============ MONOCHROME LIQUID GLASS TOKENS ============ */
+    :root {
+      --bg-body: #000000;
+      --text-main: #ffffff;
+      --text-muted: #a1a1aa;
+      --text-light: #52525b;
+      
+      /* Pure Monochrome Glass Settings */
+      --glass-bg: rgba(255, 255, 255, 0.03);
+      --glass-bg-hover: rgba(255, 255, 255, 0.06);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --glass-border-hover: rgba(255, 255, 255, 0.15);
+      --glass-highlight: rgba(255, 255, 255, 0.2);
+      --glass-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.8);
+      --glass-blur: blur(40px) saturate(150%);
+      
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-serif: 'Instrument Serif', Georgia, serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; scroll-padding-top: 100px; color-scheme: dark; }
+    body {
+      font-family: var(--font-sans);
+      color: var(--text-main);
+      background-color: var(--bg-body);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+    a { color: var(--text-main); text-decoration: none; font-weight: 500; transition: color 0.2s ease; }
+    a:hover { color: var(--text-muted); }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+    /* ============ SUBTLE AMBIENT BACKGROUND ============ */
+    .ambient-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      overflow: hidden;
+      background: var(--bg-body);
+    }
+    .dark-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.5;
+      animation: float 20s ease-in-out infinite alternate;
+    }
+    .blob-1 {
+      top: -10%; left: -10%;
+      width: 60vw; height: 60vw;
+      background: #1a1a1a;
+    }
+    .blob-2 {
+      bottom: -10%; right: -10%;
+      width: 50vw; height: 50vw;
+      background: #111111;
+      animation-delay: -10s;
+    }
+
+    @keyframes float {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(5%, 5%) scale(1.1); }
+    }
+
+    /* Film grain noise for physical glass texture */
+    .noise-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: 0.15;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    /* ============ SCROLL PROGRESS BAR ============ */
+    .progress-container {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 2px;
+      background: transparent;
+      z-index: 1000;
+    }
+    .progress-bar {
+      height: 2px;
+      background: #ffffff;
+      width: 0%;
+      transition: width 0.1s ease;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    }
+
+    /* ============ HEADER ============ */
+    .terms-header {
+      padding: 80px 0 40px;
+      text-align: center;
+      position: relative;
+    }
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 32px;
+      padding: 10px 20px;
+      border-radius: 99px;
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      box-shadow: inset 0 1px 1px var(--glass-highlight), var(--glass-shadow);
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .back-link:hover {
+      transform: translateY(-2px) scale(1.02);
+      background: var(--glass-bg-hover);
+      border-color: var(--glass-border-hover);
+    }
+    .back-link svg { width: 16px; height: 16px; }
+
+    .terms-header h1 {
+      font-size: clamp(40px, 6vw, 64px);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.1;
+      margin-bottom: 16px;
+      color: #ffffff;
+    }
+    .terms-header h1 span {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-weight: 400;
+      color: #888888; /* Sleek silver instead of gradient */
+    }
+    .terms-meta {
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      padding: 6px 16px;
+      border-radius: 99px;
+      border: 1px solid var(--glass-border);
+      box-shadow: inset 0 1px 1px var(--glass-highlight);
+    }
+    .terms-meta::before {
+      content: '';
+      display: block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+    }
+
+    /* ============ LAYOUT ============ */
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 64px;
+      width: min(100% - 40px, 1100px);
+      margin-inline: auto;
+      padding-bottom: 120px;
+    }
+
+    /* ============ FLOATING GLASS TOC ============ */
+    .toc-sidebar {
+      position: sticky;
+      top: 100px;
+      height: max-content;
+      padding: 24px;
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      border-radius: 28px;
+      box-shadow: inset 0 1px 1px var(--glass-highlight), var(--glass-shadow);
+    }
+    .toc-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--text-light);
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--glass-border);
+    }
+    .toc-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .toc-link {
+      display: block;
+      font-size: 14px;
+      color: var(--text-muted);
+      padding: 10px 16px;
+      border-radius: 12px;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      line-height: 1.4;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+    .toc-link:hover {
+      color: var(--text-main);
+      background: var(--glass-bg-hover);
+    }
+    .toc-link.active {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--glass-border);
+      box-shadow: inset 0 1px 1px var(--glass-highlight), 0 4px 12px rgba(0,0,0,0.5);
+      font-weight: 700;
+      transform: translateX(6px);
+    }
+
+    /* ============ LIQUID GLASS CONTENT CARDS ============ */
+    .terms-content {
+      max-width: 760px;
+    }
+    .terms-intro {
+      font-size: 20px;
+      color: var(--text-muted);
+      margin-bottom: 48px;
+      line-height: 1.6;
+      font-weight: 400;
+      padding: 0 16px;
+    }
+
+    .legal-section {
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      border-radius: 32px;
+      padding: 40px;
+      margin-bottom: 24px;
+      box-shadow: inset 0 1px 1px var(--glass-highlight), var(--glass-shadow);
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      
+      /* Scroll Reveal Base */
+      opacity: 0;
+      transform: translateY(40px) scale(0.98);
+    }
+    
+    .legal-section.reveal {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .legal-section:hover {
+      transform: translateY(-4px) scale(1.01);
+      border-color: var(--glass-border-hover);
+      background: var(--glass-bg-hover);
+      box-shadow: inset 0 1px 1px var(--glass-highlight), 0 30px 60px -15px rgba(0, 0, 0, 0.9);
+    }
+
+    .legal-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .legal-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      box-shadow: inset 0 1px 1px var(--glass-highlight);
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .legal-section:hover .legal-icon {
+      transform: scale(1.1) rotate(5deg);
+      background: #ffffff;
+      color: #000000;
+    }
+    .legal-icon svg { width: 20px; height: 20px; }
+
+    .terms-content h2 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-main);
+    }
+
+    .terms-content p {
+      font-size: 16px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+    .terms-content ul {
+      list-style: none;
+      padding-left: 0;
+      margin-bottom: 20px;
+      color: var(--text-muted);
+    }
+    .terms-content li {
+      margin-bottom: 12px;
+      font-size: 16px;
+      position: relative;
+      padding-left: 28px;
+    }
+    .terms-content li::before {
+      content: '–'; /* Clean minimalist dash instead of colored icon */
+      position: absolute;
+      left: 0;
+      color: #ffffff;
+      font-weight: bold;
+    }
+    .terms-content strong {
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    /* ============ FOOTER ============ */
+    footer {
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-top: 1px solid var(--glass-border);
+      padding: 48px 0 40px;
+      text-align: center;
+      box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+    }
+    .footer-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .footer-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+      color: var(--text-main);
+    }
+    .footer-logo img { width: 24px; height: 24px; border-radius: 6px; }
+    .footer-logo span { color: var(--text-light); font-weight: 400; font-size: 13px; margin-left: 6px; }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 24px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: var(--text-light);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .footer-links a { color: inherit; }
+    .footer-links a:hover { color: var(--text-main); }
+
+    /* ============ RESPONSIVE ============ */
+    @media (max-width: 900px) {
+      .layout-grid {
+        grid-template-columns: 1fr;
+        gap: 40px;
+      }
+      .toc-sidebar { display: none; }
+      .terms-header { padding: 60px 0 20px; }
+      .legal-section { padding: 24px; border-radius: 24px; }
+      .terms-intro { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient Dark Background -->
+  <div class="ambient-bg">
+    <div class="dark-blob blob-1"></div>
+    <div class="dark-blob blob-2"></div>
+  </div>
+  <div class="noise-overlay"></div>
+
+  <!-- Scroll Progress Bar -->
+  <div class="progress-container">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+
+  <header class="terms-header">
+    <div class="layout-grid" style="padding-bottom: 0;">
+      <div></div>
+      <div>
+        <a href="index.html" class="back-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          Back to Sytext
+        </a>
+        <h1>Terms & <span>Conditions</span></h1>
+        <p class="terms-meta">Last updated: June 1, 2026</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout-grid">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="toc-sidebar">
+      <div class="toc-title">On this page</div>
+      <ul class="toc-list">
+        <li><a href="#about" class="toc-link">1. About Sytext</a></li>
+        <li><a href="#eligibility" class="toc-link">2. Eligibility</a></li>
+        <li><a href="#acceptable-use" class="toc-link">3. Acceptable Use</a></li>
+        <li><a href="#privacy" class="toc-link">4. Privacy & Data</a></li>
+        <li><a href="#ai-disclaimer" class="toc-link">5. AI-Generated Content</a></li>
+        <li><a href="#third-party" class="toc-link">6. Third-Party Services</a></li>
+        <li><a href="#payments" class="toc-link">7. Payments & Billing</a></li>
+        <li><a href="#ip" class="toc-link">8. Intellectual Property</a></li>
+        <li><a href="#termination" class="toc-link">9. Termination</a></li>
+        <li><a href="#disclaimers" class="toc-link">10. Disclaimers</a></li>
+        <li><a href="#liability" class="toc-link">11. Limitations</a></li>
+        <li><a href="#indemnification" class="toc-link">12. Indemnification</a></li>
+        <li><a href="#governing-law" class="toc-link">13. Governing Law</a></li>
+        <li><a href="#contact" class="toc-link">14. Contact</a></li>
+      </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="terms-content">
+      
+      <p class="terms-intro">Welcome to Sytext. These Terms & Conditions ("Terms") govern your access to and use of the Sytext website, application, and services (collectively, the "Service"). By accessing or using the Service, you agree to be bound by these Terms.</p>
+
+      <section id="about" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          </div>
+          <h2>1. About Sytext</h2>
+        </div>
+        <p>Sytext is an AI-first unified inbox that brings together messages from multiple networks (such as WhatsApp, Telegram, Instagram, Slack, SMS, and others) into a single interface. It uses artificial intelligence to suggest replies and prioritize messages. Sytext is a productivity tool designed to help you manage your communications more efficiently. You remain in full control of all messages sent from your connected accounts.</p>
+      </section>
+
+      <section id="eligibility" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h2>2. Eligibility & Accounts</h2>
+        </div>
+        <p>You must be at least 13 years old (or the minimum age required in your jurisdiction) to use Sytext. Some features may require you to create an account. When you create an account, you agree to:</p>
+        <ul>
+          <li>Provide accurate, current, and complete information.</li>
+          <li>Maintain the security of your login credentials and not share them.</li>
+          <li>Accept responsibility for all activities that occur under your account.</li>
+          <li>Notify us immediately at <strong>apytest.io@gmail.com</strong> of any unauthorized use.</li>
+        </ul>
+      </section>
+
+      <section id="acceptable-use" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <h2>3. Acceptable Use</h2>
+        </div>
+        <p>You agree to use Sytext only for lawful purposes. You will not:</p>
+        <ul>
+          <li>Use the Service to send spam, unsolicited messages, or harassment.</li>
+          <li>Attempt to reverse-engineer, decompile, or extract the source code of the Service.</li>
+          <li>Interfere with or disrupt the integrity, security, or performance of Sytext.</li>
+          <li>Use the Service to violate the privacy, intellectual property, or other rights of third parties.</li>
+          <li>Impersonate any person or entity, or misrepresent your affiliation.</li>
+          <li>Deploy automated systems (bots, scrapers) that send more requests than a human could reasonably produce.</li>
+        </ul>
+      </section>
+
+      <section id="privacy" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h2>4. Privacy & Data</h2>
+        </div>
+        <p>Your privacy is paramount. Our <a href="sytext.onrender.com/privacy">Privacy Policy</a> explains how we handle your data. By using Sytext, you consent to those practices.</p>
+        <p>Sytext is built <strong>local-first</strong>. Your chat history is stored in your browser or on your device, not centrally on our servers. We only store limited metadata necessary to operate the Service (such as your login identifier and message IDs for syncing). You are responsible for maintaining backups of your data.</p>
+      </section>
+
+      <section id="ai-disclaimer" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
+          </div>
+          <h2>5. AI-Generated Content</h2>
+        </div>
+        <p>Sytext uses artificial intelligence to generate suggested replies and prioritize messages. <strong>AI can make mistakes.</strong> Generated content may be inaccurate, incomplete, or inappropriate. You are solely responsible for reviewing, editing, and approving any message before it is sent. Sytext will never send a message automatically—you must always press "send" yourself.</p>
+      </section>
+
+      <section id="third-party" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          </div>
+          <h2>6. Third-Party Services</h2>
+        </div>
+        <p>Sytext integrates with third-party messaging platforms. Your use of those platforms is governed by their own terms and privacy policies. We are not responsible for the content, actions, or downtime of third-party services. Connecting an external account to Sytext is done at your own risk.</p>
+      </section>
+
+      <section id="payments" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          </div>
+          <h2>7. Payments & Billing</h2>
+        </div>
+        <p>Certain features of Sytext may require payment. If you purchase a subscription, you agree to pay all applicable fees. All payments are non-refundable except as required by law. We reserve the right to change our pricing with reasonable advance notice.</p>
+      </section>
+
+      <section id="ip" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <h2>8. Intellectual Property</h2>
+        </div>
+        <p>All content, design, logos, and software associated with Sytext (excluding your own messages and data) are the property of Sytext or its licensors. You may not copy, modify, distribute, or create derivative works without prior written consent. You retain all rights to the content you create and send through the Service.</p>
+      </section>
+
+      <section id="termination" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          </div>
+          <h2>9. Termination</h2>
+        </div>
+        <p>We may suspend or terminate your access to Sytext at any time, with or without notice, if we believe you have violated these Terms or if required by law. You may stop using the Service at any time. Upon termination, your right to use the Service ceases immediately. Provisions that by their nature should survive termination (including intellectual property, disclaimers, and limitations of liability) will survive.</p>
+      </section>
+
+      <section id="disclaimers" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <h2>10. Disclaimers</h2>
+        </div>
+        <p>THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT. WE DO NOT WARRANT THAT THE SERVICE WILL BE UNINTERRUPTED, ERROR-FREE, OR SECURE. YOU USE THE SERVICE AT YOUR OWN RISK.</p>
+      </section>
+
+      <section id="liability" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h2>11. Limitation of Liability</h2>
+        </div>
+        <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, SYTEXT AND ITS OFFICERS, DIRECTORS, EMPLOYEES, AND AGENTS SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, DATA, OR GOODWILL, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF THE SERVICE. OUR TOTAL LIABILITY FOR ANY CLAIM SHALL NOT EXCEED THE AMOUNT YOU PAID US (IF ANY) IN THE TWELVE (12) MONTHS PRECEDING THE CLAIM.</p>
+      </section>
+
+      <section id="indemnification" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <h2>12. Indemnification</h2>
+        </div>
+        <p>You agree to defend, indemnify, and hold harmless Sytext and its affiliates from and against any claims, damages, obligations, losses, liabilities, costs, or debt, and expenses (including but not limited to attorney's fees) arising from: (i) your use of and access to the Service; (ii) your violation of any term of these Terms; or (iii) your violation of any third-party right, including without limitation any copyright, property, or privacy right.</p>
+      </section>
+
+      <section id="governing-law" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M9 8h1"/><path d="M9 12h1"/><path d="M9 16h1"/><path d="M14 8h1"/><path d="M14 12h1"/><path d="M14 16h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>
+          </div>
+          <h2>13. Governing Law</h2>
+        </div>
+        <p>These Terms shall be governed and construed in accordance with the laws of the State of Delaware, without regard to its conflict of law provisions. Any disputes arising under these Terms shall be resolved exclusively in the courts located in Delaware, and you consent to the personal jurisdiction of such courts.</p>
+      </section>
+
+      <section id="contact" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          </div>
+          <h2>14. Contact</h2>
+        </div>
+        <p>If you have any questions about these Terms, please contact us at:</p>
+        <p><strong>Sytext</strong><br />
+        Email: <a href="mailto:apytest.io@gmail.com">apytest.io@gmail.com</a></p>
+      </section>
+
+    </main>
+  </div>
+
+  <footer>
+    <div class="footer-content" style="width: min(100% - 40px, 1024px); margin: 0 auto;">
+      <a href="index.html" class="footer-logo">
+        <img src="https://sytext.onrender.com/favicon.svg" alt="" />
+        Sytext <span>© 2026</span>
+      </a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html#features">Features</a>
+        <a href="index.html#privacy">Privacy</a>
+        <a href="index.html#faq">FAQ</a>
+        <a href="terms.html">Terms</a>
+        <a href="https://sytext.onrender.com">App</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    // 1. Scroll Progress Bar
+    window.addEventListener('scroll', () => {
+      const winScroll = document.body.scrollTop || document.documentElement.scrollTop;
+      const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+      const scrolled = (winScroll / height) * 100;
+      document.getElementById('progressBar').style.width = scrolled + '%';
+    });
+
+    // 2. Active TOC Highlighting & Scroll Reveal
+    const sections = document.querySelectorAll('.legal-section');
+    const tocLinks = document.querySelectorAll('.toc-link');
+
+    const observerOptions = {
+      root: null,
+      rootMargin: '0px 0px -20% 0px',
+      threshold: 0
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          // Scroll Reveal Animation
+          entry.target.classList.add('reveal');
+
+          // Update TOC
+          tocLinks.forEach(link => link.classList.remove('active'));
+          const activeId = entry.target.getAttribute('id');
+          const activeLink = document.querySelector(`.toc-link[href="#${activeId}"]`);
+          if (activeLink) activeLink.classList.add('active');
+        }
+      });
+    }, observerOptions);
+
+    sections.forEach(section => observer.observe(section));
+  </script>
+</body>
+</html>
