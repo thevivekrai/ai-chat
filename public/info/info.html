@@ -302,7 +302,7 @@
       text-align: center;
     }
     
-    /* Mascot 1: Moved further left, smaller, and a bit down */
+    /* Mascot 1 */
     .mascot-hero {
       top: 160px; 
       left: -120px;
@@ -499,7 +499,7 @@
     
     /* Mascot 3: Moved higher up */
     .mascot-how {
-      top: -40px;
+      top: -80px;
       right: -80px;
       width: 170px;
     }
@@ -586,7 +586,7 @@
       position: relative;
     }
     
-    /* Mascot 2: Up, slightly bigger */
+    /* Mascot 2 */
     .mascot-features {
       top: -100px;
       right: 40px;
@@ -694,7 +694,7 @@
     /* ============ PRIVACY ============ */
     .privacy { padding: 100px 0; }
     
-    /* Mascot 4: Moved further left */
+    /* Mascot 4 */
     .mascot-privacy {
       top: -50px;
       left: -120px;
@@ -735,6 +735,15 @@
 
     /* ============ FAQ ============ */
     .faq { padding: 100px 0; }
+    
+    /* Mascot 5 (New) */
+    .mascot-faq {
+      top: 40px;
+      left: 50%;
+      margin-left: -60px; /* Centers it perfectly without interfering with the float animation */
+      width: 120px;
+    }
+
     .faq-list {
       max-width: 760px;
       margin: 0 auto;
@@ -820,9 +829,10 @@
     /* ============ RESPONSIVE ============ */
     @media (max-width: 1024px) {
       .mascot-hero { width: 130px; left: -80px; top: 140px; }
-      .mascot-how { right: -40px; width: 140px; top: -30px; }
+      .mascot-how { right: -40px; width: 140px; top: -60px; }
       .mascot-features { width: 130px; top: -80px; right: 20px; }
       .mascot-privacy { left: -60px; width: 130px; }
+      .mascot-faq { width: 100px; margin-left: -50px; top: 20px; }
     }
 
     @media (max-width: 768px) {
@@ -835,9 +845,10 @@
       
       /* Mascot Mobile Sizing & Positions */
       .mascot-hero { width: 110px; left: -40px; top: 120px; }
-      .mascot-how { width: 110px; right: -10px; top: -40px; }
+      .mascot-how { width: 110px; right: -10px; top: -60px; }
       .mascot-features { width: 110px; right: 10px; top: -80px; }
       .mascot-privacy { width: 110px; left: -30px; top: -30px; }
+      .mascot-faq { width: 80px; margin-left: -40px; top: 10px; }
       
       .laptop-frame { border-radius: 16px; }
       .browser-header { padding: 8px 12px; }
@@ -1174,8 +1185,12 @@
 
   <!-- FAQ -->
   <section class="faq" id="faq">
-    <div class="container center">
-      <h2 class="h2" style="margin-bottom: 64px;">Questions, <span class="serif-italic">answered.</span></h2>
+    <div class="container center" style="position: relative;">
+      
+      <!-- Mascot 5 -->
+      <img src="../m5.png" alt="Sytext Mascot" class="mascot mascot-faq" />
+
+      <h2 class="h2" style="margin-bottom: 64px; margin-top: 40px;">Questions, <span class="serif-italic">answered.</span></h2>
       
       <div class="faq-list">
         <details class="faq-item" open>
