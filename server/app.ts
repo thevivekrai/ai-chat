@@ -62,6 +62,12 @@ export function createApp(deps: AppDeps): Express {
 app.get('/info', (_req, res) => {
   res.sendFile(join(process.cwd(), 'dist', 'info', 'info.html'));
 });
+app.get('/terms', (_req, res) => {
+  res.sendFile(join(process.cwd(), 'public', 'terms', 'terms.html'));
+});
+app.get('/privacy', (_req, res) => {
+  res.sendFile(join(process.cwd(), 'public', 'privacy', 'privacy.html'));
+});
   const api = Router()
   // Photos and files are sent as they are, not as JSON: before the JSON rules.
   api.use(uploadRoutes(deps))
