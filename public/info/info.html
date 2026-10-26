@@ -103,21 +103,10 @@
     .center { text-align: center; }
     .section { padding: 100px 0; }
 
-    /* ============ TOP BANNER ============ */
-    .top-banner {
-      background: var(--black);
-      color: var(--white);
-      font-size: 13px;
-      text-align: center;
-      padding: 10px;
-      font-weight: 500;
-    }
-    .top-banner a { text-decoration: underline; text-underline-offset: 2px; }
-
     /* ============ NAVIGATION ============ */
     .nav-wrapper {
       position: fixed;
-      top: 40px;
+      top: 16px;
       left: 0;
       right: 0;
       z-index: 100;
@@ -171,6 +160,7 @@
       transition: all 0.3s ease;
     }
     .theme-toggle:hover { background: var(--border-subtle); }
+    .theme-toggle svg { width: 16px; height: 16px; }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -197,14 +187,16 @@
       flex-direction: column;
       gap: 5px;
       padding: 8px;
+      color: var(--text-main);
     }
     .hamburger span {
       display: block;
       width: 20px;
       height: 2px;
-      background: var(--text-main);
+      background: currentColor;
       border-radius: 2px;
     }
+    .hamburger svg { width: 20px; height: 20px; }
 
     /* Mobile Menu */
     .mobile-menu {
@@ -245,7 +237,13 @@
       color: var(--text-muted);
     }
     .carousel-label .step { color: var(--text-light); font-variant-numeric: tabular-nums; }
-    .carousel-label .icon { color: var(--accent-orange); font-size: 18px; }
+    .carousel-label .icon {
+      color: var(--accent-orange);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .carousel-label .icon svg { width: 16px; height: 16px; }
     .carousel-label .app-name { font-weight: 700; color: var(--text-main); }
 
     /* ============ 笔记本电脑/浏览器视窗轮播 ============ */
@@ -300,10 +298,7 @@
       align-items: center;
       gap: 6px;
     }
-    .browser-url::before {
-      content: '🔒';
-      font-size: 10px;
-    }
+    .browser-url svg { width: 10px; height: 10px; }
 
     .carousel-track {
       display: flex;
@@ -318,19 +313,16 @@
     .carousel-slide {
       flex: 0 0 100%;
       scroll-snap-align: center;
-      aspect-ratio: 16 / 10; /* Laptop screen aspect ratio */
-      background: #f8f9fa; /* Fallback */
+      background: var(--bg-surface);
     }
     
-    /* 适配深色模式下的图片背景 */
     [data-theme="dark"] .carousel-slide {
       background: #0b0f14;
     }
     
     .carousel-slide img {
       width: 100%;
-      height: 100%;
-      object-fit: contain; /* Show full desktop UI */
+      height: auto;
       display: block;
     }
 
@@ -437,7 +429,6 @@
       transition: opacity 0.2s ease, transform 0.2s ease;
       filter: grayscale(100%);
     }
-    /* 允许深色模式下反转颜色 */
     [data-theme="dark"] .app-logos img {
       filter: grayscale(100%) invert(1) brightness(2);
     }
@@ -449,7 +440,6 @@
     [data-theme="dark"] .app-logos img:hover {
       filter: grayscale(0%) invert(0) brightness(1);
     }
-    /* 针对部分在深色下需要保持原色的 Logo */
     .app-logos img.no-invert { filter: grayscale(100%); }
     [data-theme="dark"] .app-logos img.no-invert { filter: grayscale(100%) brightness(1.5); }
 
@@ -478,11 +468,14 @@
       border: 1px solid var(--border);
       display: grid;
       place-items: center;
-      font-size: 24px;
       margin-bottom: 24px;
       background: var(--bg-surface);
       color: var(--text-main);
       box-shadow: var(--shadow-sm);
+    }
+    .state-icon svg {
+      width: 28px;
+      height: 28px;
     }
     .state-item h3 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: var(--text-main); }
     .state-item p { color: var(--text-muted); font-size: 15px; line-height: 1.5; }
@@ -597,24 +590,21 @@
 </head>
 <body>
 
-  <!-- 顶部提示条 -->
-  <div class="top-banner">
-    Try Sytext. No account needed. <a href="https://sytext.onrender.com">Try for free</a>
-  </div>
-
   <!-- 导航栏 -->
   <div class="nav-wrapper" id="navWrapper">
     <nav class="navbar">
       <a href="#" class="nav-brand">
-        <!-- 动态 Logo -->
         <img src="https://sytext.onrender.com/favicon.svg" alt="Sytext" />
         <span>Sytext</span>
       </a>
       
       <div class="nav-actions">
-        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">☀️</button>
+        <!-- Theme toggle now uses SVG set via JS, initial placeholder -->
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </button>
         <a href="https://sytext.onrender.com" class="btn btn-black">Try for free</a>
-        <button class="hamburger" id="hamburgerBtn">
+        <button class="hamburger" id="hamburgerBtn" aria-label="Open menu">
           <span></span><span></span><span></span>
         </button>
       </div>
@@ -639,7 +629,11 @@
       
       <div class="carousel-label">
         <span class="step" id="slideCounter">01 / 03</span>
-        <span class="icon">💬</span>
+        <span class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3l1.9 5.8L20 10l-5.8 1.9L12 18l-1.9-5.8L4 10l5.8-1.9L12 3z"/>
+          </svg>
+        </span>
         <span class="app-name">Sytext</span>
         <span style="color: var(--text-light);">AI-first inbox</span>
       </div>
@@ -647,34 +641,34 @@
       <!-- 桌面级应用截图轮播 (Laptop Mockup) -->
       <div class="carousel-wrapper">
         <div class="laptop-frame">
-          <!-- 浏览器头部 -->
           <div class="browser-header">
             <div class="browser-dots">
               <span class="dot-red"></span>
               <span class="dot-yellow"></span>
               <span class="dot-green"></span>
             </div>
-            <div class="browser-url">sytext.onrender.com</div>
+            <div class="browser-url">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              sytext.onrender.com
+            </div>
           </div>
           
-          <!-- 滚动轨道 -->
           <div class="carousel-track" id="carouselTrack">
-            <!-- 截图 1: Inbox Light -->
             <div class="carousel-slide">
               <img src="../1.png" alt="Sytext Inbox Light Mode" loading="eager" />
             </div>
-            <!-- 截图 2: Link WhatsApp -->
             <div class="carousel-slide">
-              <img src="../2.ppg" alt="Sytext Link WhatsApp" loading="lazy" />
+              <img src="../2.png" alt="Sytext Link WhatsApp" loading="lazy" />
             </div>
-            <!-- 截图 3: Ask Dark -->
             <div class="carousel-slide">
-              <img src="../3.ppg" alt="Sytext Ask Dark Mode" loading="lazy" />
+              <img src="../3.png" alt="Sytext Ask Dark Mode" loading="lazy" />
             </div>
           </div>
         </div>
         
-        <!-- 导航圆点 -->
         <div class="carousel-dots" id="carouselDots">
           <div class="dot active" data-index="0"></div>
           <div class="dot" data-index="1"></div>
@@ -718,7 +712,6 @@
             <div class="stat-fill light"></div>
           </div>
         </div>
-        
 
         <div class="stat-divider"></div>
 
@@ -742,22 +735,13 @@
         </div>
       </div>
 
-      <!-- 使用 SimpleIcons 引入真实品牌小图标 -->
       <div class="app-logos">
-        <!-- WhatsApp -->
         <img src="https://cdn.simpleicons.org/whatsapp/25D366" alt="WhatsApp" />
-        <!-- Telegram -->
         <img src="https://cdn.simpleicons.org/telegram/26A5E4" alt="Telegram" />
-        <!-- Instagram -->
         <img src="https://cdn.simpleicons.org/instagram/E4405F" alt="Instagram" />
-
-        <!-- Signal -->
         <img src="https://cdn.simpleicons.org/signal/3A76F0" alt="Signal" />
-        <!-- Matrix -->
         <img src="https://cdn.simpleicons.org/matrix/000000" alt="Matrix" class="no-invert" />
-        <!-- Discord -->
         <img src="https://cdn.simpleicons.org/discord/5865F2" alt="Discord" />
-        <!-- SMS / Messages (用 Apple Messages 图标代替) -->
         <img src="https://cdn.simpleicons.org/imessage/34C759" alt="SMS" />
       </div>
     </div>
@@ -775,20 +759,40 @@
       </p>
 
       <div class="states-wrapper" style="margin-top: 64px;">
+        <!-- Incognito -->
         <div class="state-item">
-          <div class="state-icon">☾</div>
+          <div class="state-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
+              <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
+              <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
+              <line x1="2" y1="2" x2="22" y2="22"/>
+            </svg>
+          </div>
           <h3>Incognito</h3>
           <p>Read without sending read receipts, and type without showing "typing…".</p>
         </div>
         
+        <!-- Local-first -->
         <div class="state-item">
-          <div class="state-icon">🔒</div>
+          <div class="state-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+              <path d="m9 12 2 2 4-4"/>
+            </svg>
+          </div>
           <h3>Local-first</h3>
           <p>Chats live in your browser, not a central database. The server only keeps sytext login id.</p>
         </div>
         
+        <!-- You send -->
         <div class="state-item">
-          <div class="state-icon">✍️</div>
+          <div class="state-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/>
+              <path d="m21.854 2.147-10.94 10.939"/>
+            </svg>
+          </div>
           <h3>You send, not AI</h3>
           <p>Sytext drafts replies, but nothing goes out until you press send.</p>
         </div>
@@ -891,6 +895,9 @@
     const themeToggle = document.getElementById('themeToggle');
     const htmlEl = document.documentElement;
 
+    const sunSVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`;
+    const moonSVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+
     const getPreferredTheme = () => {
       const saved = localStorage.getItem('theme');
       if (saved) return saved;
@@ -900,7 +907,7 @@
     const setTheme = (theme) => {
       htmlEl.setAttribute('data-theme', theme);
       localStorage.setItem('theme', theme);
-      themeToggle.textContent = theme === 'dark' ? '🌙' : '☀️';
+      themeToggle.innerHTML = theme === 'dark' ? sunSVG : moonSVG;
     };
 
     setTheme(getPreferredTheme());
@@ -924,25 +931,22 @@
     });
 
     // 移动端菜单
+    const closeSVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    const hamburgerHTML = '<span></span><span></span><span></span>';
+
     hamburgerBtn.addEventListener('click', () => {
       mobileMenu.classList.toggle('open');
-      if(mobileMenu.classList.contains('open')) {
-        hamburgerBtn.innerHTML = '✕';
-        hamburgerBtn.style.fontSize = '20px';
-        hamburgerBtn.style.padding = '4px 8px';
+      if (mobileMenu.classList.contains('open')) {
+        hamburgerBtn.innerHTML = closeSVG;
       } else {
-        hamburgerBtn.innerHTML = '<span></span><span></span><span></span>';
-        hamburgerBtn.style.fontSize = '';
-        hamburgerBtn.style.padding = '';
+        hamburgerBtn.innerHTML = hamburgerHTML;
       }
     });
 
     document.querySelectorAll('.mobile-menu a').forEach(link => {
       link.addEventListener('click', () => {
         mobileMenu.classList.remove('open');
-        hamburgerBtn.innerHTML = '<span></span><span></span><span></span>';
-        hamburgerBtn.style.fontSize = '';
-        hamburgerBtn.style.padding = '';
+        hamburgerBtn.innerHTML = hamburgerHTML;
       });
     });
 
