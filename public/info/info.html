@@ -302,11 +302,11 @@
       text-align: center;
     }
     
-    /* Hero Mascot Positioning */
+    /* Hero Mascot Positioning: Moved down, made smaller */
     .mascot-hero {
-      top: -20px;
-      right: -20px;
-      width: 160px;
+      top: 20px; 
+      right: -10px;
+      width: 120px;
     }
 
     .hero-badge {
@@ -497,11 +497,11 @@
       position: relative;
     }
     
-    /* How Mascot Positioning */
+    /* How Mascot Positioning: Shifted left, made smaller */
     .mascot-how {
       top: -40px;
-      right: -140px;
-      width: 140px;
+      right: -50px;
+      width: 100px;
     }
 
     .section-label {
@@ -586,11 +586,13 @@
       position: relative;
     }
     
-    /* Features Mascot Positioning */
+    /* Features Mascot Positioning: Centered and moved up, made smaller */
     .mascot-features {
-      top: -60px;
-      right: 40px;
-      width: 120px;
+      top: -90px;
+      left: 0;
+      right: 0;
+      margin-inline: auto;
+      width: 90px;
     }
 
     .section-header .h2 { margin-bottom: 16px; }
@@ -696,9 +698,9 @@
     
     /* Privacy Mascot Positioning */
     .mascot-privacy {
-      top: -40px;
-      left: -80px;
-      width: 130px;
+      top: -30px;
+      left: -50px;
+      width: 90px;
     }
 
     .states-wrapper {
@@ -819,10 +821,10 @@
 
     /* ============ RESPONSIVE ============ */
     @media (max-width: 1024px) {
-      .mascot-hero { width: 120px; right: -10px; }
-      .mascot-how { right: -60px; width: 110px; }
-      .mascot-features { right: 20px; width: 90px; top: -40px; }
-      .mascot-privacy { left: -30px; width: 100px; }
+      .mascot-hero { width: 100px; right: -10px; top: 20px; }
+      .mascot-how { right: -20px; width: 80px; }
+      .mascot-features { width: 70px; top: -70px; }
+      .mascot-privacy { left: -20px; width: 70px; }
     }
 
     @media (max-width: 768px) {
@@ -834,9 +836,9 @@
       .hero { padding-top: 120px; padding-bottom: 60px; }
       
       /* Mascot Mobile Sizing */
-      .mascot-hero { width: 80px; right: -10px; top: 0; }
-      .mascot-how { width: 70px; right: 0px; top: -20px; }
-      .mascot-features { width: 60px; right: 10px; top: -20px; }
+      .mascot-hero { width: 80px; right: 0; top: 10px; }
+      .mascot-how { width: 60px; right: 0px; top: -30px; }
+      .mascot-features { width: 60px; top: -50px; }
       .mascot-privacy { width: 60px; left: 0px; top: -20px; }
       
       .laptop-frame { border-radius: 16px; }
