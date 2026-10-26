@@ -562,6 +562,7 @@
     .footer-links a:hover { color: var(--text-main); }
     .social-links { display: flex; gap: 16px; margin-top: 8px; color: var(--text-light); }
     .social-links a:hover { color: var(--text-main); }
+    .social-links svg { width: 20px; height: 20px; }
 
     /* ============ 响应式 ============ */
     @media (max-width: 768px) {
@@ -757,9 +758,9 @@
       <p class="text-muted">
         Your browser keeps its own copy of your chats in form of cookie. The server only stores your login and message id. Nothing is out from your chats.
       </p>
-      <!-- Added Links here -->
+      <!-- Replaced with only View privacy policy -->
       <p class="text-muted" style="font-size: 16px; margin-top: 16px;">
-        Read our <a href="/privacy" style="text-decoration: underline; font-weight: 600; color: var(--text-main);">Privacy Policy</a> and <a href="/terms" style="text-decoration: underline; font-weight: 600; color: var(--text-main);">Terms & Conditions</a>.
+        <a href="/privacy" style="text-decoration: underline; font-weight: 600; color: var(--text-main);">View privacy policy</a>.
       </p>
 
       <div class="states-wrapper" style="margin-top: 64px;">
@@ -882,15 +883,19 @@
       
       <div class="footer-links">
         <a href="#features">Features</a>
-        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms & Condition</a>
         <a href="#faq">FAQ</a>
-        <a href="/terms">Terms</a>
         <a href="https://sytext.onrender.com">App</a>
       </div>
       
       <div class="social-links">
-        <a href="#" target="_blank">𝕏</a>
-        <a href="#" target="_blank">in</a>
+        <a href="https://instagram.com/sytext.in" target="_blank" aria-label="Instagram">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+            <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+            <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+          </svg>
+        </a>
       </div>
     </div>
   </footer>
