@@ -58,7 +58,10 @@ export function createApp(deps: AppDeps): Express {
   // Behind the host's proxy (Render, Fly…): trust it for the client's IP and HTTPS.
   app.set('trust proxy', 1)
   app.use(securityHeaders)
-
+// Serve the info.html page at /info
+app.get('/info', (req, res) => {
+  res.sendFile(join(process.cwd(), 'dist', 'info', 'info.html'));
+});
   const api = Router()
   // Photos and files are sent as they are, not as JSON: before the JSON rules.
   api.use(uploadRoutes(deps))
