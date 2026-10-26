@@ -59,7 +59,7 @@ export function createApp(deps: AppDeps): Express {
   app.set('trust proxy', 1)
   app.use(securityHeaders)
 // Serve the info.html page at /info
-app.get('/info', (req, res) => {
+app.get('/info', (_req, res) => {
   res.sendFile(join(process.cwd(), 'dist', 'info', 'info.html'));
 });
   const api = Router()
