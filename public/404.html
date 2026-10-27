@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404: Skill Issue — Sytext</title>
+
+  <!-- Prevent theme flash -->
+  <script>
+    (function () {
+      try {
+        const saved = localStorage.getItem('theme');
+        const preferred = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', saved || preferred);
+      } catch (e) {}
+    })();
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ============ LIQUID GLASS TOKENS ============ */
+    :root {
+      --bg-top: #B5CCE6;
+      --bg-bottom: #F2F6FA;
+      --text-main: #0f1419;
+      --text-muted: #536471;
+      --text-light: #8b98a5;
+      --glass-bg: rgba(255, 255, 255, 0.45);
+      --glass-bg-hover: rgba(255, 255, 255, 0.65);
+      --glass-border: rgba(255, 255, 255, 0.7);
+      --glass-highlight: rgba(255, 255, 255, 1);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+      --glass-blur: blur(24px) saturate(180%);
+      --black: #0f1419;
+      --white: #ffffff;
+      --radius-pill: 9999px;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-serif: 'Instrument Serif', Georgia, serif;
+    }
+
+    [data-theme="dark"] {
+      --bg-top: #1D2435;
+      --bg-bottom: #0B0E14;
+      --text-main: #f0f3f5;
+      --text-muted: #8b98a5;
+      --text-light: #5c6b7a;
+      --glass-bg: rgba(30, 37, 54, 0.5);
+      --glass-bg-hover: rgba(40, 48, 68, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --glass-highlight: rgba(255, 255, 255, 0.15);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      --black: #ffffff;
+      --white: #151a21;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      color: var(--text-main);
+      background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      background-attachment: fixed;
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+
+    /* Noise texture */
+    .noise-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: 0.04;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+    [data-theme="dark"] .noise-overlay { opacity: 0.06; }
+
+    /* Floating Background Ghosts */
+    .ghost-bubble {
+      position: absolute;
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      padding: 12px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-muted);
+      box-shadow: var(--glass-shadow);
+      opacity: 0.6;
+      pointer-events: none;
+      animation: drift 20s linear infinite;
+    }
+
+    .ghost-1 { top: 15%; left: 8%; animation-delay: 0s; transform: rotate(-5deg); }
+    .ghost-2 { bottom: 15%; right: 10%; animation-delay: -5s; transform: rotate(8deg); }
+    .ghost-3 { top: 25%; right: 12%; animation-delay: -10s; transform: rotate(3deg); }
+    .ghost-4 { bottom: 25%; left: 12%; animation-delay: -15s; transform: rotate(-10deg); }
+
+    @keyframes drift {
+      0% { transform: translateY(0) rotate(-5deg); }
+      50% { transform: translateY(-20px) rotate(5deg); }
+      100% { transform: translateY(0) rotate(-5deg); }
+    }
+
+    /* 404 Card */
+    .error-card {
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      box-shadow: inset 0 1px 0 var(--glass-highlight), 0 30px 60px -15px rgba(0, 0, 0, 0.2);
+      border-radius: 40px;
+      padding: 64px 48px;
+      text-align: center;
+      max-width: 600px;
+      width: min(100% - 40px, 600px);
+      position: relative;
+      z-index: 10;
+      animation: floatCard 8s ease-in-out infinite;
+    }
+    [data-theme="dark"] .error-card { box-shadow: inset 0 1px 0 var(--glass-highlight), 0 30px 60px -15px rgba(0, 0, 0, 0.9); }
+
+    @keyframes floatCard {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    .error-code {
+      font-size: clamp(100px, 18vw, 140px);
+      font-weight: 800;
+      line-height: 0.9;
+      letter-spacing: -0.06em;
+      margin-bottom: 24px;
+      background: linear-gradient(135deg, var(--text-main), var(--text-muted));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .error-card h1 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 16px;
+      color: var(--text-main);
+    }
+    
+    .error-card h1 span {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+
+    .error-card p {
+      color: var(--text-muted);
+      font-size: 18px;
+      line-height: 1.6;
+      margin-bottom: 40px;
+      max-width: 440px;
+      margin-inline: auto;
+    }
+
+    .btn-home {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 18px 36px;
+      border-radius: var(--radius-pill);
+      background: var(--black);
+      color: var(--white);
+      font-weight: 600;
+      font-size: 16px;
+      text-decoration: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+    }
+
+    .btn-home:hover { 
+      transform: translateY(-3px) scale(1.02); 
+      background: #2a323d;
+    }
+    [data-theme="dark"] .btn-home:hover {
+      background: #e5e7eb;
+    }
+
+    .btn-home svg { width: 18px; height: 18px; }
+
+    /* Mobile Adjustments */
+    @media (max-width: 600px) {
+      .error-card { padding: 48px 24px; }
+      .ghost-bubble { display: none; }
+      .error-code { font-size: 100px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="noise-overlay"></div>
+
+  <!-- Floating background chat bubbles -->
+  <div class="ghost-bubble ghost-1">Did you fall asleep on the keyboard?</div>
+  <div class="ghost-bubble ghost-2">This is why we can't have nice things.</div>
+  <div class="ghost-bubble ghost-3">Error 404: Brain not found.</div>
+  <div class="ghost-bubble ghost-4">Even the AI is disappointed in you.</div>
+
+  <div class="error-card">
+    <div class="error-code">404</div>
+    <h1>Well, this is <span>awkward.</span></h1>
+    
+    <p>
+      We looked everywhere. Behind the server, under the database, we even asked the AI—and it just replied with a clown emoji. 
+      <br><br>
+      Either you typed this URL with your elbows, or the page literally ran away because it saw you coming.
+    </p>
+
+    <a href="/" class="btn-home">
+      Fine, take me back
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14M12 5l7 7-7 7"/>
+      </svg>
+    </a>
+  </div>
+
+</body>
+</html>
