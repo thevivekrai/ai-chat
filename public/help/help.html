@@ -629,9 +629,6 @@
         </div>
         <p>The first screen offers <strong>Continue with Google</strong>, email and password, or the demo without an account.</p>
         
-        <h3>Sessions</h3>
-        <p>Sessions are a signed token in an `httpOnly`, `SameSite=Lax` cookie (secure in production), valid for 30 days. Every change to the server must be sent as JSON, which a page on another site can't do without the server's permission, so the cookie can't be used from elsewhere (CSRF).</p>
-        
         <h3>Recovery Keys</h3>
         <p>Recovery keys stand in for a reset email, which Sytext doesn't send. Creating an account shows a key once, like <code>7K2QP-M9XHD-4T8RW-CZ6NB-J3VFA</code> (125 random bits), to copy or download. If the password is forgotten, <strong>Forgot password?</strong> on the sign-in screen takes the email, the key and a new password. The key then stops working and a new one is shown, and the account's other sessions end. Only a SHA-256 hash of the key is stored.</p>
 
@@ -657,8 +654,7 @@
           <li>Reading a chat in Sytext marks it read on WhatsApp; replies go out from your number.</li>
           <li><strong>Unlink</strong> logs the device out (it disappears from Linked devices) and deletes its chats from the server. If you remove the device from your phone instead, syncing stops and Settings offers to link again or remove its chats.</li>
         </ul>
-        <p><em>Note: It uses Baileys, an unofficial WhatsApp Web client. WhatsApp doesn't support third-party clients and can restrict numbers that use them; the app says so before linking.</em></p>
-      </section>
+   
 
       <!-- 3. Connecting Telegram -->
       <section id="telegram" class="legal-section">
@@ -675,7 +671,7 @@
           <li>Quoted replies, reactions (Telegram's standard set), typing both ways, and profile and group pictures. Scrolling back fetches earlier messages from Telegram.</li>
           <li><strong>Unlink</strong> ends the session in Telegram and deletes its chats from the server.</li>
         </ul>
-        <p><em>Note: The server needs an api_id and api_hash for the deployment from my.telegram.org → API development tools. It uses GramJS, a client for Telegram's own API (MTProto).</em></p>
+
       </section>
 
       <!-- 4. Incognito Mode -->
