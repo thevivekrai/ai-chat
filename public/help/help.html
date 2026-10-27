@@ -608,9 +608,11 @@
         <li><a href="#getting-started" class="toc-link">1. Getting Started</a></li>
         <li><a href="#whatsapp" class="toc-link">2. Connecting WhatsApp</a></li>
         <li><a href="#telegram" class="toc-link">3. Connecting Telegram</a></li>
-        <li><a href="#incognito" class="toc-link">4. Incognito Mode</a></li>
-        <li><a href="#tags" class="toc-link">5. Priority & Tags</a></li>
-        <li><a href="#ai-features" class="toc-link">6. AI Features</a></li>
+        <li><a href="#instagram" class="toc-link">4. Instagram DMs</a></li>
+        <li><a href="#matrix" class="toc-link">5. Matrix & Bridges</a></li>
+        <li><a href="#incognito" class="toc-link">6. Incognito Mode</a></li>
+        <li><a href="#tags" class="toc-link">7. Priority & Tags</a></li>
+        <li><a href="#ai-features" class="toc-link">8. AI Features</a></li>
       </ul>
     </aside>
 
@@ -654,7 +656,7 @@
           <li>Reading a chat in Sytext marks it read on WhatsApp; replies go out from your number.</li>
           <li><strong>Unlink</strong> logs the device out (it disappears from Linked devices) and deletes its chats from the server. If you remove the device from your phone instead, syncing stops and Settings offers to link again or remove its chats.</li>
         </ul>
-   
+      </section>
 
       <!-- 3. Connecting Telegram -->
       <section id="telegram" class="legal-section">
@@ -671,16 +673,59 @@
           <li>Quoted replies, reactions (Telegram's standard set), typing both ways, and profile and group pictures. Scrolling back fetches earlier messages from Telegram.</li>
           <li><strong>Unlink</strong> ends the session in Telegram and deletes its chats from the server.</li>
         </ul>
-
       </section>
 
-      <!-- 4. Incognito Mode -->
+      <!-- 4. Instagram DMs -->
+      <section id="instagram" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          </div>
+          <h2>4. Instagram DMs</h2>
+        </div>
+        <p>Instagram is linked in <strong>Settings → Accounts</strong> with its username and password; it usually asks for a code as well (from your authentication app, or by text or email), and the card asks for that next.</p>
+
+        <p><strong>Read this before you use it.</strong> Meta has no API for a person's own DMs — its Messaging API only covers messages sent to a business account — so Sytext signs in the way instagram.com does and reads the endpoints its Direct page reads. Meta's terms don't allow that. A sign-in from a server is often challenged ("was this you?"), and can get an account locked or asked for a password change. Use it knowing that; <code>INSTAGRAM=off</code> takes it off the page entirely.</p>
+        
+        <p><strong>Your password is never stored.</strong> It's used once, to sign in; only the session Instagram hands back is kept, encrypted (<code>DATA_ENCRYPTION_KEY</code>), so the link survives restarts without it. When Instagram throws that session out, the account goes quiet and Settings says to link again — there is nothing stored that could sign in by itself.</p>
+
+        <ul>
+          <li><strong>Chats:</strong> Your DMs, one-to-one and group, as Instagram's own inbox lists them.</li>
+          <li><strong>Messages:</strong> Text out; text and photos in. Photos come through this server (<code>/api/files/…</code>); Instagram's own links to them expire.</li>
+          <li><strong>Live:</strong> No stream: the inbox is looked at every 45 seconds, so a message takes up to that long to appear. Replies go out at once.</li>
+          <li><strong>Read receipts:</strong> Opening a chat tells Instagram — unless Incognito mode is on.</li>
+          <li><strong>Not there:</strong> Replies, reactions, edits, unsending, "typing…", older history and sending photos. Starring, pinning, deleting for me and archiving are kept by Sytext itself.</li>
+        </ul>
+        
+        <p><strong>Security checks.</strong> Instagram often wants a sign-in from a server checked before it allows it. That check is not a prompt in the app — nothing arrives on your phone — so Sytext answers it the way the website does: a "was this you?" review is answered on the spot (it's this sign-in being asked about), and when Instagram wants a code instead it sends one to your email or phone and the card asks for it. If it insists on a check that only works in a browser, Settings says so: sign in on instagram.com, clear it there, then link again.</p>
+      </section>
+
+      <!-- 5. Matrix & Bridges -->
+      <section id="matrix" class="legal-section">
+        <div class="legal-header">
+          <div class="legal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M9 12h6"/></svg>
+          </div>
+          <h2>5. Matrix & Bridges</h2>
+        </div>
+        <p>Sign in to any Matrix homeserver with a password, or paste an access token from another Matrix app (needed for servers that only allow single sign-on). Every joined room becomes a chat.</p>
+        
+        <p>Rooms created by <a href="https://docs.mau.fi/bridges/" target="_blank" style="text-decoration: underline;">mautrix</a> bridges announce what they bridge (an <code>m.bridge</code> state event), so a WhatsApp chat appears under <strong>WhatsApp</strong>, shows the contact's phone number, and replies go out on WhatsApp. This covers mautrix-whatsapp, -meta (Instagram), -slack, -gmessages (SMS/RCS) and -telegram. Run the bridges on your own homeserver; most bridges require that, and it keeps your chats on infrastructure you control.</p>
+
+        <ul>
+          <li>The homeserver must allow requests from the site (CORS). Synapse does by default.</li>
+          <li><strong>End-to-end encryption isn't supported yet.</strong> Messages in encrypted rooms show as locked, and replying there is refused with an explanation. Bridges can be configured to keep portal rooms unencrypted (the encryption section of their config).</li>
+          <li>Disconnecting signs out the session Sytext created. A pasted access token belongs to another app, so that session is left alone.</li>
+        </ul>
+      </section>
+
+      <!-- 6. Incognito Mode -->
       <section id="incognito" class="legal-section">
         <div class="legal-header">
           <div class="legal-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
           </div>
-          <h2>4. Incognito Mode</h2>
+          <h2>6. Incognito Mode</h2>
         </div>
         <p><strong>Settings → Privacy → Incognito mode</strong>, as in Beeper. While it's on, an <strong>Incognito</strong> badge shows at the top:</p>
         
@@ -692,13 +737,13 @@
         </ul>
       </section>
 
-      <!-- 5. Priority & Tags -->
+      <!-- 7. Priority & Tags -->
       <section id="tags" class="legal-section">
         <div class="legal-header">
           <div class="legal-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
           </div>
-          <h2>5. Priority & Tags</h2>
+          <h2>7. Priority & Tags</h2>
         </div>
         <p>Sytext helps you focus on what matters most by automatically organizing your conversations using two systems:</p>
         
@@ -715,13 +760,13 @@
         </ul>
       </section>
 
-      <!-- 6. AI Features -->
+      <!-- 8. AI Features -->
       <section id="ai-features" class="legal-section">
         <div class="legal-header">
           <div class="legal-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
           </div>
-          <h2>6. AI Features</h2>
+          <h2>8. AI Features</h2>
         </div>
         <p>Choose the AI in <strong>Settings → AI</strong>:</p>
         
