@@ -76,7 +76,7 @@ export function createApp(deps: AppDeps): Express {
     res.sendFile(join(process.cwd(), 'public', 'help', 'help.html'));
   });
   
-   app.use((req, res) => {
+   app.use((_req, res) => {
     res.status(404).sendFile(join(process.cwd(), 'public', '404.html'));
   });
   
