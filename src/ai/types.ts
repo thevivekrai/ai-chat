@@ -1,4 +1,4 @@
-import type { ChatLabel, NetworkId } from '../data/types'
+import type { ChatLabel, LabelCall, NetworkId } from '../data/types'
 
 export type Priority = 'urgent' | 'normal' | 'low'
 export type Tone = 'short' | 'friendly' | 'professional'
@@ -38,7 +38,14 @@ export interface AiMessage {
 }
 
 // Relative, not '@/': the server loads this file directly, where that alias isn't resolved.
-export { CALM_LABELS, CHAT_LABELS, MAX_LABELS, type ChatLabel } from '../data/types'
+export { CALM_LABELS, CHAT_LABELS, LABEL_CONFIDENCE, MAX_LABELS, type ChatLabel, type LabelCall } from '../data/types'
+
+/**
+ * How much of a chat is read before it is tagged or sorted. The messages that still want a reply
+ * are rarely the last two: what came before them is what says whether it's a payment, a plan or a
+ * complaint.
+ */
+export const TAGGING_WINDOW = 30
 
 export interface PriorityResult {
   priority: Priority
@@ -46,8 +53,36 @@ export interface PriorityResult {
   expectsReply: boolean
   /** One short sentence shown in the AI panel. */
   reason: string
-  /** What the chat is about (most telling first). Older results have none. */
+  /** The tags that are used: sure enough, most sure first. Older results have none. */
   labels?: ChatLabel[]
+  /** Every tag the AI considered, with how sure it was and why — shown when someone asks. */
+  labelCalls?: LabelCall[]
+  /** What this answer came from, to tell later why a chat got the tags it did. */
+  audit?: TagAudit
+}
+
+/**
+ * The record kept of each tagging run: which model, given which prompt and which messages, said
+ * what. The same model, prompt and messages give the same tags, so a wrong tag can be traced.
+ */
+export interface TagAudit {
+  model: string
+  /** A short hash of the exact prompt sent (or of the rules' version, for the demo AI). */
+  promptHash: string
+  /** The messages it read, oldest first. */
+  messageIds: string[]
+  /** The model's answer as it came back, before unsure tags were dropped. */
+  raw: string
+  /** When it ran. */
+  at: string
+}
+
+/**
+ * What a model answers for a chat's priority: the same, except that its tags still carry their
+ * confidence. `classifyPriority` turns this into a `PriorityResult`, dropping unsure tags.
+ */
+export interface PriorityCall extends Omit<PriorityResult, 'labels' | 'labelCalls'> {
+  labels: LabelCall[]
 }
 
 export interface ThreadSummary {

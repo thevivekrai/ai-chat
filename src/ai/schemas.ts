@@ -10,10 +10,26 @@ const PrioritySchema = z.object({
   priority: z.enum(['urgent', 'normal', 'low']),
   expectsReply: z.boolean().describe('Whether the latest messages expect a reply from the user.'),
   reason: z.string().describe('One plain sentence, under 90 characters.'),
-  // Tags a model leaves out or makes up are dropped rather than failing the whole answer.
+  /**
+   * Tags, each with how sure the model is and why. Anything made up, malformed or unsure is
+   * dropped here rather than failing the whole answer; a model that answers with plain strings
+   * (an older or smaller one) is read as "sure, no reason given".
+   */
   labels: z
-    .preprocess((v) => (Array.isArray(v) ? v.filter((l) => (CHAT_LABELS as readonly unknown[]).includes(l)) : []), z.array(z.enum(CHAT_LABELS)))
-    .describe('Up to 3 tags for what the chat is about, most telling first.'),
+    .preprocess(
+      (v) =>
+        (Array.isArray(v) ? v : [])
+          .map((l) => (typeof l === 'string' ? { tag: l, confidence: 1 } : l))
+          .filter((l): l is { tag: string; confidence?: unknown; why?: unknown } => !!l && typeof l === 'object' && 'tag' in l)
+          .filter((l) => (CHAT_LABELS as readonly unknown[]).includes(l.tag))
+          .map((l) => ({
+            tag: l.tag,
+            confidence: typeof l.confidence === 'number' && l.confidence >= 0 && l.confidence <= 1 ? l.confidence : 0,
+            ...(typeof l.why === 'string' && l.why.trim() ? { why: l.why.trim().slice(0, 80) } : {}),
+          })),
+      z.array(z.object({ tag: z.enum(CHAT_LABELS), confidence: z.number().min(0).max(1), why: z.string().optional() })),
+    )
+    .describe('Tags that clearly apply, each with a confidence from 0 to 1 and a few words on why. Empty when none does.'),
 })
 
 const SummarySchema = z.object({

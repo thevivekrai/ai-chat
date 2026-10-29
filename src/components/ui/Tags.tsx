@@ -3,6 +3,8 @@ import type { ChatLabel, Priority } from '@/ai'
 import { LABELS } from '@/lib/chatLabels'
 import { cn } from '@/lib/cn'
 import { formatDuration } from '@/lib/time'
+import { whyOf } from '@/lib/chatLabels'
+import type { LabelSource } from '@/store/selectors'
 
 const PRIORITY: Record<Priority, { label: string; className: string; dot: string }> = {
   urgent: {
@@ -26,14 +28,14 @@ export function PriorityTag({ priority, reason }: { priority: Priority; reason?:
   )
 }
 
-/** One of the AI's tags for what a chat is about. Those that need something from you stand out. */
-export function LabelTag({ label }: { label: ChatLabel }) {
+/** One of a chat's tags. Those that need something from you stand out. */
+export function LabelTag({ label, source }: { label: ChatLabel; source?: LabelSource }) {
   const { label: text, icon: Icon, hint } = LABELS[label]
   const asks = label === 'follow-up' || label === 'deadline'
   return (
     <span
       className={cn(PILL, asks ? 'bg-violet-500/10 text-violet-700 ring-violet-500/20 dark:text-violet-300' : 'bg-surface-2/70 text-muted ring-line')}
-      title={`AI tag: ${hint}`}
+      title={`${text}: ${whyOf(source) ?? hint}`}
     >
       <Icon className="size-3" aria-hidden />
       {text}

@@ -206,6 +206,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     ...(doc.avatarUrl ? { avatarUrl: doc.avatarUrl } : {}),
     ...(doc.archived ? { archived: true } : {}),
     ...(doc.labels?.length ? { labels: doc.labels } : {}),
+    ...(doc.labelsLocked ? { labelsLocked: true } : {}),
   })
 
   const toTask = (doc: TaskDoc): Task | null => {
@@ -393,7 +394,7 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
     async setThreadState(
       userId: ObjectId,
       threadId: string,
-      patch: { doneAt?: string | null; snoozedUntil?: string | null; labels?: ChatLabel[] },
+      patch: { doneAt?: string | null; snoozedUntil?: string | null; labels?: ChatLabel[]; labelsLocked?: boolean },
     ): Promise<Thread | null> {
       const set: Partial<ThreadDoc> = {}
       const unset: Record<string, ''> = {}
@@ -407,6 +408,8 @@ export function createInboxStore(col: Collections, sealer: Sealer) {
         if (patch.labels.length) set.labels = patch.labels
         else unset.labels = ''
       }
+      if (patch.labelsLocked === true) set.labelsLocked = true
+      else if (patch.labelsLocked === false) unset.labelsLocked = ''
       const doc = await col.threads.findOneAndUpdate(
         { userId, id: threadId },
         { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) },

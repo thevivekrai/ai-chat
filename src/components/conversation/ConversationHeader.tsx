@@ -1,4 +1,18 @@
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowLeft, Check, CheckCheck, MoreVertical, Search, Sparkles, Tag as TagIcon, Undo2 } from 'lucide-react'
+import {
+  AlarmClock,
+  AlarmClockOff,
+  Archive,
+  ArchiveRestore,
+  ArrowLeft,
+  Check,
+  CheckCheck,
+  Eraser,
+  MoreVertical,
+  Search,
+  Sparkles,
+  Tag as TagIcon,
+  Undo2,
+} from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
@@ -6,15 +20,27 @@ import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { Menu, type MenuItem } from '@/components/ui/Popover'
 import { CHAT_LABELS, type ChatLabel } from '@/data/types'
-import { LABELS } from '@/lib/chatLabels'
+import { LABELS, whyOf } from '@/lib/chatLabels'
 import { typingLabel } from '@/lib/format'
 import { useBreakpoint } from '@/lib/media'
 import { NETWORKS } from '@/lib/networks'
 import { snoozeOptions } from '@/lib/schedule'
 import { formatShortWhen, toMs } from '@/lib/time'
-import { archiveThread, markDone, reopenThread, sendReadReceipt, snoozeThread, toggleAiPanel, toggleThreadLabel, unsnoozeThread } from '@/store/actions'
+import {
+  archiveThread,
+  clearThreadLabels,
+  markDone,
+  reopenThread,
+  sendReadReceipt,
+  setThreadLabelsLocked,
+  snoozeThread,
+  toggleAiPanel,
+  toggleThreadLabel,
+  unsnoozeThread,
+} from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
+import { useThreadView } from '@/store/selectors'
 import { useIncognito } from '@/store/privacy'
 import { useUi } from '@/store/ui'
 
@@ -100,7 +126,7 @@ export function ConversationHeader({ threadId }: { threadId: string }) {
         >
           <Sparkles className="size-4" />
         </Button>
-        <TagMenu threadId={threadId} labels={thread.labels ?? []} />
+        <TagMenu threadId={threadId} own={thread.labels ?? []} locked={!!thread.labelsLocked} />
         <ChatMenu threadId={threadId} archived={!!thread.archived} />
       </div>
     </header>
@@ -137,14 +163,35 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
 }
 
 /** Tags put on the chat by hand, from the same set the AI uses. */
-function TagMenu({ threadId, labels }: { threadId: string; labels: ChatLabel[] }) {
-  const items: MenuItem[] = CHAT_LABELS.map((label) => ({
-    id: label,
-    label: LABELS[label].label,
-    icon: LABELS[label].icon,
-    checked: labels.includes(label),
-    onSelect: () => void toggleThreadLabel(threadId, label),
-  }))
+/**
+ * The chat's tags. Ticks are the user's own; a tag the AI gave says so and why, and ticking it
+ * keeps it as the user's own.
+ */
+function TagMenu({ threadId, own, locked }: { threadId: string; own: ChatLabel[]; locked: boolean }) {
+  const view = useThreadView(threadId)
+  const labels = view?.labels ?? own
+  const sources = view?.labelSources ?? {}
+  const items: MenuItem[] = [
+    ...CHAT_LABELS.map((label) => {
+      const hint = labels.includes(label) ? whyOf(sources[label]) : undefined
+      return {
+        id: label,
+        label: LABELS[label].label,
+        icon: LABELS[label].icon,
+        checked: own.includes(label),
+        ...(hint ? { hint } : {}),
+        onSelect: () => void toggleThreadLabel(threadId, label),
+      }
+    }),
+    {
+      id: 'ai-tags',
+      label: 'Let AI tag this chat',
+      icon: Sparkles,
+      checked: !locked,
+      onSelect: () => void setThreadLabelsLocked(threadId, !locked),
+    },
+    ...(labels.length ? [{ id: 'clear', label: 'Clear all tags', icon: Eraser, onSelect: () => void clearThreadLabels(threadId) }] : []),
+  ]
   return (
     <Menu
       title="Tags"

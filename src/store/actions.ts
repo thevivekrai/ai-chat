@@ -283,6 +283,26 @@ export function toggleThreadLabel(threadId: string, label: ChatLabel) {
   return setThreadLabels(threadId, current.includes(label) ? current.filter((l) => l !== label) : [...current, label])
 }
 
+/**
+ * Clears every tag from a chat — the user's and the AI's — and keeps it that way: the AI adds no
+ * new ones until "Let AI tag this chat" is turned back on. Priority (Urgent, Normal, Low) isn't a
+ * tag and stays as it is.
+ */
+export async function clearThreadLabels(threadId: string) {
+  await useInbox.getState().setThreadState(threadId, { labels: [], labelsLocked: true })
+  toast({
+    title: 'Tags cleared',
+    description: "The AI won't tag this chat again until you let it.",
+    group: 'tags',
+    action: { label: 'Let AI tag it', run: () => void setThreadLabelsLocked(threadId, false) },
+  })
+}
+
+/** Whether the AI may tag this chat; the user's own tags stay either way. */
+export function setThreadLabelsLocked(threadId: string, locked: boolean) {
+  return useInbox.getState().setThreadState(threadId, { labelsLocked: locked })
+}
+
 export function reopenThread(threadId: string) {
   return useInbox.getState().setThreadState(threadId, { doneAt: null })
 }

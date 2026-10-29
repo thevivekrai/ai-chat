@@ -1,10 +1,10 @@
 import { assertAiCanRead } from './access'
 import { simulateLatency } from './latency'
-import { generate, llmConfigured } from './llm'
+import { generate, llmConfigured, modelFor } from './llm'
 import { cannedBasePriority, cannedPriority } from './mock/canned'
 import { heuristicLabels, heuristicPriority, saysUrgent } from './mock/heuristics'
 import { buildPriorityPrompt } from './prompts'
-import { CHAT_LABELS, MAX_LABELS, type AiThread, type ChatLabel, type PriorityResult } from './types'
+import { LABEL_CONFIDENCE, MAX_LABELS, TAGGING_WINDOW, type AiThread, type ChatLabel, type LabelCall, type PriorityResult, type TagAudit } from './types'
 
 /**
  * Decides whether a thread needs a reply from me and how urgent it is. Feeds the "Needs reply"
@@ -13,21 +13,47 @@ import { CHAT_LABELS, MAX_LABELS, type AiThread, type ChatLabel, type PriorityRe
 export async function classifyPriority(thread: AiThread): Promise<PriorityResult> {
   assertAiCanRead(thread.id)
 
+  const messageIds = thread.messages.slice(-TAGGING_WINDOW).map((m) => m.id)
   if (llmConfigured()) {
-    const result = await generate(buildPriorityPrompt(thread, new Date()))
-    return checked(thread, { ...result, reason: result.reason.trim(), labels: tidy(result.labels) })
+    const request = buildPriorityPrompt(thread, new Date())
+    const answer = await generate(request)
+    const audit = record('priority', `${request.system}\n${request.user}`, messageIds, answer)
+    return checked(thread, { ...answer, reason: answer.reason.trim(), ...applied(answer.labels), audit })
   }
 
   await simulateLatency('classify')
   const now = Date.now()
   const result = cannedPriority(thread, now) ?? heuristicPriority(thread, now, cannedBasePriority(thread.id))
-  return { ...result, labels: result.labels ?? heuristicLabels(thread, now) }
+  const calls = result.labels ? result.labels.map((tag) => ({ tag, confidence: 1, why: 'Set for this demo chat' })) : heuristicLabels(thread, now)
+  return { ...result, ...applied(calls), audit: record('priority', DEMO_RULES, messageIds, { ...result, labels: calls }) }
 }
 
-/** Known tags only, each once, at most MAX_LABELS. */
-function tidy(labels: readonly string[] | undefined): ChatLabel[] {
-  const known = (labels ?? []).filter((l): l is ChatLabel => (CHAT_LABELS as readonly string[]).includes(l))
-  return [...new Set(known)].slice(0, MAX_LABELS)
+/** The demo AI's rules have no prompt; their version stands in for one in the record. */
+const DEMO_RULES = 'demo-rules:2'
+
+function record(task: 'priority', prompt: string, messageIds: string[], answer: unknown): TagAudit {
+  return { model: modelFor(task), promptHash: hash(prompt), messageIds, raw: JSON.stringify(answer).slice(0, 2000), at: new Date().toISOString() }
+}
+
+/** FNV-1a: a short fingerprint of the prompt, enough to tell two prompts apart in the record. */
+function hash(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/**
+ * The tags that are used, out of the ones the AI considered: sure enough, each once, most sure
+ * first, and never more than MAX_LABELS. Nothing sure enough means no tags — a chat with none
+ * reads better than a chat with the wrong one. The rest are kept to answer "why this tag?".
+ */
+function applied(calls: readonly LabelCall[]): { labels: ChatLabel[]; labelCalls: LabelCall[] } {
+  const seen = new Set<string>()
+  const ranked = [...calls].sort((a, b) => b.confidence - a.confidence).filter((c) => !seen.has(c.tag) && seen.add(c.tag))
+  return {
+    labels: ranked.filter((c) => c.confidence >= LABEL_CONFIDENCE).slice(0, MAX_LABELS).map((c) => c.tag),
+    labelCalls: ranked,
+  }
 }
 
 /**
