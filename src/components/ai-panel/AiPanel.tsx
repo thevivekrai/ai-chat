@@ -125,7 +125,7 @@ function PrioritySection({ threadId }: { threadId: string }) {
             <div className="mb-2 flex flex-wrap gap-1.5" aria-label="Tags">
               {calm && <PriorityTag priority={calm} />}
               {view.labels.map((label) => (
-                <LabelTag key={label} label={label} />
+                <LabelTag key={label} label={label} source={view.labelSources[label]} />
               ))}
             </div>
           )}
@@ -160,7 +160,7 @@ function PrioritySection({ threadId }: { threadId: string }) {
           {!!view?.labels.length && (
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Tags">
               {view.labels.map((label) => (
-                <LabelTag key={label} label={label} />
+                <LabelTag key={label} label={label} source={view.labelSources[label]} />
               ))}
             </div>
           )}

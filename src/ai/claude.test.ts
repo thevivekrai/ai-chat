@@ -57,12 +57,16 @@ describe('Claude requests', () => {
 
     const result = await classifyPriority(aiThread('priya'))
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       priority: 'urgent',
       expectsReply: true,
       reason: 'Customer waiting on a late order.',
+      // Unknown tags dropped, each once, at most three.
       labels: ['order', 'follow-up', 'work'],
     })
+    // What the tags came from is kept, to tell later why a chat got them.
+    expect(result.audit).toMatchObject({ model: 'anthropic:claude-haiku-5-5', messageIds: expect.arrayContaining(['priya-1']) })
+    expect(result.audit?.promptHash).toMatch(/^[0-9a-f]{8}$/)
     expect(calls).toHaveLength(1)
     const [{ url, headers, body }] = calls
     expect(url).toBe('https://api.anthropic.com/v1/messages?beta=true')

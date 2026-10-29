@@ -46,7 +46,7 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
         view.priorityLoading && <PriorityTagSkeleton key="p" />
       )),
     // Two tags at most in the list; the AI panel shows them all.
-    ...view.labels.slice(0, 2).map((label) => <LabelTag key={`l-${label}`} label={label} />),
+    ...view.labels.slice(0, 2).map((label) => <LabelTag key={`l-${label}`} label={label} source={view.labelSources[label]} />),
     view.needsReply && waitingMs >= UNANSWERED_BADGE_AFTER && <UnansweredBadge key="u" waitingMs={waitingMs} />,
     showWaitingOnThem && view.waitingOnThem && (
       <span key="w" className="text-[11px] text-muted">

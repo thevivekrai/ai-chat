@@ -14,7 +14,7 @@ import {
 } from '@/lib/replyRules'
 import { shortName } from '@/lib/format'
 import { DAY, formatDurationLong, toMs } from '@/lib/time'
-import { MAX_LABELS, type AiMessage, type AiThread, type ChatLabel, type ExtractedTask, type Priority, type PriorityResult, type ThreadSummary, type Tone } from '../types'
+import { TAGGING_WINDOW, type AiMessage, type AiThread, type ChatLabel, type ExtractedTask, type LabelCall, type Priority, type PriorityResult, type ThreadSummary, type Tone } from '../types'
 import { findDateMention } from './dates'
 
 /* ── Reading a thread ───────────────────────────────────────────────────── */
@@ -100,37 +100,71 @@ export function isChasing(pending: AiMessage[]): boolean {
   return asks.length >= 2 && toMs(asks[asks.length - 1]!.sentAt) - toMs(asks[0]!.sentAt) >= 60 * 60_000
 }
 
-/** Tags for what the chat is about, from the same signals the rules use. */
-export function heuristicLabels(t: AiThread, now = Date.now()): ChatLabel[] {
+/**
+ * Tags for what the chat is about, with how sure each one is.
+ *
+ * Every tag is weighed on its own and the surest ones win, rather than whichever rule happened to
+ * run first — that is what used to put "question, follow-up, deadline" on a chat that was plainly
+ * about a payment. A tag nobody is sure of is left out: `classifyPriority` drops anything under
+ * LABEL_CONFIDENCE, and a chat with no tag reads better than a chat with the wrong one.
+ */
+export function heuristicLabels(t: AiThread, now = Date.now()): LabelCall[] {
   const pending = pendingInbound(t)
-  const recent = t.messages.slice(-6)
+  const recent = t.messages.slice(-TAGGING_WINDOW)
   const text = (pending.length ? pending : recent).map((m) => m.body).join('\n')
-  const labels: ChatLabel[] = []
-  const add = (label: ChatLabel, when: boolean) => when && !labels.includes(label) && labels.push(label)
   const automated = isAutomated(t)
-  add('promo', automated && PROMO.test(text))
-  add('follow-up', !automated && isChasing(pending))
-  add('question', !automated && pending.some((m) => hasQuestion(m.body) || hasRequest(m.body)))
-  add(
-    'deadline',
-    !automated &&
-      // Something due or happening within the week, not "in about 3 weeks".
-      (pending.some((m) => {
-        const d = findDateMention(m.body, toMs(m.sentAt))
-        return !!d && d.at > now - DAY && d.at - now < 7 * DAY
-      }) || /\b(today|tonight|tomorrow|kal|deadline|by (mon|tue|wed|thu|fri|sat|sun))/i.test(text)),
-  )
-  // Every topic that shows, not just the first (a message can ask for the invoice of an order).
+  const calls: LabelCall[] = []
+  const say = (tag: ChatLabel, confidence: number, why: string) => {
+    if (confidence > 0) calls.push({ tag, confidence: Math.min(1, confidence), why })
+  }
+  /** How much of the text is about this: a passing word is weaker evidence than several. */
+  const hits = (re: RegExp) => (text.match(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)) ?? []).length
   const about = (intent: Intent) => INTENT_PATTERNS.some(([i, re]) => i === intent && re.test(text))
-  // Automated messages: what they're about (a bank alert, a delivery), but never asks or plans.
-  add('payment', about('payment') || about('price') || /\b(refund|bill|amount|rs\.?|inr)\b|₹/i.test(text))
-  add('order', about('order'))
-  add('meeting', !automated && (about('plans') || /\b(call|meeting|zoom|meet)\b/i.test(text)))
-  const work = t.participants.some((p) => /customer|client|lead|work|colleague|vendor|supplier/i.test(p.label ?? '')) || WORK.test(text)
-  add('work', work)
-  add('personal', !work && !automated && t.participants.some((p) => /family|friend|mom|dad|brother|sister/i.test(p.label ?? '')))
-  add('fyi', !automated && !heuristicExpectsReply(t) && !lastMessage(t)?.fromMe)
-  return labels.slice(0, MAX_LABELS)
+
+  if (automated) say('promo', PROMO.test(text) ? 0.9 : 0.3, 'Looks like an automated message')
+  if (!automated && isChasing(pending)) say('follow-up', 0.9, 'They have asked more than once')
+  if (!automated) {
+    const asks = pending.filter((m) => hasQuestion(m.body) || hasRequest(m.body)).length
+    if (asks) say('question', asks > 1 ? 0.9 : 0.75, 'They asked you something')
+  }
+  if (!automated) {
+    const dated = pending.some((m) => {
+      const d = findDateMention(m.body, toMs(m.sentAt))
+      // Something due or happening within the week, not "in about 3 weeks".
+      return !!d && d.at > now - DAY && d.at - now < 7 * DAY
+    })
+    const words = /\b(today|tonight|tomorrow|kal|deadline|due|by (mon|tue|wed|thu|fri|sat|sun))\b/i.test(text)
+    if (dated || words) say('deadline', dated && words ? 0.9 : dated ? 0.8 : 0.66, 'A date is near')
+  }
+  const money = hits(/\b(refund|bill|invoice|amount|payment|paid|rs\.?|inr)\b|₹/i)
+  if (about('payment') || about('price') || money) say('payment', money > 1 || about('payment') ? 0.85 : 0.7, 'Money is mentioned')
+  if (/\b(bank|salary|emi|loan|tax|gst|interest|statement|credited|debited|mutual fund|sip)\b/i.test(text)) {
+    say('finance', 0.8, 'Banking or money matters')
+  }
+  if (about('order')) say('order', 0.85, 'An order or delivery')
+  if (/\b(buy|bought|cart|price|discount|size|return it|exchange)\b/i.test(text) && !about('payment')) {
+    say('shopping', 0.7, 'Buying something')
+  }
+  if (!automated && (about('plans') || /\b(call|meeting|zoom|meet|catch up)\b/i.test(text))) {
+    say('meeting', about('plans') ? 0.85 : 0.7, 'A call or a plan to meet')
+  }
+  if (/\b(flight|train|ticket|hotel|booking|trip|visa|airport|pnr|cab to)\b/i.test(text)) say('travel', 0.8, 'A trip or a booking')
+  if (/\b(doctor|clinic|hospital|appointment|medicine|prescription|report|test results|fever|dentist)\b/i.test(text)) {
+    say('health', 0.8, 'Health or an appointment')
+  }
+  if (/\b(idea|what if|we could|thinking of|proposal|suggestion)\b/i.test(text)) say('idea', 0.68, 'An idea to think about')
+  if (/\b(later|sometime|next month|no rush|whenever|when you get a chance)\b/i.test(text)) say('later', 0.66, 'Nothing presses')
+
+  const workPeople = t.participants.some((p) => /customer|client|lead|work|colleague|vendor|supplier/i.test(p.label ?? ''))
+  if (workPeople || WORK.test(text)) say('work', workPeople ? 0.9 : 0.7, workPeople ? 'Someone you work with' : 'Work words in the chat')
+  const closePeople = t.participants.some((p) => /family|friend|mom|dad|brother|sister/i.test(p.label ?? ''))
+  if (closePeople && !workPeople && !automated) say('personal', 0.9, 'Family or a friend')
+  // Nothing asked is only worth a tag when it's news; plain chatter ("haha nice") gets none.
+  if (!automated && !heuristicExpectsReply(t) && !lastMessage(t)?.fromMe) {
+    const news = /\b(fyi|update|announce|notice|heads up|just so you know|info|reminder)\b/i.test(text)
+    say('fyi', news ? 0.8 : 0.5, news ? 'News, nothing asked of you' : 'Nothing is asked of you')
+  }
+  return calls
 }
 
 export function heuristicExpectsReply(t: AiThread): boolean {

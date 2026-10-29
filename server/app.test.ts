@@ -1752,6 +1752,13 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // Cleared by sending none.
       expect((await browser.post(`/api/threads/${enc(thread)}/state`, { labels: [] })).json.thread.labels).toBeUndefined()
 
+      // "Clear all tags" locks them, on the account, so the AI doesn't put them back on any device.
+      const locked = await browser.post(`/api/threads/${enc(thread)}/state`, { labels: [], labelsLocked: true })
+      expect(locked.json.thread).toMatchObject({ labelsLocked: true })
+      expect(byId((await browser.get('/api/inbox')).json.threads)[thread].labelsLocked).toBe(true)
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { labelsLocked: 'yes' })).status).toBe(400)
+      expect((await browser.post(`/api/threads/${enc(thread)}/state`, { labelsLocked: false })).json.thread.labelsLocked).toBeUndefined()
+
       // Undone.
       expect((await browser.post(`/api/threads/${enc(thread)}/state`, { doneAt: null })).json.thread.doneAt).toBeNull()
     })

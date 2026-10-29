@@ -17,6 +17,13 @@ import {
 } from '@/ai'
 import { toAiThread } from './aiInput'
 import { settledLastMessageId, useInbox } from './inbox'
+import { toast } from './toasts'
+
+/**
+ * The least time between two tagging runs for the same chat. A burst of messages would otherwise
+ * be a burst of AI calls; the last of them is the one that matters, and it is run when the gap is up.
+ */
+export const TAGGING_GAP_MS = 20_000
 
 /**
  * Results of AI calls, with loading state. Each result is keyed by the thread's latest settled
@@ -99,6 +106,12 @@ export const useAi = create<AiState>()(
         }
       }
 
+      // Per chat: when it was last tagged, and a run waiting for the gap to pass.
+      const taggedAt = new Map<string, number>()
+      const waiting = new Map<string, ReturnType<typeof setTimeout>>()
+      // Chats whose failed tagging was already mentioned, so a flaky connection isn't a stream of toasts.
+      const toldFailed = new Set<string>()
+
       function ensure<K extends Slice>(slice: K, threadId: string, run: (thread: AiThread) => Promise<ResultTypes[K]>) {
         // These run automatically; while the setup is broken (say, a rejected key) they would only fail again.
         if (get().problem) return
@@ -108,6 +121,22 @@ export const useAi = create<AiState>()(
         const entries = () => get()[slice] as Entries<K>
         const current = entries()[threadId]
         if (current && current.key === input.key && current.status !== 'error') return
+        if (slice === 'priority') {
+          const wait = (taggedAt.get(threadId) ?? 0) + TAGGING_GAP_MS - Date.now()
+          if (wait > 0) {
+            if (!waiting.has(threadId)) {
+              waiting.set(
+                threadId,
+                setTimeout(() => {
+                  waiting.delete(threadId)
+                  ensure(slice, threadId, run)
+                }, wait),
+              )
+            }
+            return
+          }
+          taggedAt.set(threadId, Date.now())
+        }
 
         const write = (entry: AiEntry<ResultTypes[K]> | null) =>
           set(() => {
@@ -119,24 +148,29 @@ export const useAi = create<AiState>()(
         const started = epoch
         const stillCurrent = () => started === epoch && entries()[threadId]?.key === input.key
 
-        // Keep the previous result visible while recomputing, so tags don't flicker.
+        // Keep the previous result visible while recomputing, so the list doesn't jump around.
         write({ key: input.key, status: 'loading', result: current?.result })
         run(input.thread)
           .then((result) => {
             if (started !== epoch) return
             noteSuccess()
+            toldFailed.delete(threadId)
             if (stillCurrent()) write({ key: input.key, status: 'ready', result })
           })
           .catch((error: unknown) => {
             if (started !== epoch) return
             noteFailure(error)
             if (!stillCurrent()) return
-            // Keep the last good result on screen; the error only says why it isn't fresh.
-            write(
-              error instanceof AiAccessError
-                ? null
-                : { key: input.key, status: 'error', result: current?.result, error: describeAiError(error) },
-            )
+            if (error instanceof AiAccessError) return write(null)
+            // The last good priority stays, so the queue doesn't reshuffle — but never its tags: they
+            // were for an earlier state of the chat, and an old tag left in place is a wrong tag.
+            const kept = slice === 'priority' && current?.result ? untagged(current.result as PriorityResult) : current?.result
+            write({ key: input.key, status: 'error', result: kept as ResultTypes[K] | undefined, error: describeAiError(error) })
+            if (slice === 'priority' && !toldFailed.has(threadId) && !get().problem) {
+              toldFailed.add(threadId)
+              const title = useInbox.getState().threads[threadId]?.title ?? 'a chat'
+              toast({ title: 'Tagging skipped', description: `Couldn't tag ${title}, so it's left untagged for now.`, group: 'ai-tagging' })
+            }
           })
       }
 
@@ -206,6 +240,10 @@ export const useAi = create<AiState>()(
 
         forgetAll: () => {
           epoch++
+          for (const timer of waiting.values()) clearTimeout(timer)
+          waiting.clear()
+          taggedAt.clear()
+          toldFailed.clear()
           set({ priority: {}, summary: {}, tasks: {}, drafts: {}, problem: null })
         },
         clearProblem: () => set({ problem: null }),
@@ -213,14 +251,17 @@ export const useAi = create<AiState>()(
     },
     {
       name: 'tidings.ai',
-      version: 2,
-      // v1's priorities came from older rules and have no tags: every chat is sorted again.
-      migrate: (persisted, version) => (version < 2 ? { ...(persisted as object), priority: {} } : persisted) as AiState,
+      version: 3,
+      // Older priorities came from older rules, with tags nobody was sure of: every chat is tagged again.
+      migrate: (persisted, version) => (version < 3 ? { ...(persisted as object), priority: {} } : persisted) as AiState,
       // Only finished results are worth keeping across reloads; drafts are always fresh.
       partialize: (s) => ({ priority: onlyReady(s.priority), summary: onlyReady(s.summary), tasks: onlyReady(s.tasks) }),
     },
   ),
 )
+
+/** A priority without its tags: what's left on screen when tagging the chat again failed. */
+const untagged = (result: PriorityResult): PriorityResult => ({ ...result, labels: [], labelCalls: [] })
 
 function onlyReady<T>(entries: Record<string, AiEntry<T>>): Record<string, AiEntry<T>> {
   return Object.fromEntries(Object.entries(entries).filter(([, e]) => e.status === 'ready'))

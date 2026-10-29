@@ -9,7 +9,7 @@
  *
  * Each provider's code is only downloaded once it is chosen.
  */
-import type { ExtractedTask, PriorityResult, SearchAnswer, ThreadSummary, Tone } from './types'
+import type { ExtractedTask, PriorityCall, SearchAnswer, ThreadSummary, Tone } from './types'
 import { keyProvider, type KeyProviderId } from './providers'
 
 export type LlmConfig =
@@ -27,7 +27,7 @@ export type LlmConfig =
 
 /** What each kind of request returns (see ./schemas). */
 export interface LlmOutputs {
-  priority: PriorityResult
+  priority: PriorityCall
   summary: ThreadSummary
   tasks: { tasks: Omit<ExtractedTask, 'id'>[] }
   drafts: Record<Tone, string>
@@ -73,6 +73,13 @@ export function setLlmConfig(next: LlmConfig | null) {
 }
 
 const withTrimmedKey = (next: LlmConfig): LlmConfig => (next.provider === 'shared' ? next : { ...next, apiKey: next.apiKey.trim() })
+
+/** Which model answers a task, for the record kept with each tagging run ("demo": the built-in AI). */
+export function modelFor(task: LlmTask): string {
+  if (!config) return 'demo'
+  if (config.provider === 'shared') return 'shared'
+  return `${config.provider}:${task === 'priority' ? config.triageModel || config.model : config.model}`
+}
 
 /** Whether AI functions call a real model (true) or use the built-in demo AI (false). */
 export function llmConfigured(): boolean {

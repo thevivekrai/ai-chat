@@ -4,7 +4,7 @@
  */
 import { NETWORKS } from '@/lib/networks'
 import type { LlmRequest } from './llm'
-import { MAX_LABELS, type AiSearchSource, type AiTask, type AiThread, type Tone } from './types'
+import { MAX_LABELS, TAGGING_WINDOW, type AiSearchSource, type AiTask, type AiThread, type Tone } from './types'
 
 /** At most this many open tasks go with a question about tasks. */
 const TASKS_IN_ANSWER = 30
@@ -52,15 +52,25 @@ export function buildDraftsPrompt(thread: AiThread, variant: number): LlmRequest
   }
 }
 
+/**
+ * The only tags a model may use. Anything else is dropped on the way in (see schemas.ts), so this
+ * list and CHAT_LABELS are the same set, in words a model can judge a chat against.
+ */
 const LABEL_GUIDE = [
   'question: they asked the user something',
   'follow-up: they are chasing the user (asked again, "??", "any update?", several messages in a row)',
   'deadline: a date or time something is due or happens (today, by Friday, kal 11 baje)',
-  'payment: money, bills, invoices, refunds, UPI, prices or quotes',
+  'payment: money owed or paid — bills, invoices, refunds, UPI, prices or quotes',
   'order: an order, delivery, parcel, booking or tracking',
   'meeting: a call, meeting, visit or plan to meet',
   'work: work, business or customers',
   'personal: family and friends',
+  'finance: banking, salary, loans, tax or investments (not a one-off payment)',
+  'travel: trips, flights, trains, hotels, visas or directions',
+  'health: doctors, appointments, prescriptions or test results',
+  'shopping: buying things — carts, sizes, returns and exchanges',
+  'idea: something to think about rather than do now',
+  'later: worth coming back to, but nothing presses',
   'promo: marketing, offers, newsletters and other automated messages',
   'fyi: news or an update that needs nothing from the user',
 ].join('; ')
@@ -111,9 +121,16 @@ export function buildPriorityPrompt(thread: AiThread, now: Date): LlmRequest<'pr
       '"reason" is one plain sentence under 90 characters, written to the user, naming the concrete reason',
       '(who is waiting, for what, and any deadline).',
       '',
-      `labels: up to ${MAX_LABELS} tags, most telling first, only ones that clearly apply: ${LABEL_GUIDE}.`,
+      'labels: what the chat is about. Use only these tags, exactly as written, and never invent one:',
+      `${LABEL_GUIDE}.`,
+      'Give each tag you choose a "confidence" from 0 to 1 and a "why" of at most eight words naming what in',
+      `the chat says so. Only tags that clearly apply, at most ${MAX_LABELS} above 0.65. When nothing clearly`,
+      'applies, return an empty list rather than guessing. Judge each tag on its own: a chat about a payment',
+      'that also asks a question gets both; a chat that is only small talk gets none.',
     ].join('\n'),
-    user: `Current time: ${now.toISOString()}\n${describeThread(thread)}\n${waitingFacts(thread, now)}\n\n${formatTranscript(thread, 30)}`,
+    // The whole recent run of the chat, not only the messages still waiting: what came before them
+    // is what says whether it's a payment, a plan or a complaint.
+    user: `Current time: ${now.toISOString()}\n${describeThread(thread)}\n${waitingFacts(thread, now)}\n\n${formatTranscript(thread, TAGGING_WINDOW)}`,
     effort: 'low',
   }
 }

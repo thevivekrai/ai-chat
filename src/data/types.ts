@@ -61,6 +61,11 @@ export interface Thread {
    * The AI's own tags come from its classification instead, and both are shown together.
    */
   labels?: ChatLabel[]
+  /**
+   * The chat's tags are the user's own: the AI adds none to it. Set by "Clear all tags", so tags
+   * someone cleared stay cleared, and turned off again from the same menu.
+   */
+  labelsLocked?: boolean
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
@@ -248,13 +253,32 @@ export interface ThreadStatePatch {
   snoozedUntil?: string | null
   /** The tags chosen by hand for this chat (see Thread.labels). */
   labels?: ChatLabel[]
+  /** Leave this chat's tags alone: the AI adds none (see Thread.labelsLocked). */
+  labelsLocked?: boolean
 }
 
 /**
  * What a chat is about, or what it asks of the user: the AI gives these, and people can tag a chat
  * themselves. Shown next to its priority.
  */
-export const CHAT_LABELS = ['question', 'follow-up', 'deadline', 'payment', 'order', 'meeting', 'work', 'personal', 'promo', 'fyi'] as const
+export const CHAT_LABELS = [
+  'question',
+  'follow-up',
+  'deadline',
+  'payment',
+  'order',
+  'meeting',
+  'work',
+  'personal',
+  'finance',
+  'travel',
+  'health',
+  'shopping',
+  'idea',
+  'later',
+  'promo',
+  'fyi',
+] as const
 export type ChatLabel = (typeof CHAT_LABELS)[number]
 
 /**
@@ -266,6 +290,21 @@ export const CALM_LABELS: readonly ChatLabel[] = ['personal']
 
 /** At most this many tags the AI may give a chat. */
 export const MAX_LABELS = 3
+
+/**
+ * How sure the AI has to be before a tag is used. Anything less is left off: a chat with no tag
+ * reads better than a chat with the wrong one.
+ */
+export const LABEL_CONFIDENCE = 0.65
+
+/** What the AI says about one tag it considered: how sure, and why. */
+export interface LabelCall {
+  tag: ChatLabel
+  /** 0 to 1. Below LABEL_CONFIDENCE the tag isn't used. */
+  confidence: number
+  /** A few words on why, shown when someone asks why a tag is there. */
+  why?: string
+}
 
 /** At most this many tags someone may put on a chat themselves. */
 export const MAX_OWN_LABELS = 5

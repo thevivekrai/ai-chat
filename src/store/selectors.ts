@@ -47,6 +47,16 @@ export interface ThreadView {
   sortPriority: Priority
   /** What the chat is about: the tags put on it by hand, then the AI's. */
   labels: ChatLabel[]
+  /** Who put each tag there, and for the AI's, why: for "why this tag?". */
+  labelSources: Partial<Record<ChatLabel, LabelSource>>
+}
+
+export interface LabelSource {
+  by: 'you' | 'ai'
+  /** The AI's few words on why. */
+  why?: string
+  /** How sure the AI was, 0 to 1. */
+  confidence?: number
 }
 
 export interface ThreadViewInput {
@@ -83,6 +93,9 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
   const entry = aiAllowed ? input.priority[thread.id] : undefined
   const fresh =
     entry?.status === 'ready' && entry.key === settledLastMessageId(messages) ? (entry.result ?? null) : null
+  // The AI's tags, unless the chat's tags are the user's alone (cleared, or locked).
+  const aiResult = aiAllowed && !thread.labelsLocked ? (fresh ?? entry?.result) : undefined
+  const aiLabels = aiResult?.labels ?? []
 
   const snoozed = !!thread.snoozedUntil && toMs(thread.snoozedUntil) > input.now
   // A week to answer, from their last message, or from when a snooze put off until then ended.
@@ -135,8 +148,20 @@ function buildThreadView(thread: Thread, input: ThreadViewInput): ThreadView {
     stalePriority: fresh ? null : calm(entry?.result ?? null, doneSinceLast),
     priorityLoading: aiAllowed && !fresh && entry?.status !== 'error',
     sortPriority: fresh?.priority ?? entry?.result?.priority ?? 'normal',
-    labels: withoutAsks([...(thread.labels ?? []), ...(aiAllowed ? ((fresh ?? entry?.result)?.labels ?? []) : [])], doneSinceLast),
+    labels: withoutAsks([...(thread.labels ?? []), ...aiLabels], doneSinceLast),
+    labelSources: sourcesOf(thread.labels ?? [], aiResult),
   }
+}
+
+/** Who put each tag on: the user's own come first, the AI's carry its reason. */
+function sourcesOf(own: ChatLabel[], ai: PriorityResult | undefined): Partial<Record<ChatLabel, LabelSource>> {
+  const sources: Partial<Record<ChatLabel, LabelSource>> = {}
+  for (const call of ai?.labelCalls ?? []) {
+    if (ai?.labels?.includes(call.tag)) sources[call.tag] = { by: 'ai', confidence: call.confidence, ...(call.why ? { why: call.why } : {}) }
+  }
+  for (const label of ai?.labels ?? []) sources[label] ??= { by: 'ai' }
+  for (const label of own) sources[label] = { by: 'you' }
+  return sources
 }
 
 /**
@@ -230,6 +255,11 @@ export function starredMessages(messages: Record<string, Message[]>, threads: Re
 }
 
 /** All threads with derived queue state, recomputed when data, AI results, consent or time change. */
+/** One chat's view, as the lists see it. */
+export function useThreadView(threadId: string): ThreadView | undefined {
+  return useThreadViews().find((v) => v.id === threadId)
+}
+
 export function useThreadViews(): ThreadView[] {
   const { threads, messages, contacts, scheduled, me } = useInbox(
     useShallow((s) => ({ threads: s.threads, messages: s.messages, contacts: s.contacts, scheduled: s.scheduled, me: s.me })),

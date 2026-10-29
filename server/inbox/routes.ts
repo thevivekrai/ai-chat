@@ -145,6 +145,11 @@ function chatLookup({ store, whatsapp, telegram, guffshuff, instagram }: Pick<In
   return { networkOf, chatOf }
 }
 
+function lockOf(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new HttpError(400, 'labelsLocked must be true or false.')
+  return value
+}
+
 /** The tags someone put on a chat: known ones only, each once, and not too many. */
 function labelsOf(value: unknown): ChatLabel[] {
   if (!Array.isArray(value)) throw new HttpError(400, 'labels must be a list.')
@@ -256,6 +261,7 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
       doneAt: timeOrNull(req.body?.doneAt, 'doneAt'),
       snoozedUntil: timeOrNull(req.body?.snoozedUntil, 'snoozedUntil'),
       ...(req.body?.labels === undefined ? {} : { labels: labelsOf(req.body.labels) }),
+      ...(req.body?.labelsLocked === undefined ? {} : { labelsLocked: lockOf(req.body.labelsLocked) }),
     }
     const thread = await store.setThreadState(userId, threadId, patch)
     if (!thread) throw new HttpError(404, 'No such chat.')

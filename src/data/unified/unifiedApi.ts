@@ -121,6 +121,7 @@ export function createUnifiedApi(): InboxApi {
       doneAt: state?.doneAt ?? null,
       snoozedUntil: state?.snoozedUntil ?? null,
       ...(state?.labels?.length ? { labels: state.labels } : {}),
+      ...(state?.labelsLocked ? { labelsLocked: true } : {}),
       ...(local.archived.includes(thread.id) ? { archived: true } : {}),
     }
   }
@@ -612,7 +613,7 @@ export function createUnifiedApi(): InboxApi {
     async updateThreadState(threadId, patch) {
       if (sourceOf(threadId) === 'demo') return demoApi.updateThreadState(threadId, patch)
       if (keptWithAccount(threadId)) return withLocalState(await requireServer().setThreadState(threadId, patch))
-      const current = local.threadState[threadId] ?? { doneAt: null, snoozedUntil: null, labels: [] }
+      const current = local.threadState[threadId] ?? { doneAt: null, snoozedUntil: null, labels: [], labelsLocked: false }
       local = { ...local, threadState: { ...local.threadState, [threadId]: { ...current, ...patch } } }
       persistLocal()
       const thread = threadCache.get(threadId)

@@ -109,6 +109,52 @@ describe('Needs reply (without AI)', () => {
     expect(buildThreadViews(input).find((v) => v.id === 'rohan')!.labels).toEqual(['personal', 'meeting', 'question'])
   })
 
+  it('leaves a chat whose tags were cleared to the user alone, priority and all', () => {
+    const input = viewInput({
+      canRead: () => true,
+      threads: { ...viewInput().threads, rohan: { ...viewInput().threads.rohan, labels: ['personal'], labelsLocked: true } },
+      priority: {
+        rohan: {
+          key: 'rohan-2',
+          status: 'ready',
+          result: { priority: 'urgent', expectsReply: true, reason: '', labels: ['payment'], labelCalls: [{ tag: 'payment', confidence: 0.9, why: 'Money' }] },
+        },
+      },
+    })
+    const view = buildThreadViews(input).find((v) => v.id === 'rohan')!
+    // The AI's tags are gone; the user's own stay; Urgent isn't a tag and stays too.
+    expect(view.labels).toEqual(['personal'])
+    expect(view.priority?.priority).toBe('urgent')
+    expect(view.labelSources).toEqual({ personal: { by: 'you' } })
+  })
+
+  it('says why each tag is there', () => {
+    const input = viewInput({
+      canRead: () => true,
+      threads: { ...viewInput().threads, rohan: { ...viewInput().threads.rohan, labels: ['work'] } },
+      priority: {
+        rohan: {
+          key: 'rohan-2',
+          status: 'ready',
+          result: {
+            priority: 'normal',
+            expectsReply: true,
+            reason: '',
+            labels: ['payment'],
+            labelCalls: [
+              { tag: 'payment', confidence: 0.9, why: 'Asks about the invoice' },
+              { tag: 'meeting', confidence: 0.4, why: 'Mentions next week' },
+            ],
+          },
+        },
+      },
+    })
+    expect(buildThreadViews(input).find((v) => v.id === 'rohan')!.labelSources).toEqual({
+      work: { by: 'you' },
+      payment: { by: 'ai', confidence: 0.9, why: 'Asks about the invoice' },
+    })
+  })
+
   it('shows a done chat as Normal rather than Urgent, so it never loses its tag', () => {
     const base = viewInput({
       canRead: () => true,

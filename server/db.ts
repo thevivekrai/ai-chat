@@ -91,6 +91,8 @@ export interface ThreadDoc {
   snoozedUntil?: Date
   /** Tags put on the chat by hand (the AI's own live in the browser). */
   labels?: ChatLabel[]
+  /** The AI adds no tags to this chat: its tags are the user's alone. */
+  labelsLocked?: boolean
 }
 
 /** A task the user added from a linked chat, kept so it's there on every device and after signing out. */
