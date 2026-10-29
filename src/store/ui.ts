@@ -58,13 +58,22 @@ interface UiState {
   settingsTab: SettingsTab
   /** The "connect your accounts" banner was dismissed. */
   connectHintDismissed: boolean
+  /**
+   * What the person last moved to. A wide screen shows a list and a chat at once, so this is what
+   * the address bar names (see routing/router.ts). The tick counts moves, so opening the chat
+   * that is already open still counts as moving to it.
+   */
+  nav: { kind: 'list' | 'thread'; tick: number }
 
   setView(view: View): void
+  /** Says which of the two panes the person just moved to. */
+  setNav(kind: 'list' | 'thread'): void
   toggleNetwork(network: NetworkId): void
   clearNetworks(): void
   setListQuery(query: string): void
   setListTag(tag: ChatLabel | null): void
-  selectThread(threadId: string | null): void
+  /** `auto`: the app opened it (a wide screen never shows an empty pane), not the person. */
+  selectThread(threadId: string | null, options?: { auto?: boolean }): void
   closeMobileThread(): void
   moveSelection(delta: 1 | -1): void
   setNavThreadIds(ids: string[]): void
@@ -118,20 +127,24 @@ export const useUi = create<UiState>()(
       dialog: null,
       settingsTab: 'accounts',
       connectHintDismissed: false,
+      nav: { kind: 'list', tick: 0 },
 
-      setView: (view) => set({ view, sidebarOpen: false, listQuery: '', listTag: null }),
+      setNav: (kind) => set((s) => ({ nav: { kind, tick: s.nav.tick + 1 } })),
+      setView: (view) =>
+        set((s) => ({ view, sidebarOpen: false, listQuery: '', listTag: null, nav: { kind: 'list', tick: s.nav.tick + 1 } })),
       toggleNetwork: (network) =>
         set((s) => ({
           networks: s.networks.includes(network) ? s.networks.filter((n) => n !== network) : [...s.networks, network],
         })),
       clearNetworks: () => set({ networks: [] }),
       setListQuery: (listQuery) => set({ listQuery }),
-      setListTag: (listTag) => set({ listTag }),
+      setListTag: (listTag) => set((s) => ({ listTag, nav: { kind: 'list', tick: s.nav.tick + 1 } })),
 
-      selectThread(threadId) {
+      selectThread(threadId, options) {
         const index = threadId ? get().navThreadIds.indexOf(threadId) : -1
         set((s) => ({
           selectedThreadId: threadId,
+          nav: options?.auto ? s.nav : { kind: threadId ? 'thread' : 'list', tick: s.nav.tick + 1 },
           mobileThreadOpen: !!threadId,
           draftsOpen: threadId === s.selectedThreadId ? s.draftsOpen : false,
           chatSearch: s.chatSearch?.threadId === threadId ? s.chatSearch : null,

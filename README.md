@@ -340,6 +340,28 @@ database can sort and keep them. **Done and snoozed** state and **tasks** from l
 kept with your account too (task text sealed like messages), so they're the same on every device
 and still there after signing out and in. AI results stay in the browser.
 
+## Addresses
+
+Every part of the app has a URL, so a page can be bookmarked, shared and reloaded, and Back and
+Forward work the way they should.
+
+| | |
+| --- | --- |
+| `/` | Needs reply — where the app opens |
+| `/chat`, `/chat/<chat id>` | All chats, and one conversation |
+| `/waiting`, `/scheduled`, `/tasks`, `/starred`, `/archive` | The other lists |
+| `/tags/<tag>` | One tag's chats |
+| `/search`, `/shortcuts` | The command bar and the shortcut list |
+| `/settings`, `/settings/<tab>` | Settings, at a tab (`profile`, `accounts`, `ai`, `privacy`, `appearance`) |
+| `/login` | Signing in. A protected page sends you here with `?next=`, and back afterwards |
+| `/demo` | The demo inbox, without an account |
+| `/help`, `/terms`, `/privacy` | Help and the legal pages, readable signed out |
+| anything else | A "that page isn't here" page with a search box and the ways back |
+
+On a wide screen a chat sits beside the list, so the address bar names whichever of the two was
+moved to last: picking a chat gives it a URL, picking a list goes back to the list's. The chat the
+app opens by itself (so a wide screen never shows an empty pane) doesn't change the address.
+
 ## Your own chat site (Guffshuff)
 
 [Guffshuff](https://guffshuff.onrender.com) is my own chat site, and the server bridges it like

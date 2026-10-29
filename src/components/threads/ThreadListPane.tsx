@@ -85,7 +85,8 @@ export function ThreadListPane({ view }: { view: ListView }) {
   useEffect(() => {
     if (status !== 'ready' || !isAtLeast('md')) return
     const current = useUi.getState().selectedThreadId
-    if ((!current || !useInbox.getState().threads[current]) && ids.length) useUi.getState().selectThread(ids[0])
+    // Opened by the app, not by the person, so the address bar stays on the list.
+    if ((!current || !useInbox.getState().threads[current]) && ids.length) useUi.getState().selectThread(ids[0], { auto: true })
   }, [status, ids])
 
   const searchRef = useRef<HTMLInputElement>(null)
