@@ -1,9 +1,11 @@
 import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { MessagesSquare } from 'lucide-react'
+import { MessagesSquare, SearchX } from 'lucide-react'
 import { AiPanel } from '@/components/ai-panel/AiPanel'
+import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Panel } from '@/components/ui/Panel'
+import { go } from '@/routing/router'
 import { isMac, useBreakpoint } from '@/lib/media'
 import { useAi } from '@/store/ai'
 import { engineKey, useAiEngine } from '@/store/aiEngine'
@@ -22,10 +24,44 @@ import { SummaryBar } from './SummaryBar'
 export function ConversationPane() {
   const threadId = useUi((s) => s.selectedThreadId)
   const exists = useInbox((s) => !!threadId && !!s.threads[threadId])
+  // A link to a chat that isn't here (it was deleted, or it belongs to another account) rather
+  // than one that was never opened: said plainly, with the way back.
+  const loaded = useInbox((s) => s.status === 'ready')
   return (
     <Panel aria-label="Conversation">
-      {threadId && exists ? <Conversation key={threadId} threadId={threadId} /> : <NothingOpen />}
+      {threadId && exists ? (
+        <Conversation key={threadId} threadId={threadId} />
+      ) : threadId && loaded ? (
+        <NoSuchChat />
+      ) : (
+        <NothingOpen />
+      )}
     </Panel>
+  )
+}
+
+function NoSuchChat() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center p-8 text-center animate-fade-in">
+      <div className="grid size-14 place-items-center rounded-2xl bg-surface-2 text-muted ring-1 ring-line">
+        <SearchX className="size-6" aria-hidden />
+      </div>
+      <h2 className="mt-4 text-[15px] font-semibold">That chat isn’t here</h2>
+      <p className="mt-1 max-w-72 text-sm leading-relaxed text-muted">
+        It may have been deleted, or it belongs to an account that isn’t linked on this device.
+      </p>
+      <Button
+        size="sm"
+        variant="primary"
+        className="mt-5"
+        onClick={() => {
+          useUi.getState().selectThread(null)
+          go('/chat')
+        }}
+      >
+        All chats
+      </Button>
+    </div>
   )
 }
 

@@ -2,23 +2,9 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Modal } from '@/components/ui/Modal'
-import { isMac } from '@/lib/media'
+import { SHORTCUTS } from '@/lib/shortcuts'
 import { useUi } from '@/store/ui'
 
-const SHORTCUTS: { keys: string[][]; label: string }[] = [
-  { keys: [['J'], ['K']], label: 'Next / previous chat' },
-  { keys: [['Enter']], label: 'Reply (focus the composer)' },
-  { keys: [['R']], label: 'Draft replies' },
-  { keys: [['1'], ['2'], ['3']], label: 'Use a suggested draft' },
-  { keys: [['Tab']], label: 'Jump to the next [blank] in a draft' },
-  { keys: [['E']], label: 'Mark done' },
-  { keys: [['S']], label: 'Snooze' },
-  { keys: [['A']], label: 'Toggle the AI panel' },
-  { keys: [[isMac ? '⌘' : 'Ctrl', 'K']], label: 'Search and ask across all chats' },
-  { keys: [['/']], label: 'Filter the chat list' },
-  { keys: [['Esc']], label: 'Close / go back' },
-  { keys: [['?']], label: 'Show this list' },
-]
 
 export function ShortcutsDialog() {
   const open = useUi((s) => s.dialog === 'shortcuts')
