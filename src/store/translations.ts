@@ -23,8 +23,15 @@ interface TranslationsState {
   showOriginal(messageId: string): void
 }
 
-/** The language to translate into: the one the device is set to. */
-export const targetLanguage = () => (typeof navigator === 'undefined' ? 'en' : navigator.language || 'en')
+/** The language to translate into: the one the device is set to, as a tag Intl accepts. */
+export function targetLanguage(): string {
+  const tag = (typeof navigator === 'undefined' ? '' : navigator.language).split('@')[0] || 'en'
+  try {
+    return Intl.getCanonicalLocales(tag)[0] ?? 'en'
+  } catch {
+    return 'en'
+  }
+}
 
 export const keyOf = (messageId: string, language: string) => `${messageId}\u0000${language}`
 
