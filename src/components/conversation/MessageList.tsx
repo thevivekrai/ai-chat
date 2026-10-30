@@ -238,7 +238,8 @@ export function MessageList({ threadId }: { threadId: string }) {
           // Each day is its own section so its sticky label is pushed away by the next one.
           <section key={day.key} aria-label={day.label} className="flex flex-col gap-2">
             <div className="pointer-events-none sticky top-0 z-10 flex justify-center pt-3 pb-1">
-              <span className="glass-thick rounded-full px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-card">
+              {/* Nearly solid: it floats over messages, which must not show through the date. */}
+              <span className="glass-thick rounded-full bg-surface-solid/90! px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-card">
                 {day.label}
               </span>
             </div>

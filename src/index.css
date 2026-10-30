@@ -130,12 +130,19 @@
   color-scheme: light;
   --canvas: #e8ebf0;
   /* Clear glass: barely tinted, so what's behind it shows through. */
-  --glass: rgb(255 255 255 / 0.22);
-  --glass-thick: rgb(255 255 255 / 0.7);
+  --glass: rgb(255 255 255 / 0.2);
+  --glass-thick: rgb(255 255 255 / 0.58);
   /* Kept modest on purpose: software-composited browsers skip larger backdrop blurs. */
-  --glass-blur: 12px;
-  --glass-saturate: 115%;
-  --sheen: linear-gradient(135deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.06) 34%, rgb(255 255 255 / 0) 60%);
+  --glass-blur: 14px;
+  /* Floating glass (menus, dialogs) sits over busy content, so it blurs more to stay readable. */
+  --glass-blur-thick: 22px;
+  /* Saturation is what makes glass look like glass rather than frosted plastic. */
+  --glass-saturate: 150%;
+  /* Light pooling at the top of a slab and bending back up at its bottom edge, as through a lens. */
+  --sheen:
+    linear-gradient(180deg, rgb(255 255 255 / 0.5), rgb(255 255 255 / 0) 22%),
+    linear-gradient(135deg, rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.04) 34%, rgb(255 255 255 / 0) 60%),
+    linear-gradient(0deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0) 12%);
   --surface: rgb(255 255 255 / 0.5);
   --surface-solid: #f4f6f9;
   --surface-2: rgb(15 23 42 / 0.045);
@@ -165,18 +172,19 @@
   );
   --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.8), 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 22px -12px rgb(15 23 42 / 0.16);
   --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 0 22px 0 rgb(255 255 255 / 0.35), 0 26px 60px -20px rgb(15 23 42 / 0.32), 0 2px 8px rgb(15 23 42 / 0.07);
-  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 -1px 0 0 rgb(255 255 255 / 0.4), inset 0 0 26px 0 rgb(255 255 255 / 0.3), 0 1px 1px rgb(15 23 42 / 0.04), 0 14px 34px -16px rgb(15 23 42 / 0.26);
+  --sh-glass: inset 0 1px 0 0 rgb(255 255 255 / 0.95), inset 0 -1px 0 0 rgb(255 255 255 / 0.55), inset 0 0 26px 0 rgb(255 255 255 / 0.32), 0 1px 1px rgb(15 23 42 / 0.05), 0 18px 40px -18px rgb(15 23 42 / 0.3);
   --sh-pill: inset 0 1px 0 0 rgb(255 255 255 / 1), 0 0 0 1px rgb(255 255 255 / 0.55), 0 4px 12px -6px rgb(15 23 42 / 0.22);
   --sh-bubble: inset 0 0 0 1px rgb(255 255 255 / 0.7), 0 1px 2px rgb(15 23 42 / 0.07);
   --sh-bubble-out: inset 0 1px 0 0 rgb(255 255 255 / 0.3), 0 3px 9px -4px rgb(70 70 200 / 0.45);
   --sh-accent: inset 0 1px 0 0 rgb(255 255 255 / 0.32), 0 5px 14px -7px rgb(70 70 200 / 0.6);
 
-  /* Wallpaper: silver, with soft light and shade for the glass to catch. No hue. */
+  /* Wallpaper: silver, with soft light and shade for the glass to catch, and the faintest cool
+     tints (ice blue, lavender) so the glass has something to bend. */
   --wall-base: linear-gradient(160deg, #cdd3dc 0%, #e9ecf1 46%, #c4cbd6 100%);
   --blob-1: rgb(255 255 255 / 1);
-  --blob-2: rgb(71 85 105 / 0.5);
+  --blob-2: rgb(99 102 241 / 0.3);
   --blob-3: rgb(255 255 255 / 0.95);
-  --blob-4: rgb(71 85 105 / 0.42);
+  --blob-4: rgb(56 140 190 / 0.26);
   --blob-5: rgb(255 255 255 / 0.8);
   /* Crisp shapes: sharp outside the glass, softened behind it, which is what makes it read as glass. */
   --shape-disc: rgb(255 255 255 / 0.75);
@@ -188,10 +196,14 @@
 .dark {
   color-scheme: dark;
   --canvas: #0b0d10;
-  --glass: rgb(255 255 255 / 0.055);
-  --glass-thick: rgb(28 30 36 / 0.8);
-  --glass-saturate: 115%;
-  --sheen: linear-gradient(135deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.02) 34%, rgb(255 255 255 / 0) 60%);
+  --glass: rgb(255 255 255 / 0.065);
+  /* Dark enough to read on, light enough that what's behind still shows through. */
+  --glass-thick: rgb(30 33 40 / 0.66);
+  --glass-saturate: 150%;
+  --sheen:
+    linear-gradient(180deg, rgb(255 255 255 / 0.09), rgb(255 255 255 / 0) 22%),
+    linear-gradient(135deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.015) 34%, rgb(255 255 255 / 0) 60%),
+    linear-gradient(0deg, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0) 12%);
   --surface: rgb(255 255 255 / 0.06);
   --surface-solid: #1b1e24;
   --surface-2: rgb(255 255 255 / 0.055);
@@ -210,13 +222,14 @@
   --pill: rgb(255 255 255 / 0.11);
   --pill-accent: rgb(255 255 255 / 0.14);
   --ring: rgb(150 150 255 / 0.5);
+  /* Brighter than a dark theme usually allows: the rim is what tells a dark slab from the dark behind it. */
   --edge: linear-gradient(
     150deg,
-    rgb(255 255 255 / 0.34),
-    rgb(255 255 255 / 0.07) 26%,
-    rgb(255 255 255 / 0.02) 52%,
-    rgb(255 255 255 / 0.09) 78%,
-    rgb(255 255 255 / 0.26)
+    rgb(255 255 255 / 0.5),
+    rgb(255 255 255 / 0.1) 26%,
+    rgb(255 255 255 / 0.03) 52%,
+    rgb(255 255 255 / 0.12) 78%,
+    rgb(255 255 255 / 0.36)
   );
   --sh-card: inset 0 1px 0 0 rgb(255 255 255 / 0.07), 0 1px 2px rgb(0 0 0 / 0.35), 0 10px 28px -14px rgb(0 0 0 / 0.6);
   --sh-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.1), inset 0 0 22px 0 rgb(255 255 255 / 0.04), 0 30px 70px -18px rgb(0 0 0 / 0.75), 0 2px 10px rgb(0 0 0 / 0.4);
@@ -228,9 +241,9 @@
 
   --wall-base: linear-gradient(160deg, #07080a 0%, #11141a 48%, #06070a 100%);
   --blob-1: rgb(255 255 255 / 0.2);
-  --blob-2: rgb(120 138 168 / 0.34);
+  --blob-2: rgb(99 102 241 / 0.3);
   --blob-3: rgb(255 255 255 / 0.14);
-  --blob-4: rgb(130 148 178 / 0.28);
+  --blob-4: rgb(40 130 180 / 0.24);
   --blob-5: rgb(255 255 255 / 0.1);
   --shape-disc: rgb(255 255 255 / 0.08);
   --shape-ring: rgb(255 255 255 / 0.2);
@@ -285,8 +298,8 @@
 @utility glass-thick {
   background-color: var(--glass-thick);
   background-image: var(--sheen);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur-thick)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-thick)) saturate(var(--glass-saturate));
 }
 
 /* The light-catching rim. The element must be positioned (relative, absolute or fixed). */
