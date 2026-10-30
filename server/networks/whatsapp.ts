@@ -31,7 +31,7 @@ import type { Readable } from 'node:stream'
 import type { AnyBulkWriteOperation, ObjectId } from 'mongodb'
 import QRCode from 'qrcode'
 import { isPhotoType, type MessageHint, type ServerOlderMessages, type WhatsAppLinkResult } from '../../src/data/server/types.ts'
-import type { Attachment, Message, MessageAction, MessageStatus, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
+import type { Attachment, Contact, Message, MessageAction, MessageStatus, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import type { Collections, WaAuthDoc } from '../db.ts'
 import { HttpError } from '../http.ts'
@@ -73,6 +73,8 @@ export interface WaSocket {
   sendPresenceUpdate(type: 'composing' | 'paused', jid?: string): Promise<void>
   presenceSubscribe(jid: string): Promise<void>
   profilePictureUrl(jid: string, type?: 'preview' | 'image'): Promise<string | undefined>
+  /** Whether phone numbers are on WhatsApp, and their ids if so. */
+  onWhatsApp?(...numbers: string[]): Promise<{ jid: string; exists: unknown }[] | undefined>
   /**
    * Asks the phone to send one message again (WhatsApp Web does this for messages it couldn't
    * read). It arrives as a new message with the same key.
@@ -1650,6 +1652,22 @@ export function createWhatsApp(deps: WhatsAppDeps) {
     },
 
     isConnected: (userId: ObjectId) => !!sessions.get(keyOf(userId))?.opened,
+
+    /**
+     * Someone to start a chat with, by phone number — only if they're on WhatsApp, as WhatsApp
+     * itself checks. Anyone already in the phone's contacts is in the inbox's contacts already.
+     */
+    async findPeople(userId: ObjectId, query: string): Promise<Contact[]> {
+      const s = sessions.get(keyOf(userId))
+      const digits = query.replace(/[\s().+-]/g, '')
+      if (!s?.socket || !s.opened || !/^\d{7,15}$/.test(digits) || !s.socket.onWhatsApp) return []
+      const [found] = (await s.socket.onWhatsApp(digits).catch(() => undefined)) ?? []
+      if (!found?.exists || !found.jid || isJidGroup(found.jid)) return []
+      if (!s.names.has(found.jid)) s.names.set(found.jid, `+${digits}`)
+      await upsertContact(s, found.jid)
+      const contact = await store.contact(userId, `wa:${found.jid}`)
+      return contact ? [contact] : []
+    },
 
     /** Resolves once queued picture downloads are done (for tests). */
     picturesIdle: () => pictures.idle(),

@@ -19,6 +19,7 @@ import type {
 } from './server/types'
 import type {
   ChatCapabilities,
+  Contact,
   InboxEvent,
   InboxSnapshot,
   Message,
@@ -79,6 +80,10 @@ export interface InboxApi {
 
   /** Full-text search across every network. */
   searchMessages(query: string, options?: { limit?: number }): Promise<SearchHit[]>
+  /** People on the linked accounts to write to, beyond the contacts already here (signed in only). */
+  findPeople(query: string): Promise<PersonResult[]>
+  /** Opens a chat with someone there's none with yet; resolves with it, ready for a first message. */
+  startChat(contactId: string): Promise<Thread>
 
   addTask(task: NewTask): Promise<Task>
   updateTask(taskId: string, patch: Partial<Pick<Task, 'title' | 'dueAt' | 'done'>>): Promise<Task>
@@ -155,6 +160,12 @@ export interface ConnectionsApi {
   verifyInstagramCode(code: string): Promise<InstagramLinkResult>
   /** Logs the server out of that account and deletes its chats there. */
   unlink(network: LinkedNetwork): Promise<void>
+}
+
+/** Someone found to write to: in a chat already, or not yet. */
+export interface PersonResult {
+  contact: Contact
+  hasChat: boolean
 }
 
 export const api: InboxApi = createUnifiedApi()

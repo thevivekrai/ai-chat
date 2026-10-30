@@ -355,7 +355,7 @@ Forward work the way they should.
 | `/settings`, `/settings/<tab>` | Settings, at a tab (`profile`, `accounts`, `ai`, `privacy`, `appearance`) |
 | `/login` | Signing in. A protected page sends you here with `?next=`, and back afterwards |
 | `/demo` | The demo inbox, without an account |
-| `/help`, `/terms`, `/privacy` | Help and the legal pages, readable signed out |
+| `/info`, `/help`, `/terms`, `/privacy` | The site's own pages (`public/`), served by the server as they are; the app links to them |
 | anything else | A "that page isn't here" page with a search box and the ways back |
 
 On a wide screen a chat sits beside the list, so the address bar names whichever of the two was

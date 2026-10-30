@@ -31,6 +31,21 @@ export function openThread(threadId: string, messageId?: string) {
 }
 
 /**
+ * Opens a chat with someone there's none with yet (found in search), and goes to it. It's ready
+ * for the first message; nothing is sent to them until one is.
+ */
+export async function startChatWith(contactId: string) {
+  try {
+    const thread = await api.startChat(contactId)
+    useInbox.setState((s) => ({ threads: { ...s.threads, [thread.id]: thread } }))
+    openThread(thread.id)
+    useUi.getState().focusComposer()
+  } catch (error) {
+    toast({ title: "Couldn't start the chat", description: error instanceof Error ? error.message : undefined, group: 'people' })
+  }
+}
+
+/**
  * Sends what's in the composer. With photos or files, each goes as its own message, the text as
  * the first one's caption (and the reply quoting from the first).
  */
