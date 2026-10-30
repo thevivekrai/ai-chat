@@ -29,7 +29,7 @@ export async function classifyPriority(thread: AiThread): Promise<PriorityResult
 }
 
 /** The demo AI's rules have no prompt; their version stands in for one in the record. */
-const DEMO_RULES = 'demo-rules:3'
+const DEMO_RULES = 'demo-rules:4'
 
 function record(task: 'priority', prompt: string, messageIds: string[], answer: unknown): TagAudit {
   return { model: modelFor(task), promptHash: hash(prompt), messageIds, raw: JSON.stringify(answer).slice(0, 2000), at: new Date().toISOString() }
