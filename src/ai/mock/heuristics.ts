@@ -84,7 +84,14 @@ const NOT_URGENT = /\b(not urgent|no rush|no hurry|whenever you can|koi jaldi na
 /** Asking again, or asking where things are. */
 const CHASING = /(\?\s*\?|^\s*(hello|hi|hey|helo)\s*\?+\s*$|\bany update|\bstill waiting|\bdid you (see|get|check)|\bwaiting for your)/im
 const PROMO = /\b(offer|sale|discount|% off|cashback|coupon|deal|subscribe|newsletter|unsubscribe|limited time)\b/i
-const WORK = /\b(client|customer|invoice|meeting|deadline|project|office|report|order|quote|proposal|contract|team)\b/i
+const WORK = /\b(client|customer|invoice|meeting|deadline|project|office|report|quote|proposal|contract|team|manager|boss|interview|job)\b/i
+/** Something is due: a deadline said in words, not just a day mentioned ("kal milte hai" isn't one). */
+const DUE =
+  /\b(deadline|due|last date|expires?|expiring|submit|eod|before (?:the )?(?:mon|tue|wed|thu|fri|sat|sun|tomorrow|tonight|\d)|by (?:today|tonight|tomorrow|eod|end of|mon|tue|wed|thu|fri|sat|sun|\d)|kal tak|aaj tak|tak bhej)\w*/i
+/** A forward or a broadcast: news to read, not something asked of you. */
+const FORWARDED = /^\s*(fwd?|forwarded)\b|\bforwarded (?:as received|many times)\b/im
+/** Family and friends, as people write to them. */
+const CLOSE_WORDS = /\b(beta|maa|mummy|mumma|papa|didi|bhaiya|mom|dad|bro|happy birthday|happy anniversary|congrats|congratulations|miss you|love you|shaadi|wedding)\b/i
 
 export function saysUrgent(text: string): boolean {
   return URGENT_WORDS.test(text) && !NOT_URGENT.test(text)
@@ -121,46 +128,54 @@ export function heuristicLabels(t: AiThread, now = Date.now()): LabelCall[] {
   const hits = (re: RegExp) => (text.match(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)) ?? []).length
   const about = (intent: Intent) => INTENT_PATTERNS.some(([i, re]) => i === intent && re.test(text))
 
+  // A forward is news, whatever it says: its "tomorrow" and "Rs 2" aren't yours to act on.
+  const forwarded = !automated && pending.length > 0 && pending.every((m) => FORWARDED.test(m.body))
+  const asked = !automated && !forwarded
+  const asks = asked ? pending.filter((m) => hasQuestion(m.body) || hasRequest(m.body)).length : 0
+
   if (automated) say('promo', PROMO.test(text) ? 0.9 : 0.3, 'Looks like an automated message')
-  if (!automated && isChasing(pending)) say('follow-up', 0.9, 'They have asked more than once')
-  if (!automated) {
-    const asks = pending.filter((m) => hasQuestion(m.body) || hasRequest(m.body)).length
-    if (asks) say('question', asks > 1 ? 0.9 : 0.75, 'They asked you something')
-  }
-  if (!automated) {
+  if (asked && isChasing(pending)) say('follow-up', 0.9, 'They have asked more than once')
+  if (asks) say('question', asks > 1 ? 0.9 : 0.75, 'They asked you something')
+  if (asked) {
     const dated = pending.some((m) => {
       const d = findDateMention(m.body, toMs(m.sentAt))
-      // Something due or happening within the week, not "in about 3 weeks".
+      // Something due within the week, not "in about 3 weeks".
       return !!d && d.at > now - DAY && d.at - now < 7 * DAY
     })
-    const words = /\b(today|tonight|tomorrow|kal|deadline|due|by (mon|tue|wed|thu|fri|sat|sun))\b/i.test(text)
-    if (dated || words) say('deadline', dated && words ? 0.9 : dated ? 0.8 : 0.66, 'A date is near')
+    // A day on its own is a plan or small talk ("how was the test today?"); a deadline says it's due.
+    const due = DUE.test(text)
+    if (due) say('deadline', dated || asks ? 0.9 : 0.75, 'Something is due soon')
   }
   const money = hits(/\b(refund|bill|invoice|amount|payment|paid|rs\.?|inr)\b|₹/i)
-  if (about('payment') || about('price') || money) say('payment', money > 1 || about('payment') ? 0.85 : 0.7, 'Money is mentioned')
-  if (/\b(bank|salary|emi|loan|tax|gst|interest|statement|credited|debited|mutual fund|sip)\b/i.test(text)) {
-    say('finance', 0.8, 'Banking or money matters')
-  }
+  const banking = /\b(bank|salary|emi|loan|tax|gst|interest rate|statement|credited|debited|a\/c|mutual fund|sip|avl bal)\b/i.test(text)
+  // Money owed or asked about; an amount in a bank alert or a forward is the bank's business.
+  if (about('payment') && !banking && !forwarded) say('payment', 0.85, 'A payment is asked about')
+  else if ((about('price') || money) && asks) say('payment', money > 1 ? 0.8 : 0.7, 'Money is asked about')
+  if (banking) say('finance', 0.85, 'Banking or money matters')
   if (about('order')) say('order', 0.85, 'An order or delivery')
-  if (/\b(buy|bought|cart|price|discount|size|return it|exchange)\b/i.test(text) && !about('payment')) {
+  if (/\b(buy|bought|cart|discount|size|return it|exchange|in stock|available)\b/i.test(text) && !about('payment') && !about('order')) {
     say('shopping', 0.7, 'Buying something')
   }
-  if (!automated && (about('plans') || /\b(call|meeting|zoom|meet|catch up)\b/i.test(text))) {
+  if (asked && (about('plans') || /\b(call|meeting|zoom|meet|catch up)\b/i.test(text))) {
     say('meeting', about('plans') ? 0.85 : 0.7, 'A call or a plan to meet')
   }
   if (/\b(flight|train|ticket|hotel|booking|trip|visa|airport|pnr|cab to)\b/i.test(text)) say('travel', 0.8, 'A trip or a booking')
-  if (/\b(doctor|clinic|hospital|appointment|medicine|prescription|report|test results|fever|dentist)\b/i.test(text)) {
+  if (/\b(doctor|clinic|hospital|appointment|medicine|prescription|medical|blood test|lab report|test results|fever|dentist|checkup)\b/i.test(text)) {
     say('health', 0.8, 'Health or an appointment')
   }
-  if (/\b(idea|what if|we could|thinking of|proposal|suggestion)\b/i.test(text)) say('idea', 0.68, 'An idea to think about')
-  if (/\b(later|sometime|next month|no rush|whenever|when you get a chance)\b/i.test(text)) say('later', 0.66, 'Nothing presses')
+  if (asked && /\b(idea|what if|we could|thinking of|proposal|suggestion)\b/i.test(text)) say('idea', 0.68, 'An idea to think about')
+  if (asked && /\b(no rush|whenever you can|when you get a chance|sometime next|next month)\b/i.test(text)) say('later', 0.7, 'Nothing presses')
 
   const workPeople = t.participants.some((p) => /customer|client|lead|work|colleague|vendor|supplier/i.test(p.label ?? ''))
-  if (workPeople || WORK.test(text)) say('work', workPeople ? 0.9 : 0.7, workPeople ? 'Someone you work with' : 'Work words in the chat')
+  if (workPeople || (!automated && !forwarded && WORK.test(text))) say('work', workPeople ? 0.9 : 0.7, workPeople ? 'Someone you work with' : 'Work words in the chat')
   const closePeople = t.participants.some((p) => /family|friend|mom|dad|brother|sister/i.test(p.label ?? ''))
-  if (closePeople && !workPeople && !automated) say('personal', 0.9, 'Family or a friend')
+  if (!workPeople && !automated) {
+    if (closePeople) say('personal', 0.9, 'Family or a friend')
+    else if (CLOSE_WORDS.test(text) && !WORK.test(text)) say('personal', 0.7, 'Sounds like family or a friend')
+  }
+  if (forwarded) say('fyi', 0.85, 'A forward, nothing asked of you')
   // Nothing asked is only worth a tag when it's news; plain chatter ("haha nice") gets none.
-  if (!automated && !heuristicExpectsReply(t) && !lastMessage(t)?.fromMe) {
+  if (!automated && !forwarded && !heuristicExpectsReply(t) && !lastMessage(t)?.fromMe) {
     const news = /\b(fyi|update|announce|notice|heads up|just so you know|info|reminder)\b/i.test(text)
     say('fyi', news ? 0.8 : 0.5, news ? 'News, nothing asked of you' : 'Nothing is asked of you')
   }

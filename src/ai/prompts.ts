@@ -59,20 +59,20 @@ export function buildDraftsPrompt(thread: AiThread, variant: number): LlmRequest
 const LABEL_GUIDE = [
   'question: they asked the user something',
   'follow-up: they are chasing the user (asked again, "??", "any update?", several messages in a row)',
-  'deadline: a date or time something is due or happens (today, by Friday, kal 11 baje)',
-  'payment: money owed or paid — bills, invoices, refunds, UPI, prices or quotes',
-  'order: an order, delivery, parcel, booking or tracking',
+  'deadline: something the user must do is due by a date or time (by Friday, due today, kal tak bhej do) — not a day merely mentioned in small talk or a plan',
+  'payment: money the user owes, is owed or is asked about — bills, invoices, refunds, UPI, prices or quotes (not a bank alert or a forwarded price)',
+  'order: an order, delivery, parcel or tracking (a delivery notice is only this, not work or a deadline)',
   'meeting: a call, meeting, visit or plan to meet',
-  'work: work, business or customers',
-  'personal: family and friends',
+  'work: work, business, colleagues or customers',
+  'personal: family and friends (birthdays, family plans, "beta", "bro")',
   'finance: banking, salary, loans, tax or investments (not a one-off payment)',
   'travel: trips, flights, trains, hotels, visas or directions',
-  'health: doctors, appointments, prescriptions or test results',
+  'health: doctors, appointments, prescriptions or medical test results (not a work report)',
   'shopping: buying things — carts, sizes, returns and exchanges',
   'idea: something to think about rather than do now',
   'later: worth coming back to, but nothing presses',
   'promo: marketing, offers, newsletters and other automated messages',
-  'fyi: news or an update that needs nothing from the user',
+  'fyi: news, a forward or an update that needs nothing from the user (judge a forward as fyi, not by what it mentions)',
 ].join('; ')
 
 /** Facts a model is easy to get wrong from timestamps alone: who is waiting, and for how long. */
