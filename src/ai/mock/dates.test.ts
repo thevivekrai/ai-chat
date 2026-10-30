@@ -47,4 +47,17 @@ describe('findDateMention', () => {
     expect(resolve('Lunch was great')).toBeNull()
     expect(resolve('Kala Ghoda pop-up final count: 41 pieces sold')).toBeNull()
   })
+
+  it('reads calendar dates: "5 Nov", "Nov 5", "5th November", "the 1st"', () => {
+    const ref = new Date(2026, 9, 30, 10, 0).getTime()
+    const nov5 = new Date(2026, 10, 5).toDateString()
+    for (const text of ['due on 5 Nov', 'due on Nov 5', 'by 5th November']) {
+      expect(new Date(findDateMention(text, ref)!.at).toDateString(), text).toBe(nov5)
+    }
+    // A day of the month that has gone by is next month's; a date that has gone by, next year's.
+    expect(new Date(findDateMention('rent is due on the 1st', ref)!.at).toDateString()).toBe(new Date(2026, 10, 1).toDateString())
+    expect(new Date(findDateMention('see you on 2 Jan', ref)!.at).getFullYear()).toBe(2027)
+    // "may" as a word isn't May.
+    expect(findDateMention('may 2 people come along?', ref)).toBeNull()
+  })
 })

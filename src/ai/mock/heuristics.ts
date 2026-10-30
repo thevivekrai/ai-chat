@@ -136,7 +136,7 @@ export function heuristicLabels(t: AiThread, now = Date.now()): LabelCall[] {
   if (automated) say('promo', PROMO.test(text) ? 0.9 : 0.3, 'Looks like an automated message')
   if (asked && isChasing(pending)) say('follow-up', 0.9, 'They have asked more than once')
   if (asks) say('question', asks > 1 ? 0.9 : 0.75, 'They asked you something')
-  if (asked) {
+  if (asked || automated) {
     const dated = pending.some((m) => {
       const d = findDateMention(m.body, toMs(m.sentAt))
       // Something due within the week, not "in about 3 weeks".
@@ -144,19 +144,21 @@ export function heuristicLabels(t: AiThread, now = Date.now()): LabelCall[] {
     })
     // A day on its own is a plan or small talk ("how was the test today?"); a deadline says it's due.
     const due = DUE.test(text)
-    if (due) say('deadline', dated || asks ? 0.9 : 0.75, 'Something is due soon')
+    // An automated reminder counts only when the date it names is close.
+    if (due && (!automated || dated)) say('deadline', dated || asks ? 0.9 : 0.75, 'Something is due soon')
   }
   const money = hits(/\b(refund|bill|invoice|amount|payment|paid|rs\.?|inr)\b|₹/i)
   const banking = /\b(bank|salary|emi|loan|tax|gst|interest rate|statement|credited|debited|a\/c|mutual fund|sip|avl bal)\b/i.test(text)
   // Money owed or asked about; an amount in a bank alert or a forward is the bank's business.
   if (about('payment') && !banking && !forwarded) say('payment', 0.85, 'A payment is asked about')
   else if ((about('price') || money) && asks) say('payment', money > 1 ? 0.8 : 0.7, 'Money is asked about')
+  else if (!banking && !forwarded && /\b(refund|bill|invoice)\b/i.test(text)) say('payment', 0.7, 'A refund or a bill')
   if (banking) say('finance', 0.85, 'Banking or money matters')
   if (about('order')) say('order', 0.85, 'An order or delivery')
   if (/\b(buy|bought|cart|discount|size|return it|exchange|in stock|available)\b/i.test(text) && !about('payment') && !about('order')) {
     say('shopping', 0.7, 'Buying something')
   }
-  if (asked && (about('plans') || /\b(call|meeting|zoom|meet|catch up)\b/i.test(text))) {
+  if (asked && (about('plans') || /\b(call|meeting|zoom|meet|catch up|interview)\b/i.test(text))) {
     say('meeting', about('plans') ? 0.85 : 0.7, 'A call or a plan to meet')
   }
   if (/\b(flight|train|ticket|hotel|booking|trip|visa|airport|pnr|cab to)\b/i.test(text)) say('travel', 0.8, 'A trip or a booking')
@@ -167,16 +169,19 @@ export function heuristicLabels(t: AiThread, now = Date.now()): LabelCall[] {
   if (asked && /\b(no rush|whenever you can|when you get a chance|sometime next|next month)\b/i.test(text)) say('later', 0.7, 'Nothing presses')
 
   const workPeople = t.participants.some((p) => /customer|client|lead|work|colleague|vendor|supplier/i.test(p.label ?? ''))
-  if (workPeople || (!automated && !forwarded && WORK.test(text))) say('work', workPeople ? 0.9 : 0.7, workPeople ? 'Someone you work with' : 'Work words in the chat')
+  // Wishes ("congrats on the new job!") are about the person, not work.
+  const celebrating = /\b(congrat\w*|happy birthday|happy anniversary|wedding|shaadi|best wishes)\b/i.test(text)
+  if (workPeople || (!automated && !forwarded && !celebrating && WORK.test(text))) say('work', workPeople ? 0.9 : 0.7, workPeople ? 'Someone you work with' : 'Work words in the chat')
   const closePeople = t.participants.some((p) => /family|friend|mom|dad|brother|sister/i.test(p.label ?? ''))
   if (!workPeople && !automated) {
     if (closePeople) say('personal', 0.9, 'Family or a friend')
-    else if (CLOSE_WORDS.test(text) && !WORK.test(text)) say('personal', 0.7, 'Sounds like family or a friend')
+    else if (CLOSE_WORDS.test(text) && (celebrating || !WORK.test(text))) say('personal', 0.7, 'Sounds like family or a friend')
   }
   if (forwarded) say('fyi', 0.85, 'A forward, nothing asked of you')
-  // Nothing asked is only worth a tag when it's news; plain chatter ("haha nice") gets none.
-  if (!automated && !forwarded && !heuristicExpectsReply(t) && !lastMessage(t)?.fromMe) {
-    const news = /\b(fyi|update|announce|notice|heads up|just so you know|info|reminder)\b/i.test(text)
+  // Nothing asked is only worth a tag when it's news; plain chatter ("haha nice") gets none. Said
+  // to be news ("FYI…", "heads up") with nothing asked is news even in a one-to-one chat.
+  const news = /\b(fyi|announce\w*|notice|heads up|just so you know|reminder)\b/i.test(text)
+  if (!automated && !forwarded && !lastMessage(t)?.fromMe && ((news && !asks) || !heuristicExpectsReply(t))) {
     say('fyi', news ? 0.8 : 0.5, news ? 'News, nothing asked of you' : 'Nothing is asked of you')
   }
   return calls

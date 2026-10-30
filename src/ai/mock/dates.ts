@@ -19,6 +19,10 @@ export interface DateMention {
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
 const NUMBER_WORDS: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 }
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+const MONTH = '(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*'
+/** The same, without "may" first: "may 2 people come" is not the 2nd of May. */
+const MONTH_FIRST = '(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*'
 
 interface Span {
   index: number
@@ -48,6 +52,27 @@ function nextWeekday(ref: number, weekday: number): number {
   return addDays(startOfDay(ref), delta)
 }
 
+/** The next time a calendar day comes round (today counts): "5 Nov" in December means next year's. */
+function nextDate(ref: number, month: number, date: number): number | null {
+  if (month < 0 || date < 1 || date > 31) return null
+  const now = new Date(ref)
+  const today = startOfDay(ref)
+  let at = new Date(now.getFullYear(), month, date).getTime()
+  if (new Date(at).getDate() !== date) return null
+  if (at < today) at = new Date(now.getFullYear() + 1, month, date).getTime()
+  return at
+}
+
+/** "the 1st", "the 15th": that day of this month, or of the next month that has it if it's gone by. */
+function nextDayOfMonth(ref: number, date: number): number | null {
+  const now = new Date(ref)
+  for (let i = 0; i < 3; i++) {
+    const at = new Date(now.getFullYear(), now.getMonth() + i, date)
+    if (at.getDate() === date && at.getTime() >= startOfDay(ref)) return at.getTime()
+  }
+  return null
+}
+
 function findDay(text: string, ref: number): DayMatch | null {
   const today = startOfDay(ref)
   const found: DayMatch[] = []
@@ -68,6 +93,16 @@ function findDay(text: string, ref: number): DayMatch | null {
     const n = Number(m[1]) || NUMBER_WORDS[m[1]] || 1
     return { day: addDays(today, m[2] === 'week' ? n * 7 : n) }
   })
+
+  const calendar = (m: RegExpExecArray | null, at: number | null) => {
+    if (m && at !== null) found.push({ index: m.index, text: text.slice(m.index, m.index + m[0].length), day: at })
+  }
+  const dayMonth = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH}\\b`).exec(text.toLowerCase())
+  calendar(dayMonth, dayMonth && nextDate(ref, MONTHS.indexOf(dayMonth[2]!.slice(0, 3)), Number(dayMonth[1])))
+  const monthDay = new RegExp(`\\b${MONTH_FIRST}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`).exec(text.toLowerCase())
+  calendar(monthDay, monthDay && nextDate(ref, MONTHS.indexOf(monthDay[1]!.slice(0, 3)), Number(monthDay[2])))
+  const ofMonth = /\bthe (\d{1,2})(?:st|nd|rd|th)\b/.exec(text.toLowerCase())
+  calendar(ofMonth, ofMonth && nextDayOfMonth(ref, Number(ofMonth[1])))
 
   found.sort((a, b) => a.index - b.index)
   return found[0] ?? null
