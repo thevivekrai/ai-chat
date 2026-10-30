@@ -11,7 +11,7 @@ import type {
   TelegramVerifyResult,
   WhatsAppLinkResult,
 } from './types'
-import type { Message, MessageAction, Task, Thread, ThreadStatePatch } from '../types'
+import type { Contact, Message, MessageAction, Task, Thread, ThreadStatePatch } from '../types'
 
 /**
  * The Sytext server's HTTP API: same origin, with the session in an httpOnly cookie. Changes are
@@ -93,6 +93,10 @@ export const serverApi = {
   /* ── Linked chats ────────────────────────────────────────────────────────── */
 
   inbox: () => request<ServerInbox>('GET', '/inbox'),
+  /** People to start a chat with, on the linked accounts: by phone number (WhatsApp), or name and @username (Telegram). */
+  findPeople: async (query: string) =>
+    (await request<{ people: { contact: Contact; hasChat: boolean }[] }>('GET', `/people?q=${encodeURIComponent(query)}`)).people,
+  startChat: (contactId: string) => request<{ thread: Thread }>('POST', '/people/chat', { id: contactId }),
   /** Only which accounts are linked: a small answer, while the whole inbox can take a while. */
   accounts: async () => (await request<{ accounts: PublicAccount[] }>('GET', '/accounts')).accounts,
   /**

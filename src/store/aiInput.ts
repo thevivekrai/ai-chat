@@ -64,6 +64,21 @@ export function buildAnswerSources(
   return [...sources.values()]
 }
 
+/**
+ * Everything the AI gets for a question about chosen chats: the latest of each of those chats and
+ * nothing else — never the rest of the inbox. Chats it may not read are left out.
+ */
+export function buildScopedSources(
+  threadIds: string[],
+  { threads, messages, contacts, me }: SourceInput,
+  canRead: (threadId: string) => boolean,
+  perChat = 60,
+): AiSearchSource[] {
+  return threadIds
+    .filter((id) => canRead(id) && threads[id])
+    .flatMap((id) => (messages[id] ?? []).slice(-perChat).map((m) => toSource(m, threads[id]!, contacts, me)))
+}
+
 function toSource(m: Message, thread: Thread, contacts: Record<string, Contact>, me: Me): AiSearchSource {
   return {
     messageId: m.id,

@@ -2029,4 +2029,44 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       await browser.delete('/api/link/telegram')
     })
   })
+
+  describe('finding people to write to', () => {
+    it('finds someone new on WhatsApp or Telegram, and starts a chat with them', async () => {
+      const browser = new Browser(server.url)
+      await browser.post('/api/auth/register', { name: 'Aarav', email: 'people@example.com', password: 'long enough' })
+      await linkWhatsApp(browser)
+      await browser.post('/api/link/telegram/code', { phone: '+91 98765 43210' })
+      await browser.post('/api/link/telegram/verify', { code: '12345' })
+      await browser.post('/api/link/telegram/password', { password: 'hunter2' })
+      await waitFor(async () =>
+        expect((await browser.get('/api/accounts')).json.accounts.map((a: { status: string }) => a.status)).toEqual(['connected', 'connected']),
+      )
+
+      // A phone number WhatsApp says is on it; one it says isn't.
+      const byNumber = await browser.get('/api/people?q=%2B91%2098111%2022233')
+      expect(byNumber.json.people).toEqual([
+        { contact: expect.objectContaining({ id: 'wa:919811122233@s.whatsapp.net', network: 'whatsapp', name: '+919811122233' }), hasChat: false },
+      ])
+      expect((await browser.get('/api/people?q=%2B44%207700%20900123')).json.people).toEqual([])
+      // Someone on Telegram by name.
+      const byName = await browser.get('/api/people?q=meera')
+      expect(byName.json.people).toEqual([{ contact: expect.objectContaining({ id: 'tga:7001', name: 'Meera Iyer', handle: '@meera' }), hasChat: false }])
+
+      // Starting a chat makes one, ready for the first message; doing it again gives the same chat.
+      const started = await browser.post('/api/people/chat', { id: 'tga:7001' })
+      expect(started.json.thread).toMatchObject({ id: 'tga:7001', network: 'telegram', kind: 'direct', title: 'Meera Iyer', participantIds: ['tga:7001'] })
+      expect((await browser.post('/api/people/chat', { id: 'tga:7001' })).json.thread.id).toBe('tga:7001')
+      expect(byId((await browser.get('/api/inbox')).json.threads)['tga:7001']).toBeDefined()
+      expect((await browser.get('/api/people?q=meera')).json.people[0].hasChat).toBe(true)
+      const wa = await browser.post('/api/people/chat', { id: 'wa:919811122233@s.whatsapp.net' })
+      expect(wa.json.thread).toMatchObject({ network: 'whatsapp', title: '+919811122233' })
+
+      // Only people the server has found or knows; never a group or a made-up id.
+      expect((await browser.post('/api/people/chat', { id: 'tga:9999' })).status).toBe(404)
+      expect((await browser.post('/api/people/chat', { id: 'wa:120363000000@g.us' })).status).toBe(400)
+      expect((await browser.post('/api/people/chat', { id: 'ig:123' })).status).toBe(400)
+      // And only for the signed-in account.
+      expect((await new Browser(server.url).get('/api/people?q=meera')).status).toBe(401)
+    })
+  })
 })

@@ -4,7 +4,7 @@ import { MAX_CAPTION, type MessageHint } from '../../src/data/server/types.ts'
 import { CHAT_LABELS, MAX_OWN_LABELS, type Attachment, type ChatLabel, type MessageAction, type MessageStatus, type QuotedMessage, type Reaction } from '../../src/data/types.ts'
 import type { SessionTokens } from '../auth/tokens.ts'
 import type { Collections } from '../db.ts'
-import { field, HttpError, requireUser, userIdOf } from '../http.ts'
+import { field, HttpError, rateLimit, requireUser, userIdOf } from '../http.ts'
 import type { Accounts } from '../networks/accounts.ts'
 import type { Guffshuff } from '../networks/guffshuff.ts'
 import type { Instagram } from '../networks/instagram.ts'
@@ -194,6 +194,48 @@ export function inboxRoutes({ col, tokens, store, avatars, accounts, hub, whatsa
   const signedIn = requireUser(tokens, col.users)
 
   const { networkOf, chatOf } = chatLookup({ store, whatsapp, telegram, guffshuff, instagram })
+
+  /**
+   * People to start a chat with, on the user's own linked accounts only: WhatsApp checks a phone
+   * number is on WhatsApp, Telegram searches by name or @username. (The phone's saved contacts
+   * are in the inbox's contacts already, and the browser searches those itself.)
+   */
+  const lookups = rateLimit({ name: 'people', windowMs: 60_000, max: 40 })
+  router.get('/people', signedIn, lookups, async (req, res) => {
+    const userId = userIdOf(res)
+    const query = String(req.query.q ?? '').trim().slice(0, 64)
+    if (query.length < 2) return void res.json({ people: [] })
+    const found = await Promise.all([
+      whatsapp.findPeople(userId, query).catch(() => []),
+      telegram.findPeople(userId, query).catch(() => []),
+    ])
+    const people = await Promise.all(found.flat().map(async (contact) => ({ contact, hasChat: !!(await store.thread(userId, contact.id)) })))
+    res.json({ people })
+  })
+
+  /**
+   * A chat with someone there's none with yet: opened here, ready for the first message. Only
+   * with someone the server already knows — from the phone's contacts, or a lookup above.
+   */
+  router.post('/people/chat', signedIn, async (req, res) => {
+    const userId = userIdOf(res)
+    const id = field(req.body, 'id', { max: 200 })
+    if (!/^(wa:[^@]+@s\.whatsapp\.net|tga:\d+)$/.test(id)) throw new HttpError(400, 'A chat can only be started with a person.')
+    const contact = await store.contact(userId, id)
+    if (!contact) throw new HttpError(404, 'Find them first: there is no one by that id.')
+    const existing = await store.thread(userId, id)
+    if (existing) return void res.json({ thread: existing })
+    const thread = await store.upsertThread(userId, {
+      id,
+      network: contact.network,
+      kind: 'direct',
+      title: contact.name,
+      participantIds: [id],
+      lastAt: new Date(),
+    })
+    hub.publish(userId.toHexString(), { type: 'thread.updated', thread })
+    res.json({ thread })
+  })
 
   router.get('/inbox', signedIn, async (_req, res) => {
     const userId = userIdOf(res)

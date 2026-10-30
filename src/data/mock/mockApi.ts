@@ -139,6 +139,12 @@ export function createMockApi(): DemoApi {
 
     capabilities: () => DEMO_CAPABILITIES,
 
+    // The demo's people all have a chat already; there's no one else to find.
+    findPeople: async () => [],
+    async startChat(contactId) {
+      throw new Error(`No one to start a chat with (${contactId}) in the demo.`)
+    },
+
     async react(threadId, messageId, emoji) {
       await latency(80)
       const message = db.messages.find((m) => m.id === messageId && m.threadId === threadId)

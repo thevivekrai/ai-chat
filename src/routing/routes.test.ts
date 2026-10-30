@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parse, pathOf, titleOf } from './routes'
+import { parse, pathOf, SITE_PAGES, titleOf } from './routes'
 
 const WA = 'wa:919812345678@s.whatsapp.net'
 
@@ -16,9 +16,6 @@ describe('the app’s URLs', () => {
     expect(parse('/shortcuts')).toMatchObject({ dialog: 'shortcuts' })
     expect(parse('/demo')).toMatchObject({ demo: true })
     expect(parse('/login')).toMatchObject({ page: 'login' })
-    expect(parse('/help')).toMatchObject({ page: 'help' })
-    expect(parse('/terms')).toMatchObject({ page: 'terms' })
-    expect(parse('/privacy')).toMatchObject({ page: 'privacy' })
   })
 
   it('carries a chat’s id, however odd it looks', () => {
@@ -52,7 +49,7 @@ describe('the app’s URLs', () => {
     // A dialog is a page of its own, so Back closes it.
     expect(pathOf({ ...base, view: 'all', dialog: 'settings', settingsTab: 'ai' })).toBe('/settings/ai')
     expect(pathOf({ ...base, view: 'all', dialog: 'command' })).toBe('/search')
-    expect(pathOf({ ...base, view: 'needs-reply', page: 'help' })).toBe('/help')
+    expect(pathOf({ ...base, view: 'needs-reply', page: 'login' })).toBe('/login')
   })
 
   it('round-trips every list', () => {
@@ -71,6 +68,11 @@ describe('the app’s URLs', () => {
     expect(titleOf(parse('/tasks')).title).toMatch(/^Tasks · /)
     expect(titleOf(parse('/'))).toMatchObject({ title: expect.stringContaining('Sytext') })
     expect(titleOf(parse(`/chat/${encodeURIComponent(WA)}`), { threadTitle: 'Ravi Kumar' }).title).toMatch(/^Ravi Kumar · /)
-    expect(titleOf(parse('/privacy')).description).toMatch(/keeps/i)
+    expect(titleOf(parse('/login')).title).toMatch(/^Sign in · /)
+  })
+
+  it('leaves the site’s own pages to the site', () => {
+    // Info, Terms, Privacy and Help are pages the server serves; the app goes to them like a link.
+    expect(SITE_PAGES).toEqual(['/info', '/terms', '/privacy', '/help'])
   })
 })

@@ -662,6 +662,17 @@ export function createUnifiedApi(): InboxApi {
       }
     },
 
+    async findPeople(query) {
+      if (!server) return []
+      return serverApi.findPeople(query)
+    },
+
+    async startChat(contactId) {
+      requireServer()
+      const { thread } = await serverApi.startChat(contactId)
+      return withLocalState(thread)
+    },
+
     async searchMessages(query, options) {
       const limit = options?.limit ?? 20
       const demoHits = demoShown() ? await demoApi.searchMessages(query, { limit }) : []

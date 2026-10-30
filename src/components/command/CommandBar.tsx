@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, typ
 import {
   Archive,
   ArrowRight,
+  AtSign,
   CalendarClock,
   CornerDownLeft,
   Hourglass,
@@ -14,6 +15,8 @@ import {
   Search,
   Settings,
   Sparkles,
+  UserPlus,
+  X,
   Star,
   Sun,
   VenetianMask,
@@ -28,18 +31,19 @@ import { Kbd } from '@/components/ui/Kbd'
 import { Modal } from '@/components/ui/Modal'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { SkeletonLines } from '@/components/ui/Skeleton'
-import { api } from '@/data/api'
+import { api, type PersonResult } from '@/data/api'
 import type { Message, SearchHit, Thread } from '@/data/types'
 import { ME_ID } from '@/data/types'
 import { cn } from '@/lib/cn'
 import { NETWORKS } from '@/lib/networks'
 import { formatAgo } from '@/lib/time'
-import { openThread, setIncognito, simulateIncoming, turnOnAi } from '@/store/actions'
+import { openThread, setIncognito, simulateIncoming, startChatWith, turnOnAi } from '@/store/actions'
 import { describeAiError } from '@/store/ai'
-import { asksAboutTasks, buildAnswerSources, openTasks } from '@/store/aiInput'
+import { asksAboutTasks, buildAnswerSources, buildScopedSources, openTasks } from '@/store/aiInput'
 import { useClock } from '@/store/clock'
 import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
+import { useSession } from '@/store/session'
 import { useIncognito } from '@/store/privacy'
 import { threadPicture } from '@/store/selectors'
 import { canAiReadThread, useSettings } from '@/store/settings'
@@ -72,6 +76,20 @@ interface Result {
 const NO_HITS: SearchHit[] = []
 const NO_IDS: string[] = []
 
+/** A chat being picked for the AI: "@" and what follows it, at the end of what's typed. */
+const MENTION = /(?:^|\s)@([^\s@]*)$/
+
+/** Chats the question names, by the first name of their title ("…with Ravi and Neha"). */
+function namedChats(query: string, threads: Record<string, Thread>): Thread[] {
+  const words = new Set(query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])
+  return Object.values(threads)
+    .filter((t) => {
+      const first = t.title.toLowerCase().match(/[\p{L}\p{N}]{3,}/u)?.[0]
+      return !!first && words.has(first)
+    })
+    .slice(0, 3)
+}
+
 export function CommandBar() {
   const open = useUi((s) => s.dialog === 'command')
   const close = () => useUi.getState().closeDialog()
@@ -89,6 +107,11 @@ function CommandBody({ close }: { close(): void }) {
   const [answer, setAnswer] = useState<{ query: string; state: AnswerState }>({ query: '', state: { status: 'idle' } })
   const [cursor, setCursor] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
+  // Chats picked for the AI: a question is then about these and nothing else.
+  const [scope, setScope] = useState<string[]>([])
+  const [scopedAnswer, setScopedAnswer] = useState<{ key: string; state: AnswerState } | null>(null)
+  const [people, setPeople] = useState<{ query: string; found: PersonResult[] }>({ query: '', found: [] })
+  const signedIn = useSession((s) => s.status === 'signed-in')
 
   const { aiEnabled, aiThreadIds, theme } = useSettings(
     useShallow((s) => ({ aiEnabled: s.aiEnabled, aiThreadIds: s.aiThreadIds, theme: s.theme })),
@@ -98,8 +121,12 @@ function CommandBody({ close }: { close(): void }) {
   )
   const now = useClock((s) => s.now)
 
-  const q = query.trim()
-  const searchable = q.length >= 2
+  const mention = MENTION.exec(query)
+  const q = (mention ? query.slice(0, mention.index) : query).trim()
+  // Picking chats, or asking about picked ones: the question waits for Enter, so it's clear what
+  // the AI will read before it reads anything.
+  const scoped = scope.length > 0 || !!mention
+  const searchable = q.length >= 2 && !scoped
   const searching = searchable && search.query !== q
   const hits = searchable && search.query === q ? search.hits : NO_HITS
   const answerState: AnswerState = !searchable
@@ -139,6 +166,72 @@ function CommandBody({ close }: { close(): void }) {
       clearTimeout(timer)
     }
   }, [q, aiEnabled, aiThreadIds])
+
+  useEffect(() => {
+    if (!signedIn || scoped || q.length < 2) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      api
+        .findPeople(q)
+        .then((found) => !cancelled && setPeople({ query: q, found }))
+        .catch(() => undefined)
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [q, signedIn, scoped])
+
+  // People: contacts here first (the phone's saved contacts among them), then anyone the linked
+  // accounts found — each once, those with a chat said so.
+  const personResults = useMemo<PersonResult[]>(() => {
+    if (scoped || q.length < 2) return []
+    const needle = q.toLowerCase()
+    const local = Object.values(contacts)
+      .filter((c) => !c.id.endsWith('@g.us') && (c.name.toLowerCase().includes(needle) || (c.handle ?? '').toLowerCase().includes(needle)))
+      .map((contact) => ({ contact, hasChat: !!threads[contact.id] }))
+    const remote = people.query === q ? people.found.map((p) => ({ ...p, hasChat: p.hasChat || !!threads[p.contact.id] })) : []
+    const seen = new Set<string>()
+    return [...local, ...remote].filter((p) => !seen.has(p.contact.id) && seen.add(p.contact.id)).slice(0, 5)
+  }, [q, scoped, contacts, threads, people])
+
+  // Most recent first, by each chat's latest message.
+  const lastAtOf = useMemo(() => {
+    const at = new Map(Object.entries(messages).map(([id, list]) => [id, list.length ? Date.parse(list[list.length - 1]!.sentAt) : 0]))
+    return (t: Thread) => at.get(t.id) ?? 0
+  }, [messages])
+
+  // Chats to pick for the AI: those whose name has what follows "@".
+  const mentionToken = mention?.[1]?.toLowerCase() ?? null
+  const pickable = useMemo(() => {
+    if (mentionToken === null) return []
+    return Object.values(threads)
+      .filter((t) => !scope.includes(t.id) && t.title.toLowerCase().includes(mentionToken))
+      .sort((a, b) => lastAtOf(b) - lastAtOf(a))
+      .slice(0, 6)
+  }, [mentionToken, threads, scope, lastAtOf])
+  const named = useMemo(() => (scope.length || mention || q.split(/\s+/).length < 2 ? [] : namedChats(q, threads)), [q, scope, mention, threads])
+
+  const pick = (threadId: string) => {
+    setScope((s) => [...s, threadId])
+    setQuery((text) => text.replace(MENTION, (m) => (m.startsWith(' ') ? ' ' : '')).trimEnd() + ' ')
+    setCursor(0)
+  }
+  const scopeKey = `${q}|${scope.join(',')}`
+  const scopedState = scopedAnswer?.key === scopeKey ? scopedAnswer.state : { status: 'idle' as const }
+  const askScoped = async () => {
+    const question = q || 'Summarise these chats: what was said, what was decided, and anything asked of me.'
+    const canRead = (id: string) => canAiReadThread({ aiEnabled, aiThreadIds }, id)
+    const sources = buildScopedSources(scope, useInbox.getState(), canRead)
+    const skipped = scope.filter((id) => !canRead(id)).length
+    setScopedAnswer({ key: scopeKey, state: { status: 'loading' } })
+    try {
+      const result = await answerQuestion(question, sources, [])
+      setScopedAnswer({ key: scopeKey, state: { status: 'ready', result, skipped } })
+    } catch (error) {
+      setScopedAnswer({ key: scopeKey, state: { status: 'error', message: describeAiError(error) } })
+    }
+  }
 
   const demoShown = useConnections((s) => s.demo)
   const incognito = useIncognito()
@@ -204,7 +297,7 @@ function CommandBody({ close }: { close(): void }) {
   }, [hits, citedIds, messages, threads])
 
   // Everything selectable, in display order, for arrow keys and Enter.
-  const suggestions = q ? [] : SUGGESTED_QUESTIONS
+  const suggestions = q || scoped ? [] : SUGGESTED_QUESTIONS
   const runCommand = (c: Command) => {
     close()
     c.run()
@@ -213,13 +306,28 @@ function CommandBody({ close }: { close(): void }) {
     close()
     openThread(r.thread.id, r.message.id)
   }
+  const openPerson = (p: PersonResult) => {
+    close()
+    if (p.hasChat) openThread(p.contact.id)
+    else void startChatWith(p.contact.id)
+  }
+  const askRow = scope.length > 0 && !mention ? [() => void askScoped()] : []
+  const namedRow = named.length ? [() => setScope(named.map((t) => t.id))] : []
   const entries: (() => void)[] = [
+    ...askRow,
+    ...pickable.map((t) => () => pick(t.id)),
+    ...namedRow,
     ...suggestions.map((s) => () => setQuery(s)),
+    ...personResults.map((p) => () => openPerson(p)),
     ...commands.map((c) => () => runCommand(c)),
     ...results.map((r) => () => openResult(r)),
   ]
   const activeIndex = Math.min(cursor, entries.length - 1)
-  const commandsStart = suggestions.length
+  const pickStart = askRow.length
+  const namedStart = pickStart + pickable.length
+  const suggestionsStart = namedStart + namedRow.length
+  const peopleStart = suggestionsStart + suggestions.length
+  const commandsStart = peopleStart + personResults.length
   const resultsStart = commandsStart + commands.length
 
   useEffect(() => {
@@ -227,6 +335,11 @@ function CommandBody({ close }: { close(): void }) {
   }, [activeIndex])
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // Backspace at the very start takes back the last chat picked.
+    if (e.key === 'Backspace' && !query && scope.length) {
+      setScope((s) => s.slice(0, -1))
+      return
+    }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
       if (!entries.length) return
@@ -256,18 +369,75 @@ function CommandBody({ close }: { close(): void }) {
             setCursor(0)
           }}
           onKeyDown={onKeyDown}
-          placeholder="Ask anything or search every chat…"
+          placeholder={scope.length ? 'Ask about these chats…' : 'Ask anything, search every chat, or type @ to pick chats…'}
           aria-label="Search or ask"
           className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-faint"
         />
         <Kbd>Esc</Kbd>
       </div>
 
+      {scope.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2" aria-label="Chats the AI will read">
+          <span className="text-xs font-medium text-muted">Asking about</span>
+          {scope.map((id) => (
+            <span key={id} className="inline-flex h-6 items-center gap-1 rounded-full bg-accent-soft pr-1 pl-2 text-xs font-medium text-accent-ink">
+              {threads[id]?.title ?? 'Chat'}
+              <button
+                type="button"
+                aria-label={`Leave out ${threads[id]?.title ?? 'this chat'}`}
+                className="grid size-4 place-items-center rounded-full hover:bg-accent/20"
+                onClick={() => setScope((s) => s.filter((x) => x !== id))}
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            </span>
+          ))}
+          <span className="ml-auto text-[11px] text-faint">Only these chats are read</span>
+        </div>
+      )}
+
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2">
+        {askRow.length > 0 && (
+          <>
+            <Group title="Ask the AI">
+              <Row {...rowProps(0, () => void askScoped())} icon={<Sparkles className="size-4 text-accent-ink" />} hint={<Kbd>↵</Kbd>}>
+                {q ? `“${q}”` : 'Summarise them'} — about {scope.length} chat{scope.length === 1 ? '' : 's'}
+              </Row>
+            </Group>
+            {scopedState.status !== 'idle' && <AnswerCard state={scopedState} aiEnabled={aiEnabled} empty={false} />}
+          </>
+        )}
+
+        {mention && (
+          <Group title="Pick chats for the AI">
+            {pickable.map((t, i) => (
+              <Row
+                key={t.id}
+                {...rowProps(pickStart + i, () => pick(t.id))}
+                icon={<Avatar name={t.title} seed={t.id} size="sm" group={t.kind === 'group'} imageUrl={threadPicture(t, contacts)} />}
+              >
+                <span className="flex items-center gap-1.5">
+                  <NetworkIcon network={t.network} />
+                  {t.title}
+                </span>
+              </Row>
+            ))}
+            {pickable.length === 0 && <p className="px-3 py-2 text-sm text-muted">No chat by that name.</p>}
+          </Group>
+        )}
+
+        {named.length > 0 && (
+          <Group title="Only these chats?">
+            <Row {...rowProps(namedStart, () => setScope(named.map((t) => t.id)))} icon={<AtSign className="size-4 text-accent-ink" />}>
+              Ask only about {named.map((t) => t.title).join(', ')}
+            </Row>
+          </Group>
+        )}
+
         {suggestions.length > 0 && (
           <Group title="Try asking">
             {suggestions.map((s, i) => (
-              <Row key={s} {...rowProps(i, () => setQuery(s))} icon={<Sparkles className="size-4 text-accent-ink" />}>
+              <Row key={s} {...rowProps(suggestionsStart + i, () => setQuery(s))} icon={<Sparkles className="size-4 text-accent-ink" />}>
                 {s}
               </Row>
             ))}
@@ -276,6 +446,33 @@ function CommandBody({ close }: { close(): void }) {
 
         {searchable && (
           <AnswerCard state={answerState} aiEnabled={aiEnabled} empty={!searching && hits.length === 0} />
+        )}
+
+        {personResults.length > 0 && (
+          <Group title="People">
+            {personResults.map((p, i) => (
+              <Row
+                key={p.contact.id}
+                {...rowProps(peopleStart + i, () => openPerson(p))}
+                icon={<Avatar name={p.contact.name} seed={p.contact.id} size="sm" imageUrl={p.contact.avatarUrl} />}
+                hint={
+                  p.hasChat ? (
+                    <span className="text-xs text-faint">Open</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-accent-ink">
+                      <UserPlus className="size-3.5" aria-hidden /> Start chat
+                    </span>
+                  )
+                }
+              >
+                <span className="flex items-center gap-1.5">
+                  <NetworkIcon network={p.contact.network} />
+                  <span className="truncate">{p.contact.name}</span>
+                  {p.contact.handle && <span className="truncate text-xs text-faint">{p.contact.handle}</span>}
+                </span>
+              </Row>
+            ))}
+          </Group>
         )}
 
         {commands.length > 0 && (

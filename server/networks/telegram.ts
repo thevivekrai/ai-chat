@@ -9,7 +9,7 @@ import { StringSession } from 'telegram/sessions/index.js'
 import QRCode from 'qrcode'
 import { isPhotoType, type MessageHint, type ServerOlderMessages, type TelegramCodeResult, type TelegramVerifyResult } from '../../src/data/server/types.ts'
 import { withMyReaction } from '../../src/data/reactions.ts'
-import type { Attachment, Message, MessageAction, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
+import type { Attachment, Contact, Message, MessageAction, QuotedMessage, Reaction, Thread } from '../../src/data/types.ts'
 import type { Sealer } from '../crypto.ts'
 import { HttpError } from '../http.ts'
 import { createLimiter, createQueue, type Avatars, type Picture } from '../inbox/avatars.ts'
@@ -133,6 +133,8 @@ export interface TgClient {
   /** Sends a photo, or any other file as a document, with a caption. */
   sendFile(chatId: string, file: Upload, caption: string, replyToId?: number): Promise<{ id: number; date: number }>
   markRead(chatId: string, maxId: number): Promise<void>
+  /** People by name or @username: the account's contacts first, then anyone public. */
+  searchPeople(query: string, limit: number): Promise<TgPeer[]>
   logOut(): Promise<void>
   onUpdate(listener: (update: TgUpdate) => void): void
 }
@@ -468,6 +470,13 @@ export const createGramClient: CreateTgClient = (session, api) => {
         ...(replyToId ? { replyTo: replyToId } : {}),
       })
       return { id: sent.id, date: sent.date }
+    },
+    async searchPeople(query, limit) {
+      const found = await client.invoke(new Api.contacts.Search({ q: query, limit }))
+      return found.users
+        .filter((u): u is Api.User => u instanceof Api.User && !u.bot && !u.deleted)
+        .map((u) => peerOf(u))
+        .filter((p): p is TgPeer => !!p && !p.skip)
     },
     async logOut() {
       await client.invoke(new Api.auth.LogOut())
@@ -1441,6 +1450,20 @@ export function createTelegram(deps: TelegramDeps) {
     },
 
     isConnected: (userId: ObjectId) => sessions.has(keyOf(userId)),
+
+    /** People to start a chat with, by name or @username, as Telegram finds them for this account. */
+    async findPeople(userId: ObjectId, query: string): Promise<Contact[]> {
+      const s = sessions.get(keyOf(userId))
+      if (!s || query.trim().length < 2) return []
+      const peers = await s.client.searchPeople(query.trim().replace(/^@/, ''), 8).catch(() => [])
+      const found: Contact[] = []
+      for (const peer of peers) {
+        await upsertContact(s, peer)
+        const contact = await store.contact(userId, `tga:${peer.id}`)
+        if (contact) found.push(contact)
+      }
+      return found
+    },
 
     /** Resolves once queued picture downloads are done (for tests). */
     picturesIdle: () => pictures.idle(),

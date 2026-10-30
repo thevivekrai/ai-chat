@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { useInbox } from '@/store/inbox'
 import { useSession } from '@/store/session'
 import { useUi } from '@/store/ui'
-import { parse, pathOf, titleOf, type Page, type Route } from './routes'
+import { parse, pathOf, SITE_PAGES, titleOf, type Page, type Route } from './routes'
 
 /**
  * The address bar, kept in step with what's on screen.
@@ -31,6 +31,8 @@ export const useRouter = create<RouterState>()(() => ({ page: 'inbox', next: nul
 /** Goes to a path as a click on a link would, so Back comes back here. */
 export function go(path: string, { replace = false } = {}) {
   if (typeof window === 'undefined') return
+  // The site's own pages are the server's to serve.
+  if (SITE_PAGES.includes(path.split(/[?#]/)[0]!)) return void window.location.assign(path)
   if (current() === path) return
   window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
   applyLocation()

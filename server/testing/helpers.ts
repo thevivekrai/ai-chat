@@ -212,6 +212,11 @@ export class FakeWaSocket implements WaSocket {
     this.presence.push({ type: 'subscribe', jid })
   }
 
+  /** Numbers on WhatsApp, as WhatsApp would say: anything starting 91 here. */
+  async onWhatsApp(...numbers: string[]) {
+    return numbers.map((n) => ({ jid: `${n}@s.whatsapp.net`, exists: n.startsWith('91') }))
+  }
+
   async profilePictureUrl(jid: string) {
     if (!this.pictures.has(jid)) throw new Error('item-not-found')
     return `data:image/png;base64,${PIXEL.toString('base64')}`
@@ -415,6 +420,11 @@ export function fakeTelegram() {
       },
       async markRead(chatId, maxId) {
         state.read.push({ chatId, maxId })
+      },
+      async searchPeople(query) {
+        // Someone the account has never written to, found by name or username.
+        const meera = { id: '7001', kind: 'direct' as const, name: 'Meera Iyer', handle: '@meera' }
+        return /meera/i.test(query) ? [meera] : []
       },
       async logOut() {
         state.loggedOut++

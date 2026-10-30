@@ -10,7 +10,13 @@ import type { Dialog, SettingsTab, View } from '@/store/ui'
  */
 
 /** A page that isn't the inbox: its own screen, signed in or not. */
-export type Page = 'inbox' | 'login' | 'help' | 'terms' | 'privacy' | 'not-found'
+export type Page = 'inbox' | 'login' | 'not-found'
+
+/**
+ * Pages the server serves itself (public/info, terms, privacy, help): the app doesn't draw these,
+ * it goes to them as a link would, so there is one Terms page and it's the site's own.
+ */
+export const SITE_PAGES = ['/info', '/terms', '/privacy', '/help']
 
 export interface Route {
   page: Page
@@ -42,7 +48,7 @@ const VIEW_OF_PATH = Object.fromEntries(Object.entries(LIST_PATHS).map(([view, p
 const SETTINGS_TABS: SettingsTab[] = ['profile', 'accounts', 'ai', 'privacy', 'appearance']
 
 /** The public pages, which show the same whether or not anyone is signed in. */
-export const PUBLIC_PAGES: Page[] = ['login', 'help', 'terms', 'privacy', 'not-found']
+export const PUBLIC_PAGES: Page[] = ['login', 'not-found']
 
 /** Reads a path (and its query) as the state that shows it. */
 export function parse(pathname: string, search = ''): Route {
@@ -52,9 +58,6 @@ export function parse(pathname: string, search = ''): Route {
 
   if (path === '/') return route
   if (path === '/login') return { ...route, page: 'login' }
-  if (path === '/help') return { ...route, page: 'help' }
-  if (path === '/terms') return { ...route, page: 'terms' }
-  if (path === '/privacy') return { ...route, page: 'privacy' }
   if (path === '/demo') return { ...route, demo: true }
   if (path === '/search') return { ...route, dialog: 'command' }
   if (path === '/shortcuts') return { ...route, dialog: 'shortcuts' }
@@ -111,12 +114,6 @@ export function titleOf(route: Route, context: { threadTitle?: string | null } =
   switch (route.page) {
     case 'login':
       return named('Sign in', 'Sign in to Sytext to bring your own chats into one inbox.')
-    case 'help':
-      return named('Help', 'Keyboard shortcuts, answers and the guide to using Sytext.')
-    case 'terms':
-      return named('Terms', 'The terms you agree to when you use Sytext.')
-    case 'privacy':
-      return named('Privacy', 'What Sytext keeps, where it keeps it, and what it never sees.')
     case 'not-found':
       return named('Page not found', 'That page does not exist.')
     default:

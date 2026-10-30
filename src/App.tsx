@@ -6,8 +6,6 @@ import { CommandBar } from '@/components/command/CommandBar'
 import { AppShell } from '@/components/layout/AppShell'
 import { LogoMark } from '@/components/layout/LogoMark'
 import { Wallpaper } from '@/components/layout/Wallpaper'
-import { HelpPage } from '@/components/pages/HelpPage'
-import { PrivacyPage, TermsPage } from '@/components/pages/LegalPages'
 import { NotFoundPage } from '@/components/pages/NotFoundPage'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { ShortcutsDialog } from '@/components/shortcuts/ShortcutsDialog'
@@ -42,9 +40,6 @@ export function App() {
 
 /** What the address bar says to show. The pages below are public; the inbox needs an account. */
 function Screen({ status, page }: { status: ReturnType<typeof useSession.getState>['status']; page: ReturnType<typeof useRouter.getState>['page'] }) {
-  if (page === 'help') return <HelpPage />
-  if (page === 'terms') return <TermsPage />
-  if (page === 'privacy') return <PrivacyPage />
   if (page === 'not-found') return <NotFoundPage />
   if (status === 'checking') return <Splash />
   if (status === 'signed-out' || page === 'login') return <AuthScreen />
