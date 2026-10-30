@@ -90,6 +90,11 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
     res.json(await instagram.link(userIdOf(res), { username, password }))
   })
 
+  /** A session signed in to on instagram.com in the user's own browser, as its cookies. */
+  router.post('/link/instagram/session', signedIn, instagramLimit, async (req, res) => {
+    res.json(await instagram.linkWithSession(userIdOf(res), field(req.body, 'cookies', { max: 4000 })))
+  })
+
   router.post('/link/instagram/verify', signedIn, instagramCodeLimit, async (req, res) => {
     res.json(await instagram.verifyCode(userIdOf(res), field(req.body, 'code', { max: 16 })))
   })

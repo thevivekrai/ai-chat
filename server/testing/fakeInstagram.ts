@@ -25,6 +25,9 @@ interface FakeItem {
   media?: { image_versions2: { candidates: { url: string; width: number }[] } }
 }
 
+/** The session cookie Instagram gives this account (a browser signed in to it has the same). */
+export const SESSION = 'sess-1'
+
 export function fakeInstagram() {
   let id = 0
   const nextId = () => `i${++id}`
@@ -133,7 +136,10 @@ export function fakeInstagram() {
       return new Response(PIXEL, { headers: { 'content-type': 'image/png' } })
     }
 
-    if (state.blocked) return new Response('<html>blocked</html>', { status: 403, headers: { 'content-type': 'text/html' } })
+    // A host's address turned away: anonymous visits and sign-ins, not a session a person already has.
+    if (state.blocked && !/(^|;\s*)sessionid=/.test((init?.headers as Record<string, string> | undefined)?.cookie ?? '')) {
+      return new Response('<html>blocked</html>', { status: 403, headers: { 'content-type': 'text/html' } })
+    }
 
     if (path === '/accounts/login/' || path === '/') {
       return new Response('<html>login</html>', {
@@ -168,7 +174,7 @@ export function fakeInstagram() {
           status: 'fail',
         })
       }
-      return json({ authenticated: true, user: true, userId: ME, status: 'ok' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+      return json({ authenticated: true, user: true, userId: ME, status: 'ok' }, 200, [`sessionid=${SESSION}; Path=/`, `ds_user_id=${ME}; Path=/`])
     }
 
     // A security check, answered the way Instagram's own pages answer it.
@@ -180,12 +186,12 @@ export function fakeInstagram() {
       if (body.security_code) {
         if (!state.codeSent) return json({ message: 'No code was sent', status: 'fail' }, 400)
         if (body.security_code !== state.code) return json({ message: 'Please check the security code and try again.', status: 'fail' }, 400)
-        return json({ status: 'ok', location: 'instagram://checkpoint/dismiss' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+        return json({ status: 'ok', location: 'instagram://checkpoint/dismiss' }, 200, [`sessionid=${SESSION}; Path=/`, `ds_user_id=${ME}; Path=/`])
       }
       if (body.choice !== undefined) {
         // "It was me" clears the check; choosing where to send a code makes Instagram send one.
         if (state.checkpoint === 'delta') {
-          return json({ status: 'ok', location: 'instagram://checkpoint/dismiss' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+          return json({ status: 'ok', location: 'instagram://checkpoint/dismiss' }, 200, [`sessionid=${SESSION}; Path=/`, `ds_user_id=${ME}; Path=/`])
         }
         state.codeSent = true
         return json({ step_name: 'verify_code', step_data: { contact_point: 'a***@example.com', form_type: 'email' }, status: 'ok' })
@@ -205,11 +211,11 @@ export function fakeInstagram() {
       if (body.verificationCode !== state.code) {
         return json({ message: 'Please check the security code and try again.', status: 'fail' }, 400)
       }
-      return json({ authenticated: true, user: true, userId: ME, status: 'ok' }, 200, [`sessionid=sess-1; Path=/`, `ds_user_id=${ME}; Path=/`])
+      return json({ authenticated: true, user: true, userId: ME, status: 'ok' }, 200, [`sessionid=${SESSION}; Path=/`, `ds_user_id=${ME}; Path=/`])
     }
 
     // Everything else needs the session cookie.
-    if (!cookies.sessionid || state.signedOut) return json({ message: 'login_required', status: 'fail' }, 403)
+    if (cookies.sessionid !== SESSION || state.signedOut) return json({ message: 'login_required', status: 'fail' }, 403)
     if (state.rateLimited) return json({ message: 'feedback_required', status: 'fail' }, 429)
 
     if (path === '/api/v1/direct_v2/inbox/') {

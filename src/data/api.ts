@@ -158,6 +158,8 @@ export interface ConnectionsApi {
   /** Linking Instagram: its username and password. Instagram often asks for a code as well. */
   linkInstagram(username: string, password: string): Promise<InstagramLinkResult>
   verifyInstagramCode(code: string): Promise<InstagramLinkResult>
+  /** Linking Instagram with a session signed in to on instagram.com in the user's own browser. */
+  linkInstagramSession(cookies: string): Promise<InstagramLinkResult>
   /** Logs the server out of that account and deletes its chats there. */
   unlink(network: LinkedNetwork): Promise<void>
 }
