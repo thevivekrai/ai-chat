@@ -114,7 +114,7 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
     const userId = userIdOf(res)
     const user = await col.users.findOne({ _id: userId })
     if (!user) throw new HttpError(404, 'No such account.')
-    if (user.passwordHash) await requireCurrentPassword(req.body, user.passwordHash)
+    if (user.passwordHash) await requireCurrentPassword(col, req.body, { ...user, passwordHash: user.passwordHash })
     else if (String(req.body?.confirm ?? '').trim().toLowerCase() !== user.email) {
       throw new HttpError(400, 'Type your email address to confirm.')
     }

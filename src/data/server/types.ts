@@ -53,6 +53,8 @@ export interface AuthResult {
    * after a reset with the old one, or when they ask for a new one.
    */
   recoveryKey?: string
+  /** Wrong passwords tried on the account since its owner last signed in. */
+  failedAttempts?: number
 }
 
 /**

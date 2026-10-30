@@ -4,6 +4,15 @@ import '@fontsource-variable/inter'
 import './index.css'
 import { App } from './App'
 
+// Scammers ask people to paste code here to take over their account ("self-XSS"): say so plainly.
+if (import.meta.env.PROD) {
+  console.log('%cStop!', 'color:#dc2626;font-size:40px;font-weight:700')
+  console.log(
+    '%cThis is a browser tool for developers. If someone told you to paste something here, it is a scam to get into your Sytext account and your chats. Close this panel.',
+    'font-size:15px',
+  )
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
