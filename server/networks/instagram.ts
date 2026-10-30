@@ -329,6 +329,26 @@ export function createInstagram({ sealer, store, accounts, hub, avatars, files, 
       }
     },
 
+    /**
+     * A session the user signed in to on instagram.com in their own browser: no password here, and
+     * Instagram's security check happens where it can actually reach them.
+     */
+    async linkWithSession(userId: ObjectId, cookies: string) {
+      if (!enabled) throw new HttpError(503, 'This server has Instagram turned off.')
+      const before = await accounts.get(userId, 'instagram')
+      await accounts.set(userId, 'instagram', {
+        status: 'linking',
+        ...(before?.label ? { label: before.label } : {}),
+        detail: 'Checking the session with Instagram…',
+      })
+      try {
+        return await began(userId, await instagram.fromBrowser(cookies))
+      } catch (error) {
+        await restore(userId, before, error)
+        throw error
+      }
+    },
+
     /** The code Instagram asked for. */
     async verifyCode(userId: ObjectId, code: string) {
       const account = await accounts.get(userId, 'instagram')

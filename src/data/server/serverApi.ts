@@ -209,6 +209,7 @@ export const serverApi = {
   unlinkTelegram: () => request<{ ok: true }>('DELETE', '/link/telegram'),
   linkInstagram: (username: string, password: string) =>
     request<InstagramLinkResult>('POST', '/link/instagram', { username, password }),
+  linkInstagramSession: (cookies: string) => request<InstagramLinkResult>('POST', '/link/instagram/session', { cookies }),
   instagramVerify: (code: string) => request<InstagramLinkResult>('POST', '/link/instagram/verify', { code }),
   unlinkInstagram: () => request<{ ok: true }>('DELETE', '/link/instagram'),
   linkGuffshuff: (username: string, password: string) =>

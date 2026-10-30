@@ -677,6 +677,9 @@ function InstagramCard({ account, enabled }: { account: PublicAccount | null; en
   const [show, setShow] = useState(false)
   const [code, setCode] = useState('')
   const [via, setVia] = useState<'app' | 'sms' | 'email'>('sms')
+  /** Signing in here with the password, or bringing a session from the user's own browser. */
+  const [how, setHow] = useState<'password' | 'browser'>('password')
+  const [cookies, setCookies] = useState('')
   const link = useAsync()
   const linked = status === 'connected' || status === 'error'
   // A sign-in waiting for its code survives a reload: the server remembers where it got to.
@@ -686,6 +689,7 @@ function InstagramCard({ account, enabled }: { account: PublicAccount | null; en
     setUsername('')
     setPassword('')
     setCode('')
+    setCookies('')
     setStep('start')
   }
   useLinkedOnce('instagram', status, reset)
@@ -700,7 +704,12 @@ function InstagramCard({ account, enabled }: { account: PublicAccount | null; en
   const submit = (e: FormEvent) => {
     e.preventDefault()
     void link.run(async () => {
-      const result = step === 'code' ? await api.connections.verifyInstagramCode(code) : await api.connections.linkInstagram(username, password)
+      const result =
+        how === 'browser'
+          ? await api.connections.linkInstagramSession(cookies)
+          : step === 'code'
+            ? await api.connections.verifyInstagramCode(code)
+            : await api.connections.linkInstagram(username, password)
       if ('step' in result) {
         setVia(result.via)
         setStep('code')
@@ -729,7 +738,54 @@ function InstagramCard({ account, enabled }: { account: PublicAccount | null; en
         </p>
       ) : (
         <form onSubmit={submit} className="mt-4 space-y-3">
-          {step === 'start' ? (
+          {step === 'start' && (
+            <div role="radiogroup" aria-label="How to sign in" className="grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1 text-xs font-medium">
+              {(
+                [
+                  ['password', 'Username & password'],
+                  ['browser', 'From your browser'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={how === value}
+                  onClick={() => {
+                    setHow(value)
+                    link.reset()
+                  }}
+                  className={cn('h-8 rounded-lg transition-colors', how === value ? 'bg-surface text-fg shadow-sm' : 'text-muted hover:text-fg')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {how === 'browser' && step === 'start' ? (
+            <>
+              <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
+                <li>
+                  On a computer, open{' '}
+                  <a href="https://www.instagram.com/" target="_blank" rel="noreferrer" className="font-medium text-accent-ink hover:underline">
+                    instagram.com
+                  </a>{' '}
+                  and sign in. Instagram&rsquo;s &ldquo;Was this you?&rdquo; check reaches you there, as usual.
+                </li>
+                <li>
+                  Open the browser&rsquo;s developer tools (F12), then <b>Application</b> (Chrome, Edge) or <b>Storage</b>{' '}
+                  (Firefox) → <b>Cookies</b> → instagram.com.
+                </li>
+                <li>
+                  Copy the value of <Code>sessionid</Code> and paste it here. Adding <Code>csrftoken</Code> as{' '}
+                  <Code>sessionid=…; csrftoken=…</Code> helps too.
+                </li>
+              </ol>
+              <Field label="Session from your browser" hint="Kept encrypted, like a password sign-in's. Signing out on instagram.com ends it.">
+                <PasswordInput value={cookies} onChange={setCookies} visible={show} onToggle={() => setShow((v) => !v)} autoComplete="off" />
+              </Field>
+            </>
+          ) : step === 'start' ? (
             <>
               <Field label="Instagram username">
                 <Input
@@ -766,9 +822,9 @@ function InstagramCard({ account, enabled }: { account: PublicAccount | null; en
           )}
           {status === 'disconnected' && step === 'start' && <StoppedNote account={account!} network="instagram" />}
           <Warning>
-            Meta doesn&rsquo;t allow apps to sign in to a personal account like this, and a sign-in from a server is
-            often challenged or blocked. It can get the account locked. Instagram may also ask you to confirm this
-            login in the app first.
+            Meta doesn&rsquo;t allow apps to sign in to a personal account like this, and it can get the account
+            locked. A sign-in from this server is often challenged or blocked without Instagram ever showing you a
+            &ldquo;Was this you?&rdquo; prompt. If that happens, use <b>From your browser</b> instead.
           </Warning>
           {link.error && <ErrorText>{link.error}</ErrorText>}
           <div className="flex flex-wrap items-center gap-2">
@@ -776,10 +832,12 @@ function InstagramCard({ account, enabled }: { account: PublicAccount | null; en
               type="submit"
               size="sm"
               variant="primary"
-              disabled={link.busy || (step === 'code' ? !code.trim() : !username.trim() || !password)}
+              disabled={
+                link.busy || (how === 'browser' && step === 'start' ? !cookies.trim() : step === 'code' ? !code.trim() : !username.trim() || !password)
+              }
             >
               {link.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-              {step === 'code' ? 'Verify' : 'Sign in to Instagram'}
+              {step === 'code' ? 'Verify' : how === 'browser' ? 'Link this session' : 'Sign in to Instagram'}
             </Button>
             {step === 'code' && (
               <Button size="sm" variant="ghost" onClick={reset}>

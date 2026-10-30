@@ -526,6 +526,13 @@ export function createUnifiedApi(): InboxApi {
       return result
     },
 
+    async linkInstagramSession(cookies) {
+      const connector = requireServer()
+      const result = await serverApi.linkInstagramSession(cookies)
+      await connector.refreshAccounts()
+      return result
+    },
+
     async verifyInstagramCode(code) {
       const connector = requireServer()
       const result = await serverApi.instagramVerify(code)

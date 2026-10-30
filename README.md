@@ -443,6 +443,19 @@ about), and when Instagram wants a code instead it sends one to your email or ph
 asks for it. If it insists on a check that only works in a browser, Settings says so: sign in on
 instagram.com, clear it there, then link again.
 
+### When Instagram never asks "Was this you?"
+
+Instagram treats sign-ins from hosting providers' addresses (like Render's) as suspicious, and
+often refuses them without ever sending the "Was this you?" prompt to the app. Use **Settings →
+Accounts → Instagram → From your browser** instead:
+
+1. Sign in on instagram.com in your own browser, where Instagram's check reaches you as usual.
+2. Copy the `sessionid` cookie from the browser's developer tools (Application or Storage →
+   Cookies → instagram.com), and paste it in.
+
+Sytext checks the session with Instagram before keeping it, sealed like any other. Signing out
+on instagram.com ends it.
+
 ## More connections, from the browser
 
 Also in **Settings → Accounts**. These talk to their networks directly from your browser, without

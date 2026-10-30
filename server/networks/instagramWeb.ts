@@ -90,6 +90,11 @@ export interface InstagramSite {
   submitCode(pending: PendingSignIn, code: string): Promise<SignInResult>
   /** A session from what `save()` gave, ready to use. */
   restore(saved: string): InstagramSession
+  /**
+   * A session the user signed in to themselves, on instagram.com in their own browser, handed
+   * over as its cookies. Checked before it's taken.
+   */
+  fromBrowser(cookies: string): Promise<InstagramSession>
 }
 
 interface Jar {
@@ -381,6 +386,33 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
     restore(saved: string) {
       return session(JSON.parse(saved) as Saved)
     },
+
+    async fromBrowser(cookies: string) {
+      const given = browserCookies(cookies)
+      if (!given.sessionid) {
+        throw new HttpError(400, 'Paste the value of the "sessionid" cookie from instagram.com (or the whole cookie line).')
+      }
+      // A csrf token and device cookies of its own if Instagram hands them out here; if this
+      // server is turned away, the browser's own (when pasted) are enough.
+      let state: Saved = { jar: {}, userAgent: USER_AGENT }
+      try {
+        state = await visit()
+      } catch {
+        // Carried on with what was pasted.
+      }
+      state.jar = { ...state.jar, ...given }
+      if (!state.jar.csrftoken) state.jar.csrftoken = randomUUID().replace(/-/g, '')
+      const signedIn = session(state)
+      try {
+        await signedIn.inbox()
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 401) {
+          throw new HttpError(401, "Instagram didn't accept that session. Sign in on instagram.com again, then copy the sessionid cookie afresh.")
+        }
+        throw error
+      }
+      return signedIn
+    },
   }
 
   /* ── A signed-in account ─────────────────────────────────────────────────── */
@@ -441,6 +473,27 @@ export function createInstagramWeb({ fetch: call = fetch, baseUrl = BASE }: { fe
 }
 
 /* ── Reading what Instagram sends ────────────────────────────────────────────── */
+
+/**
+ * The cookies pasted from a browser: a bare sessionid value, or a "name=value; name=value" line
+ * (as the browser's tools copy it). Only Instagram's own session cookies are taken.
+ */
+export function browserCookies(text: string): Record<string, string> {
+  const trimmed = text.trim().replace(/^cookie:\s*/i, '')
+  if (!trimmed) return {}
+  if (!trimmed.includes('=')) return { sessionid: decodeURIComponent(trimmed) }
+  const wanted = new Set(['sessionid', 'csrftoken', 'ds_user_id', 'mid', 'ig_did', 'rur', 'datr'])
+  const jar: Record<string, string> = {}
+  for (const pair of trimmed.split(/;\s*/)) {
+    const at = pair.indexOf('=')
+    if (at < 1) continue
+    const name = pair.slice(0, at).trim()
+    const value = pair.slice(at + 1).trim()
+    // Only what a cookie can carry: no line breaks or separators sneak into the header.
+    if (wanted.has(name) && value && /^[\w%.:\-]+$/.test(value)) jar[name] = value
+  }
+  return jar
+}
 
 /** The csrf token as a page's bootstrap data carries it, when no cookie came with it. */
 function csrfIn(body: Record<string, unknown>): string | undefined {

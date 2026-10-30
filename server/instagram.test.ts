@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { GROUP_THREAD, ME, PRIYA, PRIYA_THREAD } from './testing/fakeInstagram.ts'
+import { GROUP_THREAD, ME, PRIYA, PRIYA_THREAD, SESSION } from './testing/fakeInstagram.ts'
 import { Browser, SIGN_UP, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
 
 const enc = encodeURIComponent
@@ -119,6 +119,39 @@ describe.skipIf(!TEST_MONGODB_URI)('Instagram DMs', () => {
     } finally {
       ig.state.blocked = false
     }
+  })
+
+  it('links with a session signed in to in the user’s own browser, even when the server is turned away', async () => {
+    const ig = server.instagram
+    const browser = await newUser('ig-session@example.com')
+    const linkWith = (cookies: string) => browser.post('/api/link/instagram/session', { cookies })
+
+    expect((await linkWith('csrftoken=abc')).status).toBe(400)
+    const stale = await linkWith('not-a-real-session')
+    expect(stale.status).toBe(401)
+    expect(stale.json.error).toMatch(/didn't accept that session/)
+    expect((await browser.get('/api/accounts')).json.accounts).toEqual([])
+    // Only cookie characters: nothing smuggled into the request's headers.
+    expect((await linkWith(`sessionid=${SESSION}\r\nX-Evil: 1`)).status).toBe(400)
+
+    // Instagram blocks this server's sign-ins, but a session made in a browser still works.
+    ig.state.blocked = true
+    try {
+      const linked = await linkWith(`csrftoken=from-browser; sessionid=${SESSION}; ds_user_id=${ME}`)
+      expect(linked.json).toEqual({ username: 'aarav.mehta', fullName: 'Aarav Mehta' })
+    } finally {
+      ig.state.blocked = false
+    }
+    const accounts = (await browser.get('/api/accounts')).json.accounts
+    expect(accounts).toEqual([expect.objectContaining({ network: 'instagram', status: 'connected', label: '@aarav.mehta' })])
+    // Kept sealed, like a session from a password sign-in.
+    const stored = JSON.stringify(await server.database.col.accounts.findOne({ network: 'instagram', label: '@aarav.mehta' }))
+    expect(stored).not.toContain(SESSION)
+    await browser.delete('/api/link/instagram')
+
+    // The bare value, as copied from the browser's cookie list, works too.
+    expect((await linkWith(SESSION)).json.username).toBe('aarav.mehta')
+    await browser.delete('/api/link/instagram')
   })
 
   it('links, brings the DMs in, and sends and receives', async () => {
