@@ -5,14 +5,113 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="An AI-first unified inbox that tells you who needs a reply and drafts it for you." />
+    <title>Sytext — one AI inbox for WhatsApp, Telegram, Instagram and more</title>
+    <meta
+      name="description"
+      content="Sytext brings WhatsApp, Telegram, Instagram and your other chats into one inbox. AI sorts who needs a reply first, tags each chat, drafts replies and turns asks into tasks."
+    />
     <meta name="theme-color" content="#e8ebf0" />
-    <title>Sytext — AI inbox</title>
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <!-- __SITE_ORIGIN__ is this site's own address, filled in by the server as it serves the page. -->
+    <link rel="canonical" href="__SITE_ORIGIN__/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Sytext" />
+    <meta property="og:title" content="Sytext — one AI inbox for all your chats" />
+    <meta
+      property="og:description"
+      content="WhatsApp, Telegram, Instagram and more in one inbox, with AI that tells you who needs a reply and drafts it."
+    />
+    <meta property="og:url" content="__SITE_ORIGIN__/" />
+    <meta property="og:image" content="__SITE_ORIGIN__/1.png" />
+    <meta property="og:image:alt" content="The Sytext inbox: chats from every app, sorted by who needs a reply" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Sytext — one AI inbox for all your chats" />
+    <meta name="twitter:description" content="WhatsApp, Telegram, Instagram and more in one inbox, sorted and drafted by AI." />
+    <meta name="twitter:image" content="__SITE_ORIGIN__/1.png" />
+    <!-- What the site is, for search and answer engines (structured data, not a script that runs). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "name": "Sytext",
+            "url": "__SITE_ORIGIN__/",
+            "applicationCategory": "CommunicationApplication",
+            "operatingSystem": "Web",
+            "description": "One inbox for WhatsApp, Telegram, Instagram, Matrix bridges and more. AI sorts chats by who needs a reply, tags them, drafts replies, summarizes long threads and turns requests into tasks synced to Google Calendar.",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "featureList": [
+              "Unified inbox for WhatsApp, Telegram, Instagram and more",
+              "AI priority: who needs a reply first",
+              "AI-drafted replies in three tones",
+              "Automatic chat tags",
+              "Tasks from chats, synced to Google Calendar",
+              "Send later and snooze",
+              "Chats encrypted at rest"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is Sytext?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Sytext is a unified inbox: it puts your WhatsApp, Telegram, Instagram and other chats in one place, and its AI tells you who needs a reply first and drafts the reply for you."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which chat apps does Sytext work with?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "WhatsApp and Telegram (your own accounts), Instagram direct messages, Guffshuff, Telegram bots, and Matrix, including WhatsApp, Instagram, Slack and SMS through Matrix bridges."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is Sytext free?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. You can try the demo without an account, and sign up for free." }
+              },
+              {
+                "@type": "Question",
+                "name": "Are my chats private?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Linked chats are encrypted at rest on the server, and AI reads only the chats you allow it to."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
     <!-- Applies the saved theme before first paint (a file, so the page needs no inline script). -->
     <script src="/theme.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Shown until the app starts, and to crawlers that don't run it. -->
+      <noscript>
+        <main style="max-width: 640px; margin: 48px auto; padding: 0 16px; font-family: system-ui, sans-serif; line-height: 1.6">
+          <h1>Sytext: one AI inbox for all your chats</h1>
+          <p>
+            Sytext brings WhatsApp, Telegram, Instagram, Matrix bridges and more into a single inbox. Its AI sorts your chats
+            by who needs a reply first, tags them, drafts replies in your tone, summarizes long threads and turns what people
+            ask of you into tasks that sync to Google Calendar.
+          </p>
+          <p>Sytext needs JavaScript to run. Turn it on to sign in or try the demo.</p>
+          <ul>
+            <li><a href="/info">What Sytext does</a></li>
+            <li><a href="/help">Help and guide</a></li>
+            <li><a href="/privacy">Privacy Policy</a></li>
+            <li><a href="/terms">Terms &amp; Conditions</a></li>
+          </ul>
+        </main>
+      </noscript>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
