@@ -12,6 +12,7 @@ import {
   FileText,
   History,
   ImageIcon,
+  Languages,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -42,6 +43,7 @@ import { useClock } from '@/store/clock'
 import { canRetry, isUnsentHere, useInbox } from '@/store/inbox'
 import { canAiReadThread, useSettings } from '@/store/settings'
 import { toast } from '@/store/toasts'
+import { keyOf as translationKey, targetLanguage, useTranslations } from '@/store/translations'
 import { useUi } from '@/store/ui'
 import { AudioPlayer } from './AudioPlayer'
 import { LottieSticker } from './LottieSticker'
@@ -381,7 +383,7 @@ function MessageGroup({
                     <>
                       {m.replyTo && <Quote quote={m.replyTo} contacts={contacts} onAccent={fromMe} />}
                       <Attachments message={m} fromMe={fromMe} />
-                      <RichText text={m.body} highlights={highlights.get(m.id)} onAccent={fromMe} />
+                      <TranslatableText message={m} highlights={highlights.get(m.id)} onAccent={fromMe} />
                     </>
                   )}
                   <MessageMarks message={m} fromMe={fromMe} bare={bare} />
@@ -597,6 +599,39 @@ function AttachmentView({ attachment: a, fromMe, sending, bare }: { attachment: 
 }
 
 /** Pinned, starred, edited: small marks at the end of a message. */
+/**
+ * A message's text, or its translation when it was asked for: with where it came from and a way
+ * back to the original, so a translation is never mistaken for what they wrote.
+ */
+function TranslatableText({ message: m, highlights, onAccent }: { message: Message; highlights?: Highlight[]; onAccent: boolean }) {
+  const showing = useTranslations((s) => !!s.showing[m.id])
+  const entry = useTranslations((s) => s.entries[translationKey(m.id, targetLanguage())])
+  if (!showing || !entry || entry.status === 'error') return <RichText text={m.body} highlights={highlights} onAccent={onAccent} />
+  const note = cn('mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px]', onAccent ? 'text-white/75' : 'text-faint')
+  if (entry.status === 'loading') {
+    return (
+      <>
+        <RichText text={m.body} highlights={highlights} onAccent={onAccent} />
+        <span className={note} aria-live="polite">
+          <Loader2 className="size-3 animate-spin" aria-hidden /> Translating…
+        </span>
+      </>
+    )
+  }
+  return (
+    <>
+      <RichText text={entry.text ?? m.body} onAccent={onAccent} />
+      <span className={note}>
+        <Languages className="size-3" aria-hidden />
+        {entry.from ? `Translated from ${entry.from}` : 'Translated'}
+        <button type="button" className="font-medium underline-offset-2 hover:underline" onClick={() => useTranslations.getState().showOriginal(m.id)}>
+          Show original
+        </button>
+      </span>
+    </>
+  )
+}
+
 function MessageMarks({ message: m, fromMe, bare }: { message: Message; fromMe: boolean; bare: boolean }) {
   const edited = !!m.editedAt && !m.deleted
   const pinned = isPinned(m)
@@ -697,6 +732,14 @@ function messageMenu(threadId: string, m: Message, fromMe: boolean, can: ChatCap
       icon: Copy,
       onSelect: () => void navigator.clipboard?.writeText(m.body).then(() => toast({ title: 'Copied', group: 'message-action' })),
     })
+  }
+  if (m.body && !m.deleted) {
+    const showing = useTranslations.getState().showing[m.id]
+    items.push(
+      showing
+        ? { id: 'original', label: 'Show original', icon: Languages, onSelect: () => useTranslations.getState().showOriginal(m.id) }
+        : { id: 'translate', label: 'Translate', icon: Languages, onSelect: () => useTranslations.getState().translateMessage(threadId, m.id, m.body) },
+    )
   }
   if (can.edit && fromMe && m.body && !m.attachments?.length && !m.deleted) {
     items.push({ id: 'edit', label: 'Edit', icon: Pencil, onSelect: () => startEdit(threadId, m.id) })

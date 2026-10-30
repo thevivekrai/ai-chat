@@ -25,8 +25,8 @@
  *   POST /whatsapp/voice              Ravi sends a 3-second voice message (a tone)
  *   POST /whatsapp/archived {"archived"} Ravi's chat is archived (or not) on the phone
  *   POST /whatsapp/sent-to-phone      what reached WhatsApp: read receipts (message ids), typing,
- *                                     messages sent, changes (edits, deletions…), and messages
- *                                     asked of the phone again
+ *                                     messages sent, changes (edits, deletions…), messages asked
+ *                                     of the phone again, and photos, files and stickers sent
  *   POST /telegram/message {"text"}   a new Telegram message
  *   POST /telegram/scan               the Telegram QR code is scanned
  *   POST /instagram/message {"text"}  a new Instagram DM from Priya ("photo": a photo instead)
@@ -57,6 +57,7 @@ const CANNED: Record<string, unknown> = {
   tasks: { tasks: [] },
   drafts: { short: 'Shipping Monday.', friendly: 'Hi Ravi! Both planters ship Monday 🙂', professional: 'Hello Ravi, both planters will ship on Monday.' },
   answer: { answer: 'Ravi asked for **2 more planters**.', citedMessageIds: [] },
+  translate: { text: 'Kya yeh pahunch gaya? (translated)', from: 'English' },
 }
 /** A stand-in for OpenRouter's chat API (what the shared AI uses with an sk-or- key). */
 const fakeOpenRouter = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -379,6 +380,7 @@ createServer(async (req, res) => {
           sent: socket.sent,
           changes: socket.changes,
           resends: server.sockets.flatMap((s) => s.resendRequests.map((k) => k.id)),
+          files: server.sockets.flatMap((s) => s.files.map(({ kind, mimetype, size }) => ({ kind, mimetype, size }))),
         }),
       )
       return

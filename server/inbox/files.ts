@@ -186,7 +186,12 @@ export interface Upload {
   data: Buffer
   name: string
   mime: string
+  /** Sent as a sticker rather than a photo (a WebP or PNG picked from the sticker picker). */
+  sticker?: boolean
 }
+
+/** Stickers are small square pictures: a WebP or PNG, and not a big one. */
+const MAX_STICKER_BYTES = 1024 * 1024
 
 /** Reads the upload's description from its headers (the body is the file itself). */
 export function uploadOf(headers: Record<string, string | string[] | undefined>, body: unknown): Upload {
@@ -207,7 +212,9 @@ export function uploadOf(headers: Record<string, string | string[] | undefined>,
   // be read as a request); its real type comes separately.
   const type = header('x-file-type')?.split(';')[0]?.trim().toLowerCase()
   const mime = type && /^[a-z]+\/[a-z0-9.+-]+$/.test(type) ? type : 'application/octet-stream'
-  return { data: body, name: fileName(name, mime), mime }
+  // A sticker only when it can be one; anything else marked as one is sent as what it is.
+  const sticker = header('x-sticker') === '1' && (mime === 'image/webp' || mime === 'image/png') && body.length <= MAX_STICKER_BYTES
+  return { data: body, name: fileName(name, mime), mime, ...(sticker ? { sticker: true } : {}) }
 }
 
 /** An optional header the browser encoded with encodeURIComponent. */

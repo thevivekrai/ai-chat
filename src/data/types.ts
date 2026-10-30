@@ -186,6 +186,8 @@ export interface ChatCapabilities {
   history: boolean
   /** Can send photos and files. */
   files: boolean
+  /** Can send a sticker, as the network's own sticker where it has them. */
+  stickers: boolean
   /** Can edit my messages, delete them (for everyone, or for me), pin and star messages. */
   edit: boolean
   delete: boolean
@@ -199,6 +201,7 @@ export const NO_CAPABILITIES: ChatCapabilities = {
   typing: false,
   history: false,
   files: false,
+  stickers: false,
   edit: false,
   delete: false,
   pin: false,

@@ -108,7 +108,7 @@ export class FakeWaSocket implements WaSocket {
   authState: { creds: AuthenticationState['creds'] }
   pairingPhone?: string
   sent: { jid: string; text: string; quotedId?: string }[] = []
-  files: { jid: string; kind: 'image' | 'video' | 'document'; mimetype: string; fileName?: string; caption?: string; size: number; quotedId?: string }[] = []
+  files: { jid: string; kind: 'image' | 'sticker' | 'video' | 'document'; mimetype: string; fileName?: string; caption?: string; size: number; quotedId?: string }[] = []
   /** Edits, deletions for everyone and pins sent; deletions for me and stars synced. */
   changes: { jid: string; change: string; id: string; text?: string; pinned?: boolean; starred?: boolean; archived?: boolean; timestamp?: number }[] = []
   reactions: { jid: string; emoji: string; targetId: string }[] = []
@@ -178,18 +178,26 @@ export class FakeWaSocket implements WaSocket {
     }
     if (!('text' in content)) {
       // Uploaded to WhatsApp's servers; the message carries the keys to fetch it again.
-      const [kind, data] = 'image' in content ? (['image', content.image] as const) : 'video' in content ? (['video', content.video] as const) : (['document', content.document] as const)
+      const [kind, data] =
+        'image' in content
+          ? (['image', content.image] as const)
+          : 'sticker' in content
+            ? (['sticker', content.sticker] as const)
+            : 'video' in content
+              ? (['video', content.video] as const)
+              : (['document', content.document] as const)
       const fileName = 'document' in content ? content.fileName : undefined
+      const caption = 'caption' in content ? content.caption : undefined
       this.files.push({
         jid,
         kind,
         mimetype: content.mimetype,
         size: data.length,
         ...(fileName ? { fileName } : {}),
-        ...(content.caption ? { caption: content.caption } : {}),
+        ...(caption ? { caption } : {}),
         ...(options?.quoted ? { quotedId: options.quoted.key.id! } : {}),
       })
-      const message = mediaMessage(`${kind}Message`, data, { mimetype: content.mimetype, caption: content.caption, ...(fileName ? { fileName } : {}) })
+      const message = mediaMessage(`${kind}Message`, data, { mimetype: content.mimetype, caption, ...(fileName ? { fileName } : {}) })
       return { key: { remoteJid: jid, fromMe: true, id: `FILE${this.files.length}` }, message } as WAMessage
     }
     this.sent.push({ jid, text: content.text, ...(options?.quoted ? { quotedId: options.quoted.key.id! } : {}) })
@@ -649,13 +657,14 @@ export class Browser {
   }
 
   /** Sends a photo or file the way the app does. */
-  async upload(threadId: string, data: Buffer, file: { name: string; type: string; caption?: string; replyToId?: string }) {
+  async upload(threadId: string, data: Buffer, file: { name: string; type: string; caption?: string; replyToId?: string; sticker?: boolean }) {
     const res = await this.raw('POST', `/api/threads/${encodeURIComponent(threadId)}/files`, data, {
       'Content-Type': 'application/octet-stream',
       'X-File-Name': encodeURIComponent(file.name),
       'X-File-Type': file.type,
       ...(file.caption ? { 'X-Caption': encodeURIComponent(file.caption) } : {}),
       ...(file.replyToId ? { 'X-Reply-To': encodeURIComponent(file.replyToId) } : {}),
+      ...(file.sticker ? { 'X-Sticker': '1' } : {}),
     })
     let json: Record<string, any> = {}
     try {

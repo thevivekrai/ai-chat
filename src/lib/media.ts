@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 /** Mirrors the Tailwind breakpoints the layout uses (`wide` is defined in index.css). */
-export const BREAKPOINTS = { md: 768, lg: 1024, xl: 1280, wide: 1440 } as const
+export const BREAKPOINTS = { sm: 640, md: 768, lg: 1024, xl: 1280, wide: 1440 } as const
 
 export type Breakpoint = keyof typeof BREAKPOINTS
 

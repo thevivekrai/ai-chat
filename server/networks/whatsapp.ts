@@ -96,6 +96,7 @@ export type WaContent =
   | { delete: WAMessageKey }
   | { pin: WAMessageKey; type: proto.PinInChat.Type; time?: 86400 | 604800 | 2592000 }
   | { image: Buffer; mimetype: string; caption?: string }
+  | { sticker: Buffer; mimetype: string }
   | { video: Buffer; mimetype: string; caption?: string }
   | { document: Buffer; mimetype: string; fileName: string; caption?: string }
 
@@ -1396,7 +1397,10 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       const socket = connected(userId)
       const { replyTo, options } = await quoteFor(userId, threadId, replyToId, quotedHint)
       const withCaption = caption ? { caption } : {}
-      const content: WaContent = isPhotoType(upload.mime)
+      // WhatsApp's stickers are WebP: one picked as a sticker goes as a sticker (a PNG goes as a photo).
+      const content: WaContent = upload.sticker && upload.mime === 'image/webp'
+        ? { sticker: upload.data, mimetype: 'image/webp' }
+        : isPhotoType(upload.mime)
         ? { image: upload.data, mimetype: upload.mime, ...withCaption }
         : upload.mime === 'video/mp4'
           ? { video: upload.data, mimetype: upload.mime, ...withCaption }
@@ -1412,7 +1416,11 @@ export function createWhatsApp(deps: WhatsAppDeps) {
       // WhatsApp's copy of what was sent, with the keys to fetch it again.
       const parts = describe(sent.message) ?? {
         body: caption,
-        attachments: [{ kind: 'image' in content ? ('image' as const) : ('file' as const), name: 'image' in content ? 'Photo' : upload.name, mime: upload.mime }],
+        attachments: [
+          'sticker' in content
+            ? { kind: 'sticker' as const, name: 'Sticker', mime: upload.mime }
+            : { kind: 'image' in content ? ('image' as const) : ('file' as const), name: 'image' in content ? 'Photo' : upload.name, mime: upload.mime },
+        ],
       }
       const attachments = withFileLink(userId, { remoteJid: threadId.slice('wa:'.length), fromMe: true, id: sent.key.id }, parts)?.map((a) => ({
         ...a,
