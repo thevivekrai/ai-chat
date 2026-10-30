@@ -117,6 +117,7 @@ export interface ConnectionsState {
     telegram: PublicAccount | null
     guffshuff: PublicAccount | null
     instagram: PublicAccount | null
+    x: PublicAccount | null
   } | null
 }
 
@@ -160,6 +161,8 @@ export interface ConnectionsApi {
   verifyInstagramCode(code: string): Promise<InstagramLinkResult>
   /** Linking Instagram with a session signed in to on instagram.com in the user's own browser. */
   linkInstagramSession(cookies: string): Promise<InstagramLinkResult>
+  /** Linking X with the auth_token and ct0 cookies of a session in the user's own browser. */
+  linkX(cookies: string): Promise<{ username: string; fullName: string }>
   /** Logs the server out of that account and deletes its chats there. */
   unlink(network: LinkedNetwork): Promise<void>
 }

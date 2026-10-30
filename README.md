@@ -92,6 +92,7 @@ variable. The service's log says which file it read and which features are on:
 | `GOOGLE_CLIENT_SECRET` | With `GOOGLE_CLIENT_ID`, turns on syncing tasks to Google Calendar (see [Tasks in Google Calendar](#tasks-in-google-calendar)). |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Your own profile photo. (Photos and files in chats don't need it.) |
+| `X` | `off` turns off the X (Twitter) DM bridge (on by default). |
 | `GUFFSHUFF_URL` | Your own chat site's address: turns on linking Guffshuff accounts. `off` turns it off. |
 | `INSTAGRAM` | `off` takes Instagram off the Settings page for everyone on this server (it's offered by default). |
 | `AI_API` | An OpenRouter key (`sk-or-…`) or a Google Gemini key: turns on the shared AI for everyone signed in. `AI_PROVIDER` (`openrouter` or `gemini`) says which if the key doesn't; `AI_MODEL` and `AI_TRIAGE_MODEL` pick its models. |
@@ -455,6 +456,26 @@ Accounts → Instagram → From your browser** instead:
 
 Sytext checks the session with Instagram before keeping it, sealed like any other. Signing out
 on instagram.com ends it.
+
+## X (Twitter) DMs
+
+Sytext's own bridge for X direct messages, with no Matrix bridge in between. X's official API
+charges for DM access and only acts for developer apps' own users, so like the open bridges
+(mautrix-twitter) this uses the session of your own browser. Linking doesn't need your password:
+
+1. Sign in on x.com in your browser.
+2. Open the developer tools → Application (or Storage) → Cookies → x.com, and copy `auth_token` and
+   `ct0`.
+3. In **Settings → Accounts → X**, paste them as `auth_token=…; ct0=…`.
+
+Sytext checks the session with X before keeping it, sealed with `DATA_ENCRYPTION_KEY`. It looks for
+new messages every 45 seconds and sends replies at once. Photos come in, and reading a chat here
+marks it read on X. Reactions, unsending and sending photos aren't supported yet. Signing out on
+x.com ends the session, and the account then shows as disconnected. `X=off` turns X off on a
+server.
+
+X doesn't officially allow apps to read a personal inbox like this, and it can limit or lock an
+account it finds doing so.
 
 ## More connections, from the browser
 

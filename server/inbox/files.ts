@@ -25,6 +25,7 @@ export type FileSource =
   | { n: 'tg'; chat: string; id: number }
   | { n: 'gs'; url: string }
   | { n: 'ig'; url: string }
+  | { n: 'x'; url: string }
 
 export type FileRef = FileSource & { name: string; mime?: string }
 

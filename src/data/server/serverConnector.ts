@@ -84,7 +84,7 @@ const GAP_PAGES = 3
 const NOTE_HERE_EVERY_MS = 5 * 60_000
 const GAP_CHATS = 20
 
-const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:', instagram: 'ig:' }
+const PREFIX: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:', instagram: 'ig:', x: 'x:' }
 
 const hintOf = (m: Message, withBody = false): MessageHint => ({
   id: m.id,
@@ -210,7 +210,8 @@ export class ServerConnector implements Connector {
 
   capabilities(threadId: string): ChatCapabilities {
     if (threadId.startsWith(PREFIX.guffshuff)) return GUFFSHUFF_CAPABILITIES
-    if (threadId.startsWith(PREFIX.instagram)) return INSTAGRAM_CAPABILITIES
+    // X, through Sytext's own bridge, does what Instagram's does: text, read receipts, photos in.
+    if (threadId.startsWith(PREFIX.instagram) || threadId.startsWith(PREFIX.x)) return INSTAGRAM_CAPABILITIES
     return LINKED_CAPABILITIES
   }
 

@@ -212,6 +212,8 @@ export const serverApi = {
   linkInstagramSession: (cookies: string) => request<InstagramLinkResult>('POST', '/link/instagram/session', { cookies }),
   instagramVerify: (code: string) => request<InstagramLinkResult>('POST', '/link/instagram/verify', { code }),
   unlinkInstagram: () => request<{ ok: true }>('DELETE', '/link/instagram'),
+  linkX: (cookies: string) => request<{ username: string; fullName: string }>('POST', '/link/x', { cookies }),
+  unlinkX: () => request<{ ok: true }>('DELETE', '/link/x'),
   linkGuffshuff: (username: string, password: string) =>
     request<{ username: string; fullName: string }>('POST', '/link/guffshuff', { username, password }),
   unlinkGuffshuff: () => request<{ ok: true }>('DELETE', '/link/guffshuff'),

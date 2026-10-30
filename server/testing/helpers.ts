@@ -8,9 +8,12 @@ import type { SharedAi } from '../ai.ts'
 import { createGuffshuff, type Guffshuff } from '../networks/guffshuff.ts'
 import { createInstagram, type Instagram } from '../networks/instagram.ts'
 import { createInstagramWeb } from '../networks/instagramWeb.ts'
+import { createX, type X } from '../networks/x.ts'
+import { createXWeb } from '../networks/xWeb.ts'
 import { fakeGuffshuff } from './fakeGuffshuff.ts'
 import { fakeCalendar } from './fakeCalendar.ts'
 import { fakeInstagram } from './fakeInstagram.ts'
+import { fakeX } from './fakeX.ts'
 import type { AuthenticationState, BaileysEventMap, WAMessage, WAMessageKey } from '@whiskeysockets/baileys'
 import { createApp } from '../app.ts'
 import { createGoogleVerifier } from '../auth/google.ts'
@@ -457,10 +460,11 @@ export interface TestServer {
   telegram: ReturnType<typeof fakeTelegram>
   guffshuff: ReturnType<typeof fakeGuffshuff>
   instagram: ReturnType<typeof fakeInstagram>
+  x: ReturnType<typeof fakeX>
   calendar: ReturnType<typeof fakeCalendar>
   google: Awaited<ReturnType<typeof fakeGoogle>>
   /** The parts running now (rebuilt by `restart`). */
-  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram }
+  current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram; x: X }
   /** Builds the network managers again over the same database, as after a restart. */
   restart(): Promise<void>
   close(): Promise<void>
@@ -477,6 +481,7 @@ export async function startTestServer({
   ai,
   guffshuffCatchUpMs,
   instagramCatchUpMs,
+  xCatchUpMs,
 }: {
   port?: number
   staticDir?: string
@@ -484,6 +489,7 @@ export async function startTestServer({
   ai?: SharedAi
   guffshuffCatchUpMs?: number
   instagramCatchUpMs?: number
+  xCatchUpMs?: number
 } = {}): Promise<TestServer> {
   const dbName = `tidings_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const database = await connectDatabase(TEST_MONGODB_URI!, dbName)
@@ -493,12 +499,13 @@ export async function startTestServer({
   const telegram = fakeTelegram()
   const guffshuff = fakeGuffshuff()
   const instagram = fakeInstagram()
+  const xSite = fakeX()
   const calendar = fakeCalendar()
   const google = await fakeGoogle()
   const tokens = createSessionTokens('x'.repeat(40))
 
   let server: Server
-  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram }
+  let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram; x: X }
 
   async function boot(port = 0) {
     const hub = createHub()
@@ -555,7 +562,17 @@ export async function startTestServer({
       site: createInstagramWeb({ fetch: instagram.fetch }),
       ...(instagramCatchUpMs ? { catchUpMs: instagramCatchUpMs } : {}),
     })
-    managers = { store, whatsapp, telegram: tg, guffshuff: gs, instagram: ig }
+    const xb = createX({
+      sealer,
+      store,
+      accounts,
+      hub,
+      avatars,
+      files,
+      site: createXWeb({ fetch: xSite.fetch }),
+      ...(xCatchUpMs ? { catchUpMs: xCatchUpMs } : {}),
+    })
+    managers = { store, whatsapp, telegram: tg, guffshuff: gs, instagram: ig, x: xb }
     const app = createApp({
       col: database.col,
       tokens,
@@ -570,6 +587,7 @@ export async function startTestServer({
       telegram: tg,
       guffshuff: gs,
       instagram: ig,
+      x: xb,
       files,
       sealer,
       calendar: { clientId: GOOGLE_CLIENT_ID, clientSecret: 'calendar-secret', fetch: calendar.fetch },
@@ -590,6 +608,7 @@ export async function startTestServer({
   async function shutdown() {
     managers?.guffshuff.stopAll()
     managers?.instagram.stopAll()
+    managers?.x.stopAll()
     hub.closeAll()
     await managers.whatsapp.stopAll()
     await managers.telegram.stopAll()
@@ -604,6 +623,7 @@ export async function startTestServer({
     telegram,
     guffshuff,
     instagram,
+    x: xSite,
     calendar,
     google,
     current: () => managers,
@@ -615,6 +635,7 @@ export async function startTestServer({
       await managers.telegram.resumeAll()
       await managers.guffshuff.resumeAll()
       await managers.instagram.resumeAll()
+      await managers.x.resumeAll()
     },
     async close() {
       await shutdown()

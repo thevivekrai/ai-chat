@@ -262,6 +262,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         telegram: true,
         guffshuff: true,
         instagram: true,
+        x: true,
         calendar: true,
         uploads: false,
         database: true,

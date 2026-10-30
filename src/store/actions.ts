@@ -461,6 +461,7 @@ export const LINKED_NAMES: Record<LinkedNetwork, string> = {
   telegram: 'Telegram',
   guffshuff: 'Guffshuff',
   instagram: 'Instagram',
+  x: 'X',
 }
 
 

@@ -6,10 +6,10 @@ import type { Attachment, Contact, Message, MessageStatus, QuotedMessage, Reacti
  */
 
 /** Chat networks linked on the server, as the user's own account. */
-export type LinkedNetwork = 'whatsapp' | 'telegram' | 'guffshuff' | 'instagram'
+export type LinkedNetwork = 'whatsapp' | 'telegram' | 'guffshuff' | 'instagram' | 'x'
 
 /** How each linked network's chat ids start. Everything else belongs to a browser connector or the demo. */
-export const LINKED_PREFIXES: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:', instagram: 'ig:' }
+export const LINKED_PREFIXES: Record<LinkedNetwork, string> = { whatsapp: 'wa:', telegram: 'tga:', guffshuff: 'gs:', instagram: 'ig:', x: 'x:' }
 
 export type AccountStatus = 'linking' | 'connected' | 'error' | 'disconnected'
 
@@ -95,6 +95,8 @@ export interface ServerFeatures {
   guffshuff: boolean
   /** Instagram DMs, signed in to as the website does (INSTAGRAM=off turns it off). */
   instagram: boolean
+  /** X (Twitter) DMs, linked with a session from the user's browser. */
+  x?: boolean
   /** Tasks can be kept in Google Calendar (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET). */
   calendar?: boolean
   uploads: boolean

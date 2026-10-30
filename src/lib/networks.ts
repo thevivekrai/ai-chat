@@ -1,4 +1,4 @@
-import { siInstagram, siMatrix, siTelegram, siWhatsapp } from 'simple-icons'
+import { siInstagram, siMatrix, siTelegram, siWhatsapp, siX } from 'simple-icons'
 import type { NetworkId } from '@/data/types'
 
 export interface NetworkMeta {
@@ -30,6 +30,7 @@ export const NETWORKS: Record<NetworkId, NetworkMeta> = {
     background:
       'radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285aeb 90%)',
   },
+  x: { id: 'x', name: 'X', icon: siX.path, background: '#000000' },
   slack: { id: 'slack', name: 'Slack', icon: SLACK_MARK, background: '#4a154b' },
   sms: { id: 'sms', name: 'SMS', icon: SMS_MARK, background: '#64748b' },
   matrix: { id: 'matrix', name: 'Matrix', icon: siMatrix.path, background: '#0f1115' },
@@ -37,4 +38,4 @@ export const NETWORKS: Record<NetworkId, NetworkMeta> = {
   guffshuff: { id: 'guffshuff', name: 'Guffshuff', image: '/guffshuff.png', background: '#111827' },
 }
 
-export const NETWORK_ORDER: NetworkId[] = ['whatsapp', 'telegram', 'guffshuff', 'instagram', 'slack', 'sms', 'matrix']
+export const NETWORK_ORDER: NetworkId[] = ['whatsapp', 'telegram', 'guffshuff', 'instagram', 'x', 'slack', 'sms', 'matrix']
