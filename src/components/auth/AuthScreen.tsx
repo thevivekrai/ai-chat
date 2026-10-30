@@ -287,7 +287,7 @@ export function AuthScreen() {
 }
 
 /** The chat apps Sytext brings together: every one, not just two. */
-const SHOWN_NETWORKS: NetworkId[] = ['whatsapp', 'telegram', 'instagram', 'guffshuff', 'matrix', 'slack', 'sms']
+const SHOWN_NETWORKS: NetworkId[] = ['whatsapp', 'telegram', 'instagram', 'x', 'guffshuff', 'matrix', 'slack', 'sms']
 
 function Networks() {
   return (
@@ -300,7 +300,7 @@ function Networks() {
         ))}
       </ul>
       <p className="text-[11px] text-faint" aria-hidden>
-        WhatsApp, Telegram, Instagram, Matrix bridges and more
+        WhatsApp, Telegram, Instagram, X, Matrix bridges and more
       </p>
     </div>
   )

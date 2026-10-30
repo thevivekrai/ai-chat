@@ -19,6 +19,7 @@ import { calendarRoutes, type CalendarConfig } from './calendar.ts'
 import type { Sealer } from './crypto.ts'
 import type { Guffshuff } from './networks/guffshuff.ts'
 import type { Instagram } from './networks/instagram.ts'
+import type { X } from './networks/x.ts'
 import type { Telegram } from './networks/telegram.ts'
 import type { WhatsApp } from './networks/whatsapp.ts'
 import type { Hub } from './realtime.ts'
@@ -37,6 +38,7 @@ export interface AppDeps {
   telegram: Telegram
   guffshuff: Guffshuff
   instagram: Instagram
+  x: X
   /** Links to photos and files in chats. */
   files: FileLinks
   /** Largest photo or file that can be sent (tests use a small one). */
@@ -91,6 +93,7 @@ export function createApp(deps: AppDeps): Express {
       guffshuff: deps.guffshuff.enabled,
       calendar: !!deps.calendar,
       instagram: deps.instagram.enabled,
+      x: deps.x.enabled,
       uploads: !!deps.media,
       database: true,
       storage: deps.temporaryStorage ? 'temporary' : 'database',
@@ -144,7 +147,7 @@ const LLMS_TXT = (origin: string) => `# Sytext
 > Sytext is a unified inbox: WhatsApp, Telegram, Instagram, Matrix bridges and more in one place, with AI that sorts chats by who needs a reply first, tags them, drafts replies and turns requests into tasks.
 
 ## What it does
-- One inbox for WhatsApp and Telegram accounts, Instagram direct messages, Guffshuff, Telegram bots and Matrix (with WhatsApp, Instagram, Slack and SMS through Matrix bridges).
+- One inbox for WhatsApp and Telegram accounts, Instagram and X (Twitter) direct messages, Guffshuff, Telegram bots and Matrix (with WhatsApp, Instagram, Slack and SMS through Matrix bridges).
 - "Needs reply" queue: AI decides who is waiting on you and how urgent it is.
 - Drafted replies in three tones; summaries of long threads; answers to questions across your chats.
 - Automatic tags (question, deadline, payment, order, meeting, work, personal, finance, travel, health and more), which you can change.

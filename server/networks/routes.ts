@@ -6,6 +6,7 @@ import { SESSION_COOKIE, type SessionTokens } from '../auth/tokens.ts'
 import type { Accounts } from './accounts.ts'
 import type { Guffshuff } from './guffshuff.ts'
 import type { Instagram } from './instagram.ts'
+import type { X } from './x.ts'
 import type { Telegram } from './telegram.ts'
 import type { WhatsApp } from './whatsapp.ts'
 
@@ -17,10 +18,11 @@ interface LinkDeps {
   telegram: Telegram
   guffshuff: Guffshuff
   instagram: Instagram
+  x: X
 }
 
 /** Linking and unlinking WhatsApp, Telegram, Guffshuff and Instagram. */
-export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuff, instagram }: LinkDeps): Router {
+export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuff, instagram, x }: LinkDeps): Router {
   const router = Router()
   const signedIn = requireUser(tokens, col.users)
   /**
@@ -95,6 +97,16 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
     res.json(await instagram.linkWithSession(userIdOf(res), field(req.body, 'cookies', { max: 4000 })))
   })
 
+  /** X DMs, with the session of the user's own browser (its auth_token and ct0 cookies). */
+  router.post('/link/x', signedIn, limited('x', 10), async (req, res) => {
+    res.json(await x.link(userIdOf(res), field(req.body, 'cookies', { max: 4000 })))
+  })
+
+  router.delete('/link/x', signedIn, async (_req, res) => {
+    await x.unlink(userIdOf(res))
+    res.json({ ok: true })
+  })
+
   router.post('/link/instagram/verify', signedIn, instagramCodeLimit, async (req, res) => {
     res.json(await instagram.verifyCode(userIdOf(res), field(req.body, 'code', { max: 16 })))
   })
@@ -125,7 +137,7 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
     }
     // Signed out of each network, so nothing is left connected in the user's name. One that
     // fails to answer doesn't stop the rest: its session is deleted below either way.
-    await Promise.allSettled([whatsapp.unlink(userId), telegram.unlink(userId), guffshuff.unlink(userId), instagram.unlink(userId)])
+    await Promise.allSettled([whatsapp.unlink(userId), telegram.unlink(userId), guffshuff.unlink(userId), instagram.unlink(userId), x.unlink(userId)])
     await Promise.all([
       col.accounts.deleteMany({ userId }),
       col.waAuth.deleteMany({ userId }),

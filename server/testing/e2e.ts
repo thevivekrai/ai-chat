@@ -78,6 +78,7 @@ const server = await startTestServer({
   guffshuffCatchUpMs: 3000,
   // Instagram has no stream, so the inbox is looked at often enough to watch by hand.
   instagramCatchUpMs: 1500,
+  xCatchUpMs: 1500,
 })
 const now = () => Math.floor(Date.now() / 1000)
 const RAVI = '919812345678@s.whatsapp.net'
@@ -411,6 +412,12 @@ createServer(async (req, res) => {
         ],
         syncType: 6,
       } as never)
+    } else if (req.url === '/x/cookies') {
+      res.writeHead(200).end(server.x.cookies)
+      return
+    } else if (req.url === '/x/message') {
+      const { MAYA, MAYA_DM } = await import('./fakeX.ts')
+      server.x.write(MAYA_DM, MAYA, String(input.text ?? 'Are we still on for Friday?'))
     } else if (req.url === '/calendar/events') {
       res.writeHead(200).end(JSON.stringify(Object.fromEntries(server.calendar.state.events)))
       return

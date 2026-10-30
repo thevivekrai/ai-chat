@@ -490,7 +490,7 @@ export function browserCookies(text: string): Record<string, string> {
     const name = pair.slice(0, at).trim()
     const value = pair.slice(at + 1).trim()
     // Only what a cookie can carry: no line breaks or separators sneak into the header.
-    if (wanted.has(name) && value && /^[\w%.:\-]+$/.test(value)) jar[name] = value
+    if (wanted.has(name) && value && /^[\w%.:-]+$/.test(value)) jar[name] = value
   }
   return jar
 }

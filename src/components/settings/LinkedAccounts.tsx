@@ -50,6 +50,7 @@ export function LinkedAccounts() {
         <Checking network="telegram" name="Telegram" offline={offline} />
         {!!features?.guffshuff && <Checking network="guffshuff" name="GuffShuff" offline={offline} />}
         {!!features?.instagram && <Checking network="instagram" name="Instagram" offline={offline} />}
+        {!!features?.x && <Checking network="x" name="X" offline={offline} />}
         <WhereChatsAreKept />
       </>
     )
@@ -62,6 +63,7 @@ export function LinkedAccounts() {
       <TelegramCard account={server?.telegram ?? null} enabled={!!features?.telegram} />
       <GuffshuffCard account={server?.guffshuff ?? null} enabled={!!features?.guffshuff} />
       <InstagramCard account={server?.instagram ?? null} enabled={!!features?.instagram} />
+      <XCard account={server?.x ?? null} enabled={!!features?.x} />
       <WhereChatsAreKept />
     </>
   )
@@ -657,6 +659,80 @@ function GuffshuffCard({ account, enabled }: { account: PublicAccount | null; en
           <p className="text-[11px] leading-relaxed text-faint">
             Linking reads your conversations in, which marks them read on Guffshuff, as opening them there would.
           </p>
+        </form>
+      )}
+    </Card>
+  )
+}
+
+/* ── X ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * X (Twitter) DMs, through Sytext's own bridge. X sells API access for DMs, so this uses the
+ * session of the user's own browser instead: they sign in on x.com and paste two cookies.
+ */
+function XCard({ account, enabled }: { account: PublicAccount | null; enabled: boolean }) {
+  const status = account?.status ?? null
+  const [cookies, setCookies] = useState('')
+  const [show, setShow] = useState(false)
+  const link = useAsync()
+  const linked = status === 'connected' || status === 'error'
+  useLinkedOnce('x', status, () => setCookies(''))
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    void link.run(() => api.connections.linkX(cookies))
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        icon={<NetworkIcon network="x" className="size-5" />}
+        title={linked && account?.label ? `X · ${account.label}` : 'X (Twitter)'}
+        aside={account && <LinkStatusPill account={account} />}
+      >
+        {linked
+          ? 'Your X direct messages come in here, and replies go out as you. New messages arrive within about a minute.'
+          : 'Your X direct messages, through Sytext’s own bridge: no Matrix needed. Text and photos in, text out.'}
+      </CardHeader>
+
+      {linked ? (
+        <LinkedFooter account={account!} network="x" />
+      ) : !enabled ? (
+        <p className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-muted">
+          Turned off on this server (<Code>X=off</Code>).
+        </p>
+      ) : (
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
+            <li>
+              On a computer, open{' '}
+              <a href="https://x.com/" target="_blank" rel="noreferrer" className="font-medium text-accent-ink hover:underline">
+                x.com
+              </a>{' '}
+              and sign in.
+            </li>
+            <li>
+              Open the developer tools (F12) → <b>Application</b> (Chrome, Edge) or <b>Storage</b> (Firefox) →{' '}
+              <b>Cookies</b> → x.com.
+            </li>
+            <li>
+              Copy <Code>auth_token</Code> and <Code>ct0</Code>, and paste them as <Code>auth_token=…; ct0=…</Code>.
+            </li>
+          </ol>
+          <Field label="Session from your browser" hint="Kept encrypted. Signing out on x.com ends it.">
+            <PasswordInput value={cookies} onChange={setCookies} visible={show} onToggle={() => setShow((v) => !v)} autoComplete="off" />
+          </Field>
+          {status === 'disconnected' && <StoppedNote account={account!} network="x" />}
+          <Warning>
+            X doesn&rsquo;t officially allow apps to read a personal inbox like this, and it can limit or lock an
+            account it finds doing so. Its official API charges for DMs, which is why Sytext uses your browser&rsquo;s
+            session instead.
+          </Warning>
+          {link.error && <ErrorText>{link.error}</ErrorText>}
+          <Button type="submit" size="sm" variant="primary" disabled={link.busy || !cookies.trim()}>
+            {link.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />} Link X
+          </Button>
         </form>
       )}
     </Card>

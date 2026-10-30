@@ -8,7 +8,7 @@
  *   Message ← an m.room.message event
  */
 
-export type NetworkId = 'whatsapp' | 'telegram' | 'instagram' | 'slack' | 'sms' | 'matrix' | 'guffshuff'
+export type NetworkId = 'whatsapp' | 'telegram' | 'instagram' | 'x' | 'slack' | 'sms' | 'matrix' | 'guffshuff'
 
 /** Sender id used for messages written by the person using the app. */
 export const ME_ID = 'me'

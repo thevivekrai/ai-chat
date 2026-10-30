@@ -45,6 +45,8 @@ export interface Config {
    * Settings page (Meta doesn't allow this way in, so a server can turn it off for everyone).
    */
   instagram: boolean
+  /** X (Twitter) DMs, through Sytext's own bridge (X=off turns it off). */
+  x: boolean
   /**
    * Turns on the shared AI for everyone signed in: an OpenRouter key (sk-or-…) or a Google Gemini
    * key in AI_API (or GEMINI_API_KEY); AI_PROVIDER=openrouter|gemini says which, if the key's
@@ -100,6 +102,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     temporaryStorage: !isOff(env.TEMPORARY_STORAGE),
     guffshuffUrl: isOff(env.GUFFSHUFF_URL) ? undefined : env.GUFFSHUFF_URL?.trim() || undefined,
     instagram: !isOff(env.INSTAGRAM),
+    x: !isOff(env.X),
     ai: aiKey ? sharedAi(aiKey, env) : undefined,
   }
 }

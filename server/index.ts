@@ -15,6 +15,7 @@ import { createMedia } from './media.ts'
 import { createAccounts } from './networks/accounts.ts'
 import { createGuffshuff } from './networks/guffshuff.ts'
 import { createInstagram } from './networks/instagram.ts'
+import { createX } from './networks/x.ts'
 import { createTelegram } from './networks/telegram.ts'
 import { createWhatsApp } from './networks/whatsapp.ts'
 import { keepAwake } from './keepAwake.ts'
@@ -163,6 +164,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
   const telegram = createTelegram({ sealer, store, accounts, hub, avatars, files, api: config.telegram })
   const guffshuff = createGuffshuff({ sealer, store, accounts, hub, avatars, files, ...(config.guffshuffUrl ? { api: { baseUrl: config.guffshuffUrl } } : {}) })
   const instagram = createInstagram({ sealer, store, accounts, hub, avatars, files, enabled: config.instagram })
+  const x = createX({ sealer, store, accounts, hub, avatars, files, enabled: config.x })
 
   const app = createApp({
     col,
@@ -178,6 +180,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     telegram,
     guffshuff,
     instagram,
+    x,
     files,
     sealer,
     calendar: config.googleClientId && config.googleClientSecret ? { clientId: config.googleClientId, clientSecret: config.googleClientSecret } : null,
@@ -192,6 +195,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     config.telegram && 'Telegram',
     config.guffshuffUrl && 'Guffshuff',
     config.instagram && 'Instagram',
+    config.x && 'X',
     config.cloudinary && 'profile photo uploads',
     config.keepAwakeUrl && 'keep-awake',
     config.ai && `shared AI (${config.ai.provider})`,
@@ -206,6 +210,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     void telegram.resumeAll().catch((e) => console.error('[telegram] resume failed', e))
     void guffshuff.resumeAll().catch((e: unknown) => console.error('[guffshuff] resume failed', e))
     void instagram.resumeAll().catch((e: unknown) => console.error('[instagram] resume failed', e))
+    void x.resumeAll().catch((e: unknown) => console.error('[x] resume failed', e))
   }
   resume()
   const timers = [setInterval(resume, RESUME_EVERY_MS)]
@@ -228,7 +233,7 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
       // Open event streams would keep the server from closing; browsers reconnect by themselves.
       hub.closeAll()
       // Disconnect without logging out, so the links carry on after a restart or a move.
-      await Promise.allSettled([whatsapp.stopAll(), telegram.stopAll(), guffshuff.stopAll(), instagram.stopAll()])
+      await Promise.allSettled([whatsapp.stopAll(), telegram.stopAll(), guffshuff.stopAll(), instagram.stopAll(), x.stopAll()])
     },
   }
 }
