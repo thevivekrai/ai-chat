@@ -3,7 +3,7 @@ import { Monitor, Moon, Sun, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
-import { useSession } from '@/store/session'
+import { recoveryKeyWaiting, useSession } from '@/store/session'
 import { useSettings, type ThemePreference } from '@/store/settings'
 import { useUi, type SettingsTab } from '@/store/ui'
 import { AccountsTab } from './AccountsTab'
@@ -13,7 +13,8 @@ import { PrivacyTab } from './PrivacyTab'
 import { ProfileTab } from './ProfileTab'
 
 export function SettingsDialog() {
-  const open = useUi((s) => s.dialog === 'settings')
+  const keyWaiting = useSession(recoveryKeyWaiting)
+  const open = useUi((s) => s.dialog === 'settings') && !keyWaiting
   const close = () => useUi.getState().closeDialog()
   return (
     <Modal open={open} onClose={close} label="Settings" className="max-w-xl">

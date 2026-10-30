@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { GOOD_CODE } from './testing/fakeCalendar.ts'
-import { Browser, startTestServer, TEST_MONGODB_URI, type TestServer } from './testing/helpers.ts'
+import { Browser, SIGN_UP, startTestServer, TEST_MONGODB_URI, type TestServer } from './testing/helpers.ts'
 
 describe.skipIf(!TEST_MONGODB_URI)('tasks in Google Calendar', () => {
   let server: TestServer
@@ -12,7 +12,7 @@ describe.skipIf(!TEST_MONGODB_URI)('tasks in Google Calendar', () => {
 
   const newUser = async (email: string) => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', acceptedTerms: true })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', ...SIGN_UP })).status).toBe(200)
     return browser
   }
 

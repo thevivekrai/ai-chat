@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ASHA, KABIR } from './testing/fakeGuffshuff.ts'
-import { Browser, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
+import { Browser, SIGN_UP, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
 
 const enc = encodeURIComponent
 const byId = (list: { id: string }[]) => Object.fromEntries(list.map((t) => [t.id, t])) as Record<string, any>
@@ -16,7 +16,7 @@ describe.skipIf(!TEST_MONGODB_URI)('Guffshuff (the user’s own site)', () => {
 
   const newUser = async (email: string) => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', acceptedTerms: true })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', ...SIGN_UP })).status).toBe(200)
     return browser
   }
 
@@ -176,7 +176,7 @@ describe.skipIf(!TEST_MONGODB_URI)('Guffshuff (the user’s own site)', () => {
       const gs = quick.guffshuff
       gs.write(ASHA, 'Anyone there?')
       const browser = new Browser(quick.url)
-      expect((await browser.post('/api/auth/register', { name: 'Aarav', email: 'gs-quiet@example.com', password: 'long enough', acceptedTerms: true })).status).toBe(200)
+      expect((await browser.post('/api/auth/register', { name: 'Aarav', email: 'gs-quiet@example.com', password: 'long enough', ...SIGN_UP })).status).toBe(200)
       gs.state.broken = ['/api/messages/unread']
       expect((await browser.post('/api/link/guffshuff', { username: 'aarav', password: gs.state.password })).status).toBe(200)
       expect(gs.state.calls).toContain('GET /api/messages/unread')

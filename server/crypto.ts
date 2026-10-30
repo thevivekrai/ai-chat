@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto'
 
 /**
  * AES-256-GCM for data at rest: linked-account sessions, message contents and names. A copy of the
@@ -9,6 +9,8 @@ export interface Sealer {
   open(sealed: string): string
   sealJson(value: unknown): string
   openJson<T>(sealed: string): T
+  /** A keyed fingerprint of the text: always the same for it, and unguessable without the key. */
+  tag(text: string): Buffer
 }
 
 const VERSION = 'v1'
@@ -37,5 +39,6 @@ export function createSealer(key: Buffer): Sealer {
     open,
     sealJson: (value) => seal(JSON.stringify(value)),
     openJson: <T>(sealed: string) => JSON.parse(open(sealed)) as T,
+    tag: (text) => createHmac('sha256', key).update(`tag:${text}`).digest(),
   }
 }

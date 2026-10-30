@@ -3,7 +3,7 @@ import { Check, Copy, Download, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { APP_NAME } from '@/config'
-import { useSession } from '@/store/session'
+import { recoveryKeyWaiting, useSession } from '@/store/session'
 
 /**
  * A new recovery key, shown this once: the server keeps only its hash. It stays open until the
@@ -12,7 +12,7 @@ import { useSession } from '@/store/session'
 export function RecoveryKeyDialog() {
   const shown = useSession((s) => s.recoveryKey)
   // Only ever to its owner: while they're signed in, or signed out before they saved it.
-  const forOwner = useSession((s) => !!shown && (!s.user || s.user.id === shown.userId))
+  const forOwner = useSession(recoveryKeyWaiting)
   const key = forOwner ? shown!.key : null
   // A fresh dialog for each key: nothing ticked for one carries over to the next.
   return <KeyDialog key={key ?? ''} recoveryKey={key} email={shown?.email} />

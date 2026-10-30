@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { Browser, startTestServer, TEST_MONGODB_URI, type TestServer } from './testing/helpers.ts'
+import { Browser, SIGN_UP, startTestServer, TEST_MONGODB_URI, type TestServer } from './testing/helpers.ts'
 
 /** A stand-in for Google's Gemini API: records each call and answers with `respond`. */
 function fakeGemini() {
@@ -33,7 +33,7 @@ describe.skipIf(!TEST_MONGODB_URI)('shared AI', () => {
 
   const signedIn = async (email: string) => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Ai', email, password: 'long enough', acceptedTerms: true })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Ai', email, password: 'long enough', ...SIGN_UP })).status).toBe(200)
     return browser
   }
 
@@ -156,7 +156,7 @@ describe.skipIf(!TEST_MONGODB_URI)('shared AI on OpenRouter', () => {
 
   it("answers with free models on OpenRouter and the server's key", async () => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Or', email: 'ai-or@example.com', password: 'long enough', acceptedTerms: true })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Or', email: 'ai-or@example.com', password: 'long enough', ...SIGN_UP })).status).toBe(200)
     expect((await browser.get('/api/config')).json).toMatchObject({ ai: true, aiBy: 'free AI models on OpenRouter' })
 
     reply = { status: 200, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(SUMMARY) } }] } }

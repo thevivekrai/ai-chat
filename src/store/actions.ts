@@ -6,7 +6,7 @@ import type { ExtractedTask } from '@/ai'
 import { api, type ConnectorId, type LinkedNetwork, type MatrixLogin } from '@/data/api'
 import { MAX_OWN_LABELS, type ChatLabel, type MessageAction } from '@/data/types'
 import { myReaction } from '@/data/reactions'
-import { serverApi } from '@/data/server/serverApi'
+import { serverApi, type SecurityAnswerInput } from '@/data/server/serverApi'
 import { LINKED_PREFIXES, MAX_CAPTION } from '@/data/server/types'
 import { isAtLeast } from '@/lib/media'
 import { stickerFile, type Sticker } from '@/lib/stickers'
@@ -516,10 +516,30 @@ export async function signIn(email: string, password: string) {
   }
 }
 
-export async function createAccount(name: string, email: string, password: string, acceptedTerms: boolean) {
-  const { user, recoveryKey } = await serverApi.register({ name, email, password, acceptedTerms })
+export async function createAccount(
+  name: string,
+  email: string,
+  password: string,
+  acceptedTerms: boolean,
+  securityQuestions: SecurityAnswerInput[],
+) {
+  const { user, recoveryKey } = await serverApi.register({ name, email, password, acceptedTerms, securityQuestions })
   if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey, user)
   await useSession.getState().signedIn(user)
+}
+
+/** A forgotten password and a lost recovery key: the security questions' answers set a new password. */
+export async function recoverWithAnswers(email: string, answers: string[], password: string) {
+  const { user, recoveryKey } = await serverApi.recoverWithAnswers({ email, answers, password })
+  if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey, user)
+  await useSession.getState().signedIn(user)
+}
+
+/** New security questions, or new answers to them; takes the current password. */
+export async function changeSecurityQuestions(current: string, securityQuestions: SecurityAnswerInput[]) {
+  const { user } = await serverApi.setSecurityQuestions({ current, securityQuestions })
+  useSession.getState().setUser(user)
+  toast({ title: 'Security questions saved', description: 'They can reset your password if you lose your recovery key.' })
 }
 
 /** A forgotten password, reset with the email and recovery key; the key is replaced by a new one. */

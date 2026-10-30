@@ -568,12 +568,19 @@ through this app's server to the shared AI's provider, or straight to the provid
 - **Passwords and data:** passwords are hashed with scrypt. Linked sessions, chats and Google
   tokens are sealed with `DATA_ENCRYPTION_KEY`. Request values are checked for type before any
   database query.
-- **Password guessing:** after 5 wrong passwords in a row an account locks for 15 minutes, then
-  30, 60 and so on up to a day, whichever addresses the guesses come from. While it's locked,
-  even the right password isn't checked. Wrong current passwords in an open session count too. An
-  email with no account answers the same way, so guessing doesn't reveal who has one. The owner
-  is told how many wrong passwords were tried when they next sign in. A recovery-key reset lifts
-  the lock. Common passwords, key runs and ones made of the email or name are refused.
+- **Password guessing:** after 7 wrong passwords in a row, the next try has to wait 3 minutes.
+  If guessing carries straight on after that, each wait doubles (6, 12, 24 minutes and so on, up to
+  a day), so a script can't get far. This holds whichever addresses the guesses come from. During a
+  wait even the right password isn't checked. Wrong current passwords in an open session count
+  too. An email with no account answers the same way, so guessing doesn't reveal who has one. The
+  owner is told how many wrong passwords were tried when they next sign in. Common passwords, key
+  runs and ones made of the email or name are refused.
+- **Forgot the password:** reset it with the recovery key given at sign-up. If that's lost too,
+  answer the 2 security questions chosen at sign-up (or later in Settings → Profile). Answers are
+  stored only as scrypt hashes and compared ignoring case, spaces and punctuation. Since answers
+  are easier to guess than a key, 3 wrong tries mean a 1-hour wait, doubling after that. An email
+  with no account is asked questions too (always the same ones for it), so asking reveals nothing.
+  Either reset lifts any wait, gives a new recovery key and signs out other sessions.
 - **One account, never another's data:** every chat, message, task, file and picture is looked up
   by the signed-in account as well as by id, so another account's ids lead to "not found". Tests
   check this route by route.

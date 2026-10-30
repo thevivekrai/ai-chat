@@ -101,7 +101,15 @@ export function createApp(deps: AppDeps): Express {
     res.json(problem ? { ...features, databaseProblem: problem } : features)
   })
   api.use(
-    authRoutes({ col: deps.col, hub: deps.hub, tokens: deps.tokens, google: deps.google, media: deps.media, secureCookies: deps.secureCookies }),
+    authRoutes({
+      col: deps.col,
+      hub: deps.hub,
+      tokens: deps.tokens,
+      google: deps.google,
+      media: deps.media,
+      secureCookies: deps.secureCookies,
+      sealer: deps.sealer,
+    }),
   )
   api.use(linkRoutes(deps))
   api.use(aiRoutes({ col: deps.col, tokens: deps.tokens, ai: deps.ai ?? null }))

@@ -43,7 +43,7 @@ import { asksAboutTasks, buildAnswerSources, buildScopedSources, openTasks } fro
 import { useClock } from '@/store/clock'
 import { useConnections } from '@/store/connections'
 import { useInbox } from '@/store/inbox'
-import { useSession } from '@/store/session'
+import { recoveryKeyWaiting, useSession } from '@/store/session'
 import { useIncognito } from '@/store/privacy'
 import { threadPicture } from '@/store/selectors'
 import { canAiReadThread, useSettings } from '@/store/settings'
@@ -91,7 +91,8 @@ function namedChats(query: string, threads: Record<string, Thread>): Thread[] {
 }
 
 export function CommandBar() {
-  const open = useUi((s) => s.dialog === 'command')
+  const keyWaiting = useSession(recoveryKeyWaiting)
+  const open = useUi((s) => s.dialog === 'command') && !keyWaiting
   const close = () => useUi.getState().closeDialog()
   return (
     <Modal open={open} onClose={close} label="Search and ask" placement="top" className="max-w-2xl">

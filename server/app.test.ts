@@ -1,11 +1,13 @@
 import { MongoClient, ObjectId } from 'mongodb'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { SECURITY_QUESTIONS } from '../src/data/server/types.ts'
 import { connectDatabase } from './db.ts'
 import {
   Browser,
   mediaMessage,
   MAX_TEST_FILE_BYTES,
   PIXEL,
+  SIGN_UP,
   startTestServer,
   TEST_MONGODB_URI,
   waitFor,
@@ -47,7 +49,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
   const newUser = async (email: string) => {
     const browser = new Browser(server.url)
-    const res = await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', acceptedTerms: true })
+    const res = await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', ...SIGN_UP })
     expect(res.status).toBe(200)
     return browser
   }
@@ -77,7 +79,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   describe('sign-in', () => {
     it('registers, keeps the session in an httpOnly cookie, and signs out', async () => {
       const browser = new Browser(server.url)
-      const res = await browser.post('/api/auth/register', { name: 'Aarav', email: 'Aarav@Example.com', password: 'long enough', acceptedTerms: true })
+      const res = await browser.post('/api/auth/register', { name: 'Aarav', email: 'Aarav@Example.com', password: 'long enough', ...SIGN_UP })
       expect(res.status).toBe(200)
       expect(res.json.user).toMatchObject({ email: 'aarav@example.com', name: 'Aarav', hasPassword: true, google: false })
       expect(res.headers.get('set-cookie')).toMatch(/tidings_session=.+; Path=\/; Expires=.+; HttpOnly; SameSite=Lax/)
@@ -99,12 +101,12 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
     it('rejects bad sign-ups', async () => {
       const browser = new Browser(server.url)
-      expect((await browser.post('/api/auth/register', { name: 'A', email: 'not-an-email', password: 'long enough', acceptedTerms: true })).status).toBe(400)
-      expect((await browser.post('/api/auth/register', { name: 'A', email: 'a@b.co', password: 'short', acceptedTerms: true })).status).toBe(400)
+      expect((await browser.post('/api/auth/register', { name: 'A', email: 'not-an-email', password: 'long enough', ...SIGN_UP })).status).toBe(400)
+      expect((await browser.post('/api/auth/register', { name: 'A', email: 'a@b.co', password: 'short', ...SIGN_UP })).status).toBe(400)
       // The Terms box wasn't ticked.
       expect((await browser.post('/api/auth/register', { name: 'A', email: 'terms@example.com', password: 'long enough' })).json.error).toMatch(/Terms/)
       await newUser('taken@example.com')
-      const again = await browser.post('/api/auth/register', { name: 'A', email: 'taken@example.com', password: 'long enough', acceptedTerms: true })
+      const again = await browser.post('/api/auth/register', { name: 'A', email: 'taken@example.com', password: 'long enough', ...SIGN_UP })
       expect(again.status).toBe(409)
     })
 
@@ -162,7 +164,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
     it('gives a recovery key on sign-up that resets a forgotten password, once', async () => {
       const first = new Browser(server.url)
-      const signUp = await first.post('/api/auth/register', { name: 'Kabir', email: 'kabir@example.com', password: 'long enough', acceptedTerms: true })
+      const signUp = await first.post('/api/auth/register', { name: 'Kabir', email: 'kabir@example.com', password: 'long enough', ...SIGN_UP })
       const key: string = signUp.json.recoveryKey
       expect(key).toMatch(/^([0-9A-Z]{5}-){4}[0-9A-Z]{5}$/)
       expect(signUp.json.user.recoveryKeyCreatedAt).toEqual(expect.any(String))
@@ -199,7 +201,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
     it('makes a new recovery key in Settings, with the current password', async () => {
       const browser = new Browser(server.url)
-      const signUp = await browser.post('/api/auth/register', { name: 'Zoya', email: 'zoya@example.com', password: 'long enough', acceptedTerms: true })
+      const signUp = await browser.post('/api/auth/register', { name: 'Zoya', email: 'zoya@example.com', password: 'long enough', ...SIGN_UP })
       expect((await browser.post('/api/me/recovery-key', { current: 'wrong password' })).status).toBe(400)
       const fresh = await browser.post('/api/me/recovery-key', { current: 'long enough' })
       expect(fresh.status).toBe(200)
@@ -214,7 +216,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
     it("replaces the recovery key when the password changes, so an old one can't take the account back", async () => {
       // Someone who knew the password made themselves a key…
       const intruder = new Browser(server.url)
-      await intruder.post('/api/auth/register', { name: 'Meera', email: 'key-thief@example.com', password: 'long enough', acceptedTerms: true })
+      await intruder.post('/api/auth/register', { name: 'Meera', email: 'key-thief@example.com', password: 'long enough', ...SIGN_UP })
       const stolen = (await intruder.post('/api/me/recovery-key', { current: 'long enough' })).json.recoveryKey
       // …and the owner changes the password.
       const changed = await intruder.post('/api/me/password', { password: 'only mine now', current: 'long enough' })
@@ -240,7 +242,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
 
     it('drops the recovery key when Google takes over an account made with the same email', async () => {
       const squatter = new Browser(server.url)
-      const signUp = await squatter.post('/api/auth/register', { name: 'X', email: 'real-owner@example.com', password: 'long enough', acceptedTerms: true })
+      const signUp = await squatter.post('/api/auth/register', { name: 'X', email: 'real-owner@example.com', password: 'long enough', ...SIGN_UP })
       const credential = await server.google.idToken({ sub: 'google-4', email: 'real-owner@example.com' })
       const owner = await new Browser(server.url).post('/api/auth/google', { credential })
       expect(owner.json.user.recoveryKeyCreatedAt).toBeUndefined()
@@ -2056,47 +2058,138 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   })
 
   describe('guessing passwords', () => {
-    it('locks the account after a few wrong passwords, from any address, and tells the owner after', async () => {
+    it('makes the next try wait 3 minutes after 7 wrong passwords, from any address, and tells the owner after', async () => {
       await newUser('target@example.com')
       // Each guess from a different address: the per-address limit alone wouldn't stop this.
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 6; i++) {
         expect((await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: `guess ${i}` })).status).toBe(401)
       }
-      const fifth = await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'guess 4' })
-      expect(fifth.status).toBe(429)
-      expect(fifth.json.error).toMatch(/locked for 15 minutes/)
-      // Locked: even the right password isn't looked at, so guessing on can't find it.
+      const seventh = await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'guess 6' })
+      expect(seventh.status).toBe(429)
+      expect(seventh.json.error).toMatch(/Wait 3 minutes/)
+      expect(seventh.json.error).toMatch(/recovery key/)
+      expect(seventh.json.error).toMatch(/security questions/)
+      // Waiting: even the right password isn't looked at, so guessing on can't find it.
       expect((await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'long enough' })).status).toBe(429)
 
-      // The lock runs out: the owner gets in, and is told what happened.
+      // The wait is over: the owner gets in, and is told what happened.
       await server.database.col.users.updateOne({ email: 'target@example.com' }, { $set: { 'signIn.lockedUntil': new Date(Date.now() - 1000) } })
       const owner = await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'long enough' })
       expect(owner.status).toBe(200)
-      expect(owner.json.failedAttempts).toBe(5)
+      expect(owner.json.failedAttempts).toBe(7)
       // And the count starts again.
       expect((await server.database.col.users.findOne({ email: 'target@example.com' }))?.signIn).toBeUndefined()
     })
 
+    it('waits longer each time guessing carries straight on', async () => {
+      await newUser('persistent-target@example.com')
+      const guess = () => new Browser(server.url).post('/api/auth/login', { email: 'persistent-target@example.com', password: 'nope nope' })
+      for (let i = 0; i < 7; i++) await guess()
+      await server.database.col.users.updateOne({ email: 'persistent-target@example.com' }, { $set: { 'signIn.lockedUntil': new Date(Date.now() - 1000) } })
+      for (let i = 0; i < 6; i++) expect((await guess()).status).toBe(401)
+      expect((await guess()).json.error).toMatch(/Wait 6 minutes/)
+    })
+
     it('answers the same for an email with no account, so guessing tells nothing', async () => {
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 6; i++) {
         expect((await new Browser(server.url).post('/api/auth/login', { email: 'nobody-here@example.com', password: `guess ${i}` })).json.error).toBe('Wrong email or password.')
       }
-      expect((await new Browser(server.url).post('/api/auth/login', { email: 'nobody-here@example.com', password: 'guess 4' })).status).toBe(429)
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'nobody-here@example.com', password: 'guess 6' })).status).toBe(429)
     })
 
     it('counts wrong current passwords in an open session too', async () => {
       const browser = await newUser('open-session@example.com')
-      for (let i = 0; i < 4; i++) expect((await browser.post('/api/me/recovery-key', { current: `guess ${i}` })).status).toBe(400)
-      expect((await browser.post('/api/me/recovery-key', { current: 'guess 4' })).status).toBe(429)
+      for (let i = 0; i < 6; i++) expect((await browser.post('/api/me/recovery-key', { current: `guess ${i}` })).status).toBe(400)
+      expect((await browser.post('/api/me/recovery-key', { current: 'guess 6' })).status).toBe(429)
       expect((await browser.post('/api/me/recovery-key', { current: 'long enough' })).status).toBe(429)
     })
 
     it('refuses passwords that guessers try first', async () => {
       const browser = new Browser(server.url)
       for (const password of ['password123', '12345678', 'aaaaaaaa', 'qwertyuiop', 'easyguess-mehta']) {
-        const res = await browser.post('/api/auth/register', { name: 'Riya', email: 'easyguess-mehta@example.com', password, acceptedTerms: true })
+        const res = await browser.post('/api/auth/register', { name: 'Riya', email: 'easyguess-mehta@example.com', password, ...SIGN_UP })
         expect(res.status, password).toBe(400)
       }
+    })
+  })
+
+  describe('security questions', () => {
+    const [school, friend, pet] = [SECURITY_QUESTIONS[0], SECURITY_QUESTIONS[1], SECURITY_QUESTIONS[2]]
+
+    it('are asked at sign-up: two different ones, each answered', async () => {
+      const browser = new Browser(server.url)
+      const signUp = (securityQuestions: unknown) =>
+        browser.post('/api/auth/register', { name: 'Isha', email: 'questions@example.com', password: 'long enough', acceptedTerms: true, securityQuestions })
+      expect((await signUp(undefined)).status).toBe(400)
+      expect((await signUp([{ question: school, answer: 'DPS' }])).status).toBe(400)
+      expect((await signUp([{ question: school, answer: 'DPS' }, { question: school, answer: 'Kabir' }])).status).toBe(400)
+      expect((await signUp([{ question: school, answer: 'DPS' }, { question: 'Your PIN?', answer: '1234' }])).status).toBe(400)
+      expect((await signUp([{ question: school, answer: ' ' }, { question: friend, answer: 'Kabir' }])).status).toBe(400)
+      const ok = await signUp([{ question: school, answer: 'DPS' }, { question: friend, answer: 'Kabir' }])
+      expect(ok.status).toBe(200)
+      expect(ok.json.user.securityQuestions).toEqual([school, friend])
+      // Kept as hashes: the answers themselves are nowhere in the database.
+      const stored = JSON.stringify(await server.database.col.users.findOne({ email: 'questions@example.com' }))
+      expect(stored).not.toMatch(/DPS|Kabir|kabir/)
+    })
+
+    it('reset a forgotten password when the recovery key is lost too', async () => {
+      await newUser('lost-key@example.com')
+      const visitor = new Browser(server.url)
+      expect((await visitor.post('/api/auth/recover/questions', { email: 'lost-key@example.com' })).json.questions).toEqual([school, friend])
+      const reset = (answers: string[]) =>
+        new Browser(server.url).post('/api/auth/recover/answers', { email: 'lost-key@example.com', answers, password: 'a brand new one' })
+      expect((await reset(['Wrong School', 'Kabir'])).status).toBe(401)
+
+      // Spelled loosely, as people remember it: still right.
+      const done = await reset(['delhi public school.', '  KABIR '])
+      expect(done.status).toBe(200)
+      expect(done.json.recoveryKey).toMatch(/^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$/)
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'lost-key@example.com', password: 'a brand new one' })).status).toBe(200)
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'lost-key@example.com', password: 'long enough' })).status).toBe(401)
+    })
+
+    it('allow only 3 wrong tries before a long wait, and lift a password lock when right', async () => {
+      await newUser('guess-answers@example.com')
+      const reset = (answers: string[]) =>
+        new Browser(server.url).post('/api/auth/recover/answers', { email: 'guess-answers@example.com', answers, password: 'a brand new one' })
+      expect((await reset(['a1', 'b1'])).status).toBe(401)
+      expect((await reset(['a2', 'b2'])).status).toBe(401)
+      const third = await reset(['a3', 'b3'])
+      expect(third.status).toBe(429)
+      expect(third.json.error).toMatch(/Wait 60 minutes|Wait 1 hours/)
+      // Even the right answers wait.
+      expect((await reset(['Delhi Public School', 'Kabir'])).status).toBe(429)
+
+      // The wait over, and the password locked meanwhile: the right answers lift both.
+      await server.database.col.users.updateOne(
+        { email: 'guess-answers@example.com' },
+        { $set: { 'answersGuard.lockedUntil': new Date(Date.now() - 1000), signIn: { failures: 0, locks: 1, lockedUntil: new Date(Date.now() + 60_000) } } },
+      )
+      expect((await reset(['Delhi Public School', 'Kabir'])).status).toBe(200)
+      const after = await server.database.col.users.findOne({ email: 'guess-answers@example.com' })
+      expect(after?.signIn).toBeUndefined()
+      expect(after?.answersGuard).toBeUndefined()
+    })
+
+    it('ask the same of an email with no account, so asking tells nothing', async () => {
+      const ask = async (email: string) => (await new Browser(server.url).post('/api/auth/recover/questions', { email })).json.questions as string[]
+      const questions = await ask('no-such-person@example.com')
+      expect(questions).toHaveLength(2)
+      expect(new Set(questions).size).toBe(2)
+      expect(await ask('no-such-person@example.com')).toEqual(questions)
+      const res = await new Browser(server.url).post('/api/auth/recover/answers', { email: 'no-such-person@example.com', answers: ['x1', 'y1'], password: 'a brand new one' })
+      expect(res.status).toBe(401)
+    })
+
+    it('can be changed in Settings, with the current password', async () => {
+      const browser = await newUser('change-questions@example.com')
+      const change = { securityQuestions: [{ question: pet, answer: 'Bruno' }, { question: friend, answer: 'Meera' }] }
+      expect((await browser.request('PUT', '/api/me/security-questions', { ...change, current: 'wrong' })).status).toBe(400)
+      const ok = await browser.request('PUT', '/api/me/security-questions', { ...change, current: 'long enough' })
+      expect(ok.json.user.securityQuestions).toEqual([pet, friend])
+      const reset = await new Browser(server.url).post('/api/auth/recover/answers', { email: 'change-questions@example.com', answers: ['bruno', 'meera'], password: 'a brand new one' })
+      expect(reset.status).toBe(200)
     })
   })
 
@@ -2155,7 +2248,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
   describe('finding people to write to', () => {
     it('finds someone new on WhatsApp or Telegram, and starts a chat with them', async () => {
       const browser = new Browser(server.url)
-      await browser.post('/api/auth/register', { name: 'Aarav', email: 'people@example.com', password: 'long enough', acceptedTerms: true })
+      await browser.post('/api/auth/register', { name: 'Aarav', email: 'people@example.com', password: 'long enough', ...SIGN_UP })
       await linkWhatsApp(browser)
       await browser.post('/api/link/telegram/code', { phone: '+91 98765 43210' })
       await browser.post('/api/link/telegram/verify', { code: '12345' })

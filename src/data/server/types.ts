@@ -42,7 +42,27 @@ export interface PublicUser {
   recoveryKeyCreatedAt?: string
   /** Incognito mode: no read receipts and no "typing…" go out, from any device. */
   incognito?: boolean
+  /** The security questions chosen, if any (never the answers). */
+  securityQuestions?: string[]
 }
+
+/**
+ * Questions asked at sign-up, whose answers reset a forgotten password when the recovery key is
+ * lost too. Things the user will always know the same way, and that aren't on a public profile.
+ */
+export const SECURITY_QUESTIONS = [
+  'What was the name of your high school?',
+  "What is your best friend's name?",
+  'What was the name of your first pet?',
+  'In which city were you born?',
+  "What is your favourite teacher's name?",
+  'What was the first phone you owned?',
+  'What is the name of the street you grew up on?',
+  "What is your oldest cousin's first name?",
+] as const
+
+/** How many each account answers, all of which a reset needs right. */
+export const SECURITY_QUESTIONS_NEEDED = 2
 
 export interface AuthResult {
   user: PublicUser

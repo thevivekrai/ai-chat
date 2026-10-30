@@ -1,3 +1,4 @@
+import { SECURITY_QUESTIONS } from '../../src/data/server/types.ts'
 import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
@@ -626,6 +627,15 @@ export async function startTestServer({
 /* ── A browser stand-in: keeps the session cookie, reads server-sent events ── */
 
 let visitors = 0
+
+/** What every test sign-up sends besides name, email and password: the Terms ticked, and answers. */
+export const SIGN_UP = {
+  acceptedTerms: true,
+  securityQuestions: [
+    { question: SECURITY_QUESTIONS[0], answer: 'Delhi Public School' },
+    { question: SECURITY_QUESTIONS[1], answer: 'Kabir' },
+  ],
+}
 
 export class Browser {
   cookie = ''
