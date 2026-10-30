@@ -33,7 +33,7 @@ import type { Attachment, ChatCapabilities, Contact, Message, MessageAction, Mes
 import { isPinned, ME_ID } from '@/data/types'
 import { matchesInChat } from '@/data/search'
 import { cn } from '@/lib/cn'
-import { downloadUrl } from '@/lib/files'
+import { downloadUrl, safeUrl } from '@/lib/files'
 import { isAnimatedSticker } from '@/lib/lottie'
 import { hashString } from '@/lib/format'
 import { MINUTE, formatClock, formatDayLabel, formatWhen, toMs } from '@/lib/time'
@@ -478,8 +478,16 @@ const isStickerOnly = (m: Message) => !m.body && !m.replyTo && m.attachments?.le
 
 function Attachments({ message, fromMe }: { message: Message; fromMe: boolean }) {
   return message.attachments?.map((a, index) => (
-    <AttachmentView key={`${a.name}-${index}`} attachment={a} fromMe={fromMe} sending={message.status === 'sending'} bare={isStickerOnly(message)} />
+    <AttachmentView key={`${a.name}-${index}`} attachment={withSafeUrl(a)} fromMe={fromMe} sending={message.status === 'sending'} bare={isStickerOnly(message)} />
   ))
+}
+
+function withSafeUrl(a: Attachment): Attachment {
+  const url = safeUrl(a.url)
+  if (url === a.url) return a
+  const { url: _dropped, ...rest } = a
+  void _dropped
+  return rest
 }
 
 /**

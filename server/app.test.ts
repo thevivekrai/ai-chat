@@ -265,6 +265,28 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         ai: false,
       })
     })
+
+    it('tells browsers to run only its own scripts, and nothing framed or sniffed', async () => {
+      const res = await new Browser(server.url).get('/api/config')
+      const csp = res.headers.get('content-security-policy') ?? ''
+      expect(csp).toContain("script-src 'self' https://accounts.google.com/gsi/client")
+      expect(csp).not.toMatch(/script-src[^;]*'unsafe-(inline|eval)'/)
+      expect(csp).toContain("object-src 'none'")
+      expect(csp).toContain("frame-ancestors 'none'")
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+      expect(res.headers.get('x-frame-options')).toBe('DENY')
+      expect(res.headers.get('x-powered-by')).toBeNull()
+      expect(res.headers.get('permissions-policy')).toContain('camera=()')
+      // Over HTTPS, as the host's proxy says: never plain HTTP again.
+      const secure = await new Browser(server.url).request('GET', '/api/health', undefined, { 'X-Forwarded-Proto': 'https' })
+      expect(secure.headers.get('strict-transport-security')).toMatch(/max-age=31536000/)
+    })
+
+    it('answers an unknown API address with a plain 404, giving nothing away', async () => {
+      const res = await new Browser(server.url).get('/api/.env')
+      expect(res.status).toBe(404)
+      expect(res.text).not.toMatch(/stack|at .*\.ts|node_modules/)
+    })
   })
 
   describe('Telegram', () => {

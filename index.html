@@ -8,19 +8,8 @@
     <meta name="description" content="An AI-first unified inbox that tells you who needs a reply and drafts it for you." />
     <meta name="theme-color" content="#e8ebf0" />
     <title>Sytext — AI inbox</title>
-    <script>
-      // Apply the saved theme before first paint so there is no light/dark flash.
-      ;(function () {
-        try {
-          var raw = localStorage.getItem('tidings.settings')
-          var theme = raw ? (JSON.parse(raw).state || {}).theme : 'system'
-          var dark =
-            theme === 'dark' ||
-            ((!theme || theme === 'system') && window.matchMedia('(prefers-color-scheme: dark)').matches)
-          document.documentElement.classList.toggle('dark', dark)
-        } catch (e) {}
-      })()
-    </script>
+    <!-- Applies the saved theme before first paint (a file, so the page needs no inline script). -->
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>
