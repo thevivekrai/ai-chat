@@ -89,6 +89,7 @@ variable. The service's log says which file it read and which features are on:
 | `JWT_SECRET` | Signs sessions: 32+ random characters (`openssl rand -base64 48`). |
 | `DATA_ENCRYPTION_KEY` | Encrypts stored chats and sessions (`openssl rand -base64 32`; the Blueprint generates one). |
 | `GOOGLE_CLIENT_ID` | Turns on "Continue with Google". |
+| `GOOGLE_CLIENT_SECRET` | With `GOOGLE_CLIENT_ID`, turns on syncing tasks to Google Calendar (see [Tasks in Google Calendar](#tasks-in-google-calendar)). |
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Turn on linking Telegram accounts. |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Your own profile photo. (Photos and files in chats don't need it.) |
 | `GUFFSHUFF_URL` | Your own chat site's address: turns on linking Guffshuff accounts. `off` turns it off. |
@@ -168,6 +169,24 @@ account.
 To turn on Google sign-in, create an OAuth client id of type *Web application* in the
 [Google Cloud console](https://console.cloud.google.com/apis/credentials), add your site's address
 (and `http://localhost:5173`) under *Authorized JavaScript origins*, and set `GOOGLE_CLIENT_ID`.
+
+### Tasks in Google Calendar
+
+**Tasks → Connect Google Calendar** sends you to Google's consent screen, asking only to manage
+calendar events. Once connected, every task gets an event in your primary calendar: a half hour at
+its due time, or all day on the day it was made when it has no date. Ticking a task off marks its
+event "✓" and greys it; deleting the task deletes the event; a task made before connecting, or on
+another device, gets its event too. Google's refresh token is kept sealed with
+`DATA_ENCRYPTION_KEY`, and **Disconnect** revokes it at once (events already made stay).
+
+To turn it on, use the same OAuth client as Google sign-in:
+
+1. In the Google Cloud console, enable the **Google Calendar API** for the project.
+2. On the OAuth client, add `https://<your site>/api/calendar/callback` (and
+   `http://localhost:5173/api/calendar/callback` for development) under *Authorized redirect URIs*.
+3. Under *OAuth consent screen → Data access*, add the scope `…/auth/calendar.events`. While the app
+   is in *Testing*, add the Google accounts that may connect as test users.
+4. Set `GOOGLE_CLIENT_SECRET` (the client's secret) next to `GOOGLE_CLIENT_ID`.
 
 **Settings → Profile** changes your name, photo (with Cloudinary set up), password and recovery key,
 and signs out.

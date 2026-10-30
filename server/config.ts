@@ -14,6 +14,11 @@ export interface Config {
   dataKey: Buffer
   /** Turns on "Sign in with Google". */
   googleClientId?: string
+  /**
+   * With GOOGLE_CLIENT_ID, turns on keeping tasks in Google Calendar: the OAuth client's secret,
+   * and /api/calendar/callback added to its authorised redirect URIs.
+   */
+  googleClientSecret?: string
   /** Turns on Telegram sign-in with a phone number. From https://my.telegram.org. */
   telegram?: { apiId: number; apiHash: string }
   /** Turns on profile photos and images in chats. */
@@ -88,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     jwtSecret,
     dataKey: dataKey(env.DATA_ENCRYPTION_KEY, jwtSecret),
     googleClientId: env.GOOGLE_CLIENT_ID?.trim() || undefined,
+    googleClientSecret: env.GOOGLE_CLIENT_SECRET?.trim() || undefined,
     telegram: apiId && env.TELEGRAM_API_HASH?.trim() ? { apiId, apiHash: env.TELEGRAM_API_HASH.trim() } : undefined,
     cloudinary: cloud.every(Boolean) ? { cloudName: cloud[0]!, apiKey: cloud[1]!, apiSecret: cloud[2]! } : undefined,
     keepAwakeUrl: isOff(env.KEEP_AWAKE) ? undefined : env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || undefined,

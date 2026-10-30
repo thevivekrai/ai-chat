@@ -15,6 +15,8 @@ import type { InboxStore } from './inbox/store.ts'
 import type { Media } from './media.ts'
 import type { Accounts } from './networks/accounts.ts'
 import { linkRoutes } from './networks/routes.ts'
+import { calendarRoutes, type CalendarConfig } from './calendar.ts'
+import type { Sealer } from './crypto.ts'
 import type { Guffshuff } from './networks/guffshuff.ts'
 import type { Instagram } from './networks/instagram.ts'
 import type { Telegram } from './networks/telegram.ts'
@@ -50,6 +52,10 @@ export interface AppDeps {
   temporaryStorage?: { problem(): DatabaseProblem | undefined }
   /** The shared AI (AI_API), when set. */
   ai?: SharedAi | null
+  /** Seals what's kept for the user (the Google Calendar token). */
+  sealer: Sealer
+  /** Google Calendar, when the server has a client id and secret for it. */
+  calendar?: CalendarConfig | null
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -92,6 +98,7 @@ export function createApp(deps: AppDeps): Express {
       whatsapp: true,
       telegram: deps.telegram.enabled,
       guffshuff: deps.guffshuff.enabled,
+      calendar: !!deps.calendar,
       instagram: deps.instagram.enabled,
       uploads: !!deps.media,
       database: true,
@@ -107,6 +114,7 @@ export function createApp(deps: AppDeps): Express {
   )
   api.use(linkRoutes(deps))
   api.use(aiRoutes({ col: deps.col, tokens: deps.tokens, ai: deps.ai ?? null }))
+  api.use(calendarRoutes({ col: deps.col, tokens: deps.tokens, sealer: deps.sealer, config: deps.calendar ?? null }))
   api.use(inboxRoutes(deps))
   api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')))
   api.use(errorHandler)

@@ -411,6 +411,11 @@ createServer(async (req, res) => {
         ],
         syncType: 6,
       } as never)
+    } else if (req.url === '/calendar/events') {
+      res.writeHead(200).end(JSON.stringify(Object.fromEntries(server.calendar.state.events)))
+      return
+    } else if (req.url === '/calendar/revoke') {
+      server.calendar.state.refreshValid = input.on === false
     } else if (req.url === '/telegram/scan') {
       server.telegram.state.scanQr()
     } else if (req.url === '/instagram/message') {

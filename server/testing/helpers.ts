@@ -8,6 +8,7 @@ import { createGuffshuff, type Guffshuff } from '../networks/guffshuff.ts'
 import { createInstagram, type Instagram } from '../networks/instagram.ts'
 import { createInstagramWeb } from '../networks/instagramWeb.ts'
 import { fakeGuffshuff } from './fakeGuffshuff.ts'
+import { fakeCalendar } from './fakeCalendar.ts'
 import { fakeInstagram } from './fakeInstagram.ts'
 import type { AuthenticationState, BaileysEventMap, WAMessage, WAMessageKey } from '@whiskeysockets/baileys'
 import { createApp } from '../app.ts'
@@ -455,6 +456,7 @@ export interface TestServer {
   telegram: ReturnType<typeof fakeTelegram>
   guffshuff: ReturnType<typeof fakeGuffshuff>
   instagram: ReturnType<typeof fakeInstagram>
+  calendar: ReturnType<typeof fakeCalendar>
   google: Awaited<ReturnType<typeof fakeGoogle>>
   /** The parts running now (rebuilt by `restart`). */
   current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram }
@@ -490,6 +492,7 @@ export async function startTestServer({
   const telegram = fakeTelegram()
   const guffshuff = fakeGuffshuff()
   const instagram = fakeInstagram()
+  const calendar = fakeCalendar()
   const google = await fakeGoogle()
   const tokens = createSessionTokens('x'.repeat(40))
 
@@ -567,6 +570,8 @@ export async function startTestServer({
       guffshuff: gs,
       instagram: ig,
       files,
+      sealer,
+      calendar: { clientId: GOOGLE_CLIENT_ID, clientSecret: 'calendar-secret', fetch: calendar.fetch },
       maxFileBytes: MAX_TEST_FILE_BYTES,
       secureCookies: false,
       staticDir,
@@ -598,6 +603,7 @@ export async function startTestServer({
     telegram,
     guffshuff,
     instagram,
+    calendar,
     google,
     current: () => managers,
     async restart() {
@@ -664,6 +670,16 @@ export class Browser {
       ...(body ? { body: new Uint8Array(body) } : {}),
     })
     return { status: res.status, headers: res.headers, body: Buffer.from(await res.arrayBuffer()) }
+  }
+
+  /** A page the browser goes to, its redirect kept as it came (not followed). */
+  async visit(path: string) {
+    const res = await fetch(this.base + path, {
+      headers: { ...(this.cookie ? { Cookie: this.cookie } : {}), 'X-Forwarded-For': this.address },
+      redirect: 'manual',
+    })
+    await res.arrayBuffer()
+    return { status: res.status, headers: res.headers }
   }
 
   /** Sends a photo or file the way the app does. */

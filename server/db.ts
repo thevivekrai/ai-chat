@@ -30,6 +30,17 @@ export interface UserDoc {
   recoveryKeyCreatedAt?: Date
   /** Incognito: reading and typing aren't shown to anyone on WhatsApp or Telegram. */
   incognito?: boolean
+  /** Google Calendar, when connected: tasks are kept there as events (see calendar.ts). */
+  calendar?: {
+    /** Google's refresh token, sealed. */
+    refresh: string
+    email?: string
+    connectedAt: Date
+    /** Why it stopped syncing, in words for the user, until it works again. */
+    problem?: string
+    /** Each task's event. */
+    events?: Record<string, string>
+  }
   createdAt: Date
   updatedAt: Date
 }
