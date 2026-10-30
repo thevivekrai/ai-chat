@@ -7,7 +7,7 @@ import { authRoutes } from './auth/routes.ts'
 import type { GoogleVerifier } from './auth/google.ts'
 import type { SessionTokens } from './auth/tokens.ts'
 import type { Collections } from './db.ts'
-import { errorHandler, HttpError, jsonOnly, securityHeaders } from './http.ts'
+import { errorHandler, HttpError, jsonOnly, rateLimit, SITE_PAGE_CSP, securityHeaders } from './http.ts'
 import type { Avatars } from './inbox/avatars.ts'
 import type { FileLinks } from './inbox/files.ts'
 import { inboxRoutes, uploadRoutes } from './inbox/routes.ts'
@@ -64,27 +64,18 @@ export function createApp(deps: AppDeps): Express {
   // Behind the host's proxy (Render, Fly…): trust it for the client's IP and HTTPS.
   app.set('trust proxy', 1)
   app.use(securityHeaders)
-  // Serve the info.html page at /info
-  app.get('/info', (_req, res) => {
-    // Changed 'dist' to 'public'
-    res.sendFile(join(process.cwd(), 'public', 'info', 'info.html'));
-  });
+  // The site's own pages, written by hand: their own looser policy for their inline scripts and fonts.
+  for (const page of ['info', 'terms', 'privacy', 'help']) {
+    app.get(`/${page}`, (_req, res) => {
+      res.setHeader('Content-Security-Policy', SITE_PAGE_CSP)
+      res.sendFile(join(process.cwd(), 'public', page, `${page}.html`))
+    })
+  }
 
-  app.get('/terms', (_req, res) => {
-    res.sendFile(join(process.cwd(), 'public', 'terms', 'terms.html'));
-  });
-
-  app.get('/privacy', (_req, res) => {
-    res.sendFile(join(process.cwd(), 'public', 'privacy', 'privacy.html'));
-  });
-  
-  app.get('/help', (_req, res) => {
-    res.sendFile(join(process.cwd(), 'public', 'help', 'help.html'));
-  });
-  
-
-  
   const api = Router()
+  // A ceiling for any one visitor, far above what the app sends, so a flood of requests can't
+  // tie the server up. Sign-in, linking and the AI have tighter limits of their own.
+  api.use(rateLimit({ name: 'api', windowMs: 60_000, max: 900 }))
   // Photos and files are sent as they are, not as JSON: before the JSON rules.
   api.use(uploadRoutes(deps))
   api.use(express.json({ limit: '8mb' }))

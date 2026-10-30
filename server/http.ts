@@ -28,7 +28,48 @@ export function parseCookies(header: string | undefined): Record<string, string>
   return cookies
 }
 
-export const securityHeaders: RequestHandler = (_req, res, next) => {
+/**
+ * What the app's pages may load and run. Scripts only from this site (and Google's sign-in button),
+ * so text that slips into a page can never run as code (XSS); no plugins, no framing, no posting
+ * forms elsewhere. Network calls may go to any HTTPS address: the user's own AI provider, Matrix
+ * homeserver or bot API is theirs to choose.
+ */
+export const APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://accounts.google.com/gsi/client",
+  // Inline style attributes (animations set them); no inline <script> anywhere.
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' https: wss:",
+  'frame-src https://accounts.google.com/gsi/',
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+
+/** The site's own static pages (/info, /terms, /privacy, /help): their inline scripts and Google Fonts. */
+export const SITE_PAGE_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: https:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+
+export const securityHeaders: RequestHandler = (req, res, next) => {
+  res.setHeader('Content-Security-Policy', APP_CSP)
+  // Over HTTPS (behind the host's proxy), browsers are told to never use plain HTTP here again.
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()')
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.setHeader('X-Frame-Options', 'DENY')

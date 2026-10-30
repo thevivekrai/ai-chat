@@ -18,6 +18,23 @@ export function previewOf(file: File, { sticker = false } = {}): Attachment {
   }
 }
 
+/**
+ * An attachment's address, when it's one the page may load or link to: this server's, the web's,
+ * a local preview, or inline image, audio or video data. Anything else (a `javascript:` link from
+ * a network or a bridge) is dropped, so a message can never run code when it's clicked.
+ */
+export function safeUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined
+  if (url.startsWith('/') && !url.startsWith('//')) return url
+  if (/^data:(image|audio|video)\/[\w.+-]+[;,]/i.test(url)) return url
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'https:' || protocol === 'http:' || protocol === 'blob:' ? url : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** The link that saves an attachment, rather than showing it. */
 export function downloadUrl(url: string): string {
   return url.startsWith('/api/files/') ? `${url}?download=1` : url

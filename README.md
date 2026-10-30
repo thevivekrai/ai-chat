@@ -553,6 +553,31 @@ through this app's server to the shared AI's provider, or straight to the provid
 
 ![Ask across chats: an AI answer with its source messages](docs/screenshots/ask-dark.jpg)
 
+## Security
+
+- **No injected code runs (XSS).** React escapes every message. A Content-Security-Policy allows
+  scripts only from this site and Google's sign-in button, with no inline scripts, so injected text
+  can't run even if it reaches the page. Attachment links must be web, local-preview or media data
+  addresses (never `javascript:`). Files from chats are served with `nosniff` and a sandboxing
+  policy, so an uploaded HTML file can't run as part of the site.
+- **Headers:** `X-Frame-Options: DENY` and `frame-ancestors 'none'` block clickjacking.
+  `Strict-Transport-Security` is sent over HTTPS, a `Permissions-Policy` turns off camera, mic and
+  location, and `X-Powered-By` is removed.
+- **Sessions:** a signed token in an `httpOnly`, `SameSite=Lax` cookie (`Secure` in production).
+  Requests that change anything must be JSON, which a cross-site form can't send (CSRF).
+- **Passwords and data:** passwords are hashed with scrypt. Linked sessions, chats and Google
+  tokens are sealed with `DATA_ENCRYPTION_KEY`. Request values are checked for type before any
+  database query.
+- **Limits:** sign-in, recovery, linking, people search, AI and calendar sync each have their own
+  limits, under an overall ceiling per visitor.
+- **Nothing exposed:** unknown `/api` addresses answer a plain 404, and errors never include stack
+  traces or internals (those go to the server log only). Dotfiles aren't served, and the build has
+  no source maps. `NODE_ENV=production` (set by the Blueprint) turns on secure cookies.
+- **Secrets** are read only from the environment, never from the code. Keep `.env` out of git. If a
+  secret was ever committed or shared (database password, `JWT_SECRET`, API keys), rotate it:
+  deleting it from the code doesn't remove it from git history.
+- `npm audit --omit=dev` reports no known vulnerabilities in the server's dependencies.
+
 ## How it's built
 
 React 19 + TypeScript + Vite, Tailwind CSS v4, Zustand, Motion.
