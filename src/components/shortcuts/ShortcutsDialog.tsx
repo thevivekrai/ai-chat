@@ -3,11 +3,13 @@ import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Modal } from '@/components/ui/Modal'
 import { SHORTCUTS } from '@/lib/shortcuts'
+import { recoveryKeyWaiting, useSession } from '@/store/session'
 import { useUi } from '@/store/ui'
 
 
 export function ShortcutsDialog() {
-  const open = useUi((s) => s.dialog === 'shortcuts')
+  const keyWaiting = useSession(recoveryKeyWaiting)
+  const open = useUi((s) => s.dialog === 'shortcuts') && !keyWaiting
   const close = () => useUi.getState().closeDialog()
   return (
     <Modal open={open} onClose={close} label="Keyboard shortcuts and help" className="max-w-md">

@@ -1,4 +1,5 @@
 import type { SignInGuard } from './auth/lockout.ts'
+import type { SecurityAnswer } from './auth/securityQuestions.ts'
 import {
   MongoBulkWriteError,
   MongoClient,
@@ -31,6 +32,10 @@ export interface UserDoc {
   recoveryKeyCreatedAt?: Date
   /** Wrong passwords in a row, and any lock they've put on the account (see auth/lockout.ts). */
   signIn?: SignInGuard
+  /** The same, for wrong answers to the security questions. */
+  answersGuard?: SignInGuard
+  /** Questions chosen at sign-up, with their answers hashed (see auth/securityQuestions.ts). */
+  securityQuestions?: SecurityAnswer[]
   /** When they agreed to the Terms & Conditions, signing up. */
   termsAcceptedAt?: Date
   /** Incognito: reading and typing aren't shown to anyone on WhatsApp or Telegram. */

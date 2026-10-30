@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { GROUP_THREAD, ME, PRIYA, PRIYA_THREAD } from './testing/fakeInstagram.ts'
-import { Browser, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
+import { Browser, SIGN_UP, startTestServer, TEST_MONGODB_URI, waitFor, type TestServer } from './testing/helpers.ts'
 
 const enc = encodeURIComponent
 const byId = (list: { id: string }[]) => Object.fromEntries(list.map((t) => [t.id, t])) as Record<string, any>
@@ -17,7 +17,7 @@ describe.skipIf(!TEST_MONGODB_URI)('Instagram DMs', () => {
 
   const newUser = async (email: string) => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', acceptedTerms: true })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', ...SIGN_UP })).status).toBe(200)
     return browser
   }
 

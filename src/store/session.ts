@@ -54,6 +54,13 @@ interface SessionState {
   showSignIn(): void
 }
 
+/**
+ * A new recovery key is waiting to be seen by its owner. Other dialogs wait for it, so nothing
+ * (like the Settings page they were on before) opens over the one chance to save it.
+ */
+export const recoveryKeyWaiting = (s: Pick<SessionState, 'recoveryKey' | 'user'>) =>
+  !!s.recoveryKey && (!s.user || s.user.id === s.recoveryKey.userId)
+
 export const useSession = create<SessionState>()((set, get) => ({
   status: 'checking',
   features: null,

@@ -6,7 +6,9 @@ import { field, HttpError, rateLimit, requireUser, userIdOf } from '../http.ts'
 import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
 import type { GoogleVerifier } from './google.ts'
-import { signInGuard, type SignInGuardian } from './lockout.ts'
+import { ANSWERS, PASSWORDS, signInGuard, type SignInGuardian } from './lockout.ts'
+import { answersMatch, questionsFor, readSecurityAnswers } from './securityQuestions.ts'
+import type { Sealer } from '../crypto.ts'
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword, weakPasswordReason } from './passwords.ts'
 import { hashRecoveryKey, matchesRecoveryKey, newRecoveryKey } from './recoveryKeys.ts'
 import { SESSION_COOKIE, SESSION_DAYS, type SessionTokens } from './tokens.ts'
@@ -20,6 +22,7 @@ export const toPublicUser = (u: UserDoc): PublicUser => ({
   google: !!u.googleSub,
   ...(u.recoveryKeyHash && u.recoveryKeyCreatedAt ? { recoveryKeyCreatedAt: u.recoveryKeyCreatedAt.toISOString() } : {}),
   ...(u.incognito ? { incognito: true } : {}),
+  ...(u.securityQuestions?.length ? { securityQuestions: u.securityQuestions.map((q) => q.question) } : {}),
 })
 
 /** The new password a request sets, if it's long enough and not one guessers try first. */
@@ -32,10 +35,12 @@ function newPassword(body: unknown, who: { email?: string; name?: string } = {})
 }
 
 /** One guard for every place a password is checked, so guesses add up wherever they're made. */
-const guards = new WeakMap<Collections, SignInGuardian>()
-export const guardOf = (col: Collections) => {
-  let guard = guards.get(col)
-  if (!guard) guards.set(col, (guard = signInGuard(col)))
+const guards = new WeakMap<Collections, Map<typeof PASSWORDS, SignInGuardian>>()
+export const guardOf = (col: Collections, policy = PASSWORDS) => {
+  let byPolicy = guards.get(col)
+  if (!byPolicy) guards.set(col, (byPolicy = new Map()))
+  let guard = byPolicy.get(policy)
+  if (!guard) byPolicy.set(policy, (guard = signInGuard(col, policy)))
   return guard
 }
 
@@ -72,9 +77,11 @@ interface AuthDeps {
   google: GoogleVerifier | null
   media: Media | null
   secureCookies: boolean
+  /** For the questions shown for emails with no account (see securityQuestions.ts). */
+  sealer: Sealer
 }
 
-export function authRoutes({ col, hub, tokens, google, media, secureCookies }: AuthDeps): Router {
+export function authRoutes({ col, hub, tokens, google, media, secureCookies, sealer }: AuthDeps): Router {
   const router = Router()
   const limited = rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 30 })
   // Resetting a password is rarer still, and a guess at a recovery key is worth slowing down.
@@ -101,6 +108,8 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     const password = newPassword(req.body, { email, name })
     // Ticked on the sign-up form: they've read the Terms (/terms). Kept with the account, with when.
     if (req.body?.acceptedTerms !== true) throw new HttpError(400, 'Agree to the Terms & Conditions to create an account.')
+    // The way back in if both the password and the recovery key are lost.
+    const securityQuestions = await readSecurityAnswers(req.body)
     const existing = await col.users.findOne({ email })
     if (existing) {
       throw new HttpError(
@@ -120,6 +129,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
       passwordHash: await hashPassword(password),
       ...fields,
       termsAcceptedAt: now,
+      securityQuestions,
       createdAt: now,
       updatedAt: now,
     }
@@ -149,11 +159,44 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     const updated = await col.users.findOneAndUpdate(
       { _id: user._id, recoveryKeyHash: user.recoveryKeyHash },
       // The owner is back in: a lock from someone guessing is lifted.
-      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now }, $unset: { signIn: '' } },
+      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now }, $unset: { signIn: '', answersGuard: '' } },
       { returnDocument: 'after' },
     )
     if (!updated) throw mismatch
     await startSession(res, updated, { recoveryKey })
+  })
+
+  /** The questions to answer for an email, when its recovery key is lost too. */
+  router.post('/auth/recover/questions', recovering, async (req, res) => {
+    const email = field(req.body, 'email', { max: 254 }).toLowerCase()
+    const user = await col.users.findOne({ email })
+    res.json({ questions: questionsFor(email, user, sealer) })
+  })
+
+  /**
+   * A forgotten password and a lost recovery key: the security questions' answers set a new
+   * password. Only a few wrong tries are allowed before a long wait (lockout.ts, ANSWERS), since
+   * answers are far easier to guess than a key. A new recovery key is given, and other sessions end.
+   */
+  router.post('/auth/recover/answers', recovering, async (req, res) => {
+    const email = field(req.body, 'email', { max: 254 }).toLowerCase()
+    const password = newPassword(req.body, { email })
+    const user = await col.users.findOne({ email })
+    const answers = guardOf(col, ANSWERS)
+    answers.check(email, user)
+    if (!(await answersMatch(user, req.body?.answers)) || !user) {
+      await answers.failed(email, user)
+      throw new HttpError(401, "Those answers don't match. Check the spelling, or use your recovery key.")
+    }
+    const now = new Date()
+    const { recoveryKey, fields } = recoveryKeyFields(now)
+    const updated = await col.users.findOneAndUpdate(
+      { _id: user._id },
+      // The owner is back in: any lock from someone guessing is lifted.
+      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now }, $unset: { signIn: '', answersGuard: '' } },
+      { returnDocument: 'after' },
+    )
+    await startSession(res, updated!, { recoveryKey })
   })
 
   router.post('/auth/login', limited, signingIn, async (req, res) => {
@@ -269,6 +312,22 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
       { returnDocument: 'after' },
     )
     await startSession(res, updated!, { recoveryKey })
+  })
+
+  /** Sets or changes the security questions. Needs the current password. */
+  router.put('/me/security-questions', signedIn, limited, async (req, res) => {
+    const user = await col.users.findOne({ _id: userIdOf(res) })
+    if (!user) throw new HttpError(401, 'Sign in to continue.')
+    if (!user.passwordHash) throw new HttpError(400, 'Set a password first: security questions are for resetting it.')
+    await requireCurrentPassword(col, req.body, { ...user, passwordHash: user.passwordHash })
+    const securityQuestions = await readSecurityAnswers(req.body)
+    const updated = await col.users.findOneAndUpdate(
+      { _id: user._id },
+      { $set: { securityQuestions, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    )
+    hub?.publish(user._id.toHexString(), { type: 'user.updated', user: toPublicUser(updated!) })
+    res.json({ user: toPublicUser(updated!) })
   })
 
   /** A new recovery key, replacing the old one (which stops working). Needs the current password. */

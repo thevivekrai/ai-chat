@@ -52,6 +52,12 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', p
 
 const segment = (id: string) => encodeURIComponent(id)
 
+/** A security question chosen, and its answer as typed. */
+export interface SecurityAnswerInput {
+  question: string
+  answer: string
+}
+
 export const serverApi = {
   /**
    * What the server offers, or null when there is no Sytext server (the app was deployed as a
@@ -78,7 +84,8 @@ export const serverApi = {
       throw error
     }
   },
-  register: (input: { name: string; email: string; password: string; acceptedTerms: boolean }) => request<AuthResult>('POST', '/auth/register', input),
+  register: (input: { name: string; email: string; password: string; acceptedTerms: boolean; securityQuestions: SecurityAnswerInput[] }) =>
+    request<AuthResult>('POST', '/auth/register', input),
   login: (input: { email: string; password: string }) => request<AuthResult>('POST', '/auth/login', input),
   google: (credential: string) => request<AuthResult>('POST', '/auth/google', { credential }),
   logout: () => request<{ ok: true }>('POST', '/auth/logout'),
@@ -86,6 +93,11 @@ export const serverApi = {
   deleteAccount: (proof: { current?: string; confirm?: string }) => request<{ ok: true }>('DELETE', '/me', proof),
   /** A forgotten password: the email and recovery key set a new one (and a new key comes back). */
   recover: (input: { email: string; recoveryKey: string; password: string }) => request<AuthResult>('POST', '/auth/recover', input),
+  /** The security questions to answer for an email, when the recovery key is lost too. */
+  recoveryQuestions: async (email: string) => (await request<{ questions: string[] }>('POST', '/auth/recover/questions', { email })).questions,
+  recoverWithAnswers: (input: { email: string; answers: string[]; password: string }) => request<AuthResult>('POST', '/auth/recover/answers', input),
+  setSecurityQuestions: (input: { current: string; securityQuestions: SecurityAnswerInput[] }) =>
+    request<{ user: PublicUser }>('PUT', '/me/security-questions', input),
   newRecoveryKey: (current: string) => request<{ user: PublicUser; recoveryKey: string }>('POST', '/me/recovery-key', { current }),
 
   rename: (name: string) => request<{ user: PublicUser }>('PATCH', '/me', { name }),

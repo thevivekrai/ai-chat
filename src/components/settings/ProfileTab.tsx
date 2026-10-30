@@ -1,12 +1,14 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { Camera, Loader2, LogOut, Trash2 } from 'lucide-react'
 import { PasswordInput } from '@/components/auth/AuthScreen'
+import { SecurityQuestionFields, type ChosenQuestions } from '@/components/auth/SecurityQuestionFields'
+import { SECURITY_QUESTIONS } from '@/data/server/types'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import type { PublicUser } from '@/data/server/types'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
 import { squareThumbnail } from '@/lib/image'
-import { changeAvatar, changePassword, deleteAccount, makeRecoveryKey, renameUser, signOut } from '@/store/actions'
+import { changeAvatar, changePassword, changeSecurityQuestions, deleteAccount, makeRecoveryKey, renameUser, signOut } from '@/store/actions'
 import { useSession } from '@/store/session'
 import { Card, ErrorText, Field, Input, SectionTitle } from './parts'
 
@@ -43,6 +45,7 @@ export function ProfileTab() {
           )}
           <PasswordForm hasPassword={user.hasPassword} />
           {user.hasPassword && <RecoveryKeyForm madeAt={user.recoveryKeyCreatedAt} />}
+          {user.hasPassword && <SecurityQuestionsForm current={user.securityQuestions} />}
         </Card>
       </section>
 
@@ -59,6 +62,66 @@ export function ProfileTab() {
       </section>
 
       <DeleteAccount user={user} />
+    </div>
+  )
+}
+
+/** The questions that reset a password when the recovery key is lost: shown, and changed. */
+function SecurityQuestionsForm({ current }: { current: string[] | undefined }) {
+  const [editing, setEditing] = useState(false)
+  const [chosen, setChosen] = useState<ChosenQuestions>(() =>
+    (current?.length ? current : SECURITY_QUESTIONS.slice(0, 2)).map((question) => ({ question, answer: '' })),
+  )
+  const [password, setPassword] = useState('')
+  const [visible, setVisible] = useState(false)
+  const save = useAsync()
+  return (
+    <div className="space-y-2 border-t border-line pt-4">
+      <p className="text-sm font-medium">Security questions</p>
+      {current?.length ? (
+        <ul className="list-inside list-disc text-xs leading-relaxed text-muted">
+          {current.map((q) => (
+            <li key={q}>{q}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+          Not set. Without them, a forgotten password and a lost recovery key would lock you out for good.
+        </p>
+      )}
+      {!editing ? (
+        <Button size="sm" onClick={() => setEditing(true)}>
+          {current?.length ? 'Change questions or answers' : 'Set security questions'}
+        </Button>
+      ) : (
+        <form
+          className="space-y-3"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault()
+            void save.run(async () => {
+              await changeSecurityQuestions(password, chosen)
+              setEditing(false)
+              setPassword('')
+              setChosen(chosen.map((q) => ({ ...q, answer: '' })))
+            })
+          }}
+        >
+          <SecurityQuestionFields value={chosen} onChange={setChosen} />
+          <Field label="Current password">
+            <PasswordInput value={password} onChange={setPassword} visible={visible} onToggle={() => setVisible(!visible)} autoComplete="current-password" />
+          </Field>
+          {save.error && <ErrorText>{save.error}</ErrorText>}
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" variant="primary" disabled={save.busy || !password}>
+              {save.busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
     </div>
   )
 }

@@ -2,6 +2,9 @@ import { useState, type FormEvent } from 'react'
 import { ArrowRight, Eye, EyeOff, Loader2 } from 'lucide-react'
 import { DatabaseHelp } from '@/components/settings/DatabaseHelp'
 import { Field, Input, ErrorText } from '@/components/settings/parts'
+import { SecurityQuestionFields, type ChosenQuestions } from './SecurityQuestionFields'
+import { serverApi } from '@/data/server/serverApi'
+import { SECURITY_QUESTIONS } from '@/data/server/types'
 import { Button } from '@/components/ui/Button'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { LogoMark } from '@/components/layout/LogoMark'
@@ -11,16 +14,17 @@ import type { NetworkId } from '@/data/types'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
 import { NETWORKS } from '@/lib/networks'
-import { createAccount, recoverAccount, signIn, signInWithGoogle } from '@/store/actions'
+import { createAccount, recoverAccount, recoverWithAnswers, signIn, signInWithGoogle } from '@/store/actions'
 import { DATABASE_RECHECK_MS, useSession } from '@/store/session'
 import { GoogleButton } from './GoogleButton'
 
-type Mode = 'sign-in' | 'create' | 'recover'
+type Mode = 'sign-in' | 'create' | 'recover' | 'questions'
 
 const TITLES: Record<Mode, string> = {
   'sign-in': `Sign in to ${APP_NAME}`,
   create: `Create your ${APP_NAME} account`,
   recover: 'Reset your password',
+  questions: 'Answer your security questions',
 }
 
 /**
@@ -37,24 +41,42 @@ export function AuthScreen() {
   const [recoveryKey, setRecoveryKey] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [acceptedTerms, setAcceptedTerms] = useState(false)
+  const [chosen, setChosen] = useState<ChosenQuestions>([
+    { question: SECURITY_QUESTIONS[0], answer: '' },
+    { question: SECURITY_QUESTIONS[1], answer: '' },
+  ])
+  /** The questions the server asks for this email (questions mode), once asked. */
+  const [asked, setAsked] = useState<string[] | null>(null)
+  const [answers, setAnswers] = useState<string[]>([])
+  const resetting = mode === 'recover' || mode === 'questions'
   const form = useAsyncAction()
   const google = useAsyncAction()
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    void form.run(() =>
-      mode === 'create'
-        ? createAccount(name.trim(), email.trim(), password, acceptedTerms)
-        : mode === 'recover'
-          ? recoverAccount(email.trim(), recoveryKey, password)
-          : signIn(email.trim(), password),
-    )
+    void form.run(async () => {
+      if (mode === 'create') return createAccount(name.trim(), email.trim(), password, acceptedTerms, chosen)
+      if (mode === 'recover') return recoverAccount(email.trim(), recoveryKey, password)
+      if (mode === 'questions') {
+        // First the email, to know which questions to ask; then the answers and a new password.
+        if (!asked) {
+          const questions = await serverApi.recoveryQuestions(email.trim())
+          setAnswers(questions.map(() => ''))
+          setAsked(questions)
+          return
+        }
+        return recoverWithAnswers(email.trim(), answers, password)
+      }
+      return signIn(email.trim(), password)
+    })
   }
 
   const switchMode = (next: Mode) => {
     setMode(next)
     setPassword('')
     setRecoveryKey('')
+    setAsked(null)
+    setAnswers([])
     form.reset()
     google.reset()
   }
@@ -69,9 +91,11 @@ export function AuthScreen() {
           <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
             {mode === 'recover'
               ? 'Enter your email, the recovery key you saved when you made your account, and a new password.'
-              : 'Every chat app in one inbox, with AI that sorts your chats and drafts the replies.'}
+              : mode === 'questions'
+                ? 'Lost your recovery key too? Answer the security questions you chose when you made your account.'
+                : 'Every chat app in one inbox, with AI that sorts your chats and drafts the replies.'}
           </p>
-          {mode !== 'recover' && <Networks />}
+          {!resetting && <Networks />}
         </div>
 
         {notice && (
@@ -96,7 +120,7 @@ export function AuthScreen() {
           </div>
         )}
 
-        {features?.googleClientId && mode !== 'recover' && (
+        {features?.googleClientId && !resetting && (
           <div className="mt-6 space-y-2">
             <GoogleButton clientId={features.googleClientId} onCredential={(credential) => void google.run(() => signInWithGoogle(credential))} />
             {google.busy && (
@@ -126,9 +150,23 @@ export function AuthScreen() {
               spellCheck={false}
               maxLength={254}
               value={email}
+              readOnly={mode === 'questions' && !!asked}
               onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
+          {mode === 'questions' &&
+            asked?.map((question, i) => (
+              <Field key={question} label={question}>
+                <Input
+                  required
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={100}
+                  value={answers[i] ?? ''}
+                  onChange={(e) => setAnswers(answers.map((a, j) => (j === i ? e.target.value : a)))}
+                />
+              </Field>
+            ))}
           {mode === 'recover' && (
             <Field label="Recovery key" hint="Five groups of five letters and numbers, like 7K2QP-M9XHD-…">
               <Input
@@ -144,19 +182,19 @@ export function AuthScreen() {
               />
             </Field>
           )}
-          <Field
-            label={mode === 'recover' ? 'New password' : 'Password'}
-            hint={mode === 'sign-in' ? undefined : 'At least 8 characters.'}
-          >
-            <PasswordInput
-              value={password}
-              onChange={setPassword}
-              visible={showPassword}
-              onToggle={() => setShowPassword(!showPassword)}
-              autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-              minLength={mode === 'sign-in' ? undefined : 8}
-            />
-          </Field>
+          {(mode !== 'questions' || asked) && (
+            <Field label={resetting ? 'New password' : 'Password'} hint={mode === 'sign-in' ? undefined : 'At least 8 characters.'}>
+              <PasswordInput
+                value={password}
+                onChange={setPassword}
+                visible={showPassword}
+                onToggle={() => setShowPassword(!showPassword)}
+                autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+                minLength={mode === 'sign-in' ? undefined : 8}
+              />
+            </Field>
+          )}
+          {mode === 'create' && <SecurityQuestionFields value={chosen} onChange={setChosen} />}
           {mode === 'sign-in' && (
             <div className="-mt-1 flex justify-end">
               <button type="button" className="text-xs font-medium text-accent-ink hover:underline" onClick={() => switchMode('recover')}>
@@ -189,18 +227,29 @@ export function AuthScreen() {
           {form.error && <ErrorText>{form.error}</ErrorText>}
           <Button type="submit" variant="primary" className="w-full" disabled={form.busy || (mode === 'create' && !acceptedTerms)}>
             {form.busy && <Loader2 className="size-4 animate-spin" aria-hidden />}
-            {mode === 'create' ? 'Create account' : mode === 'recover' ? 'Reset password' : 'Sign in'}
+            {mode === 'create' ? 'Create account' : mode === 'questions' && !asked ? 'Continue' : resetting ? 'Reset password' : 'Sign in'}
           </Button>
         </form>
 
         {mode === 'recover' && (
+          <p className="mt-4 text-[13px] leading-relaxed text-muted">
+            Lost your recovery key too?{' '}
+            <button type="button" className="font-medium text-accent-ink hover:underline" onClick={() => switchMode('questions')}>
+              Answer your security questions
+            </button>
+          </p>
+        )}
+        {mode === 'questions' && (
           <p className="mt-4 text-[11px] leading-relaxed text-faint">
-            No recovery key? Then a forgotten password can't be reset here: Sytext can't email you a link. If you sign in
-            with Google, use Continue with Google instead. Once you're back in, make a key in Settings → Profile.
+            Have your recovery key?{' '}
+            <button type="button" className="font-medium text-accent-ink hover:underline" onClick={() => switchMode('recover')}>
+              Use it instead
+            </button>
+            . Signed up with Google? Use Continue with Google: Sytext can't email you a link.
           </p>
         )}
 
-        {features?.googleClientId && mode !== 'recover' && (
+        {features?.googleClientId && !resetting && (
           <p className="mt-4 text-center text-[11px] leading-relaxed text-faint">
             Continuing with Google means you agree to the{' '}
             <a href="/terms" target="_blank" rel="noopener" className="underline hover:text-muted">
