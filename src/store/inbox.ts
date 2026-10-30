@@ -18,6 +18,7 @@ import type {
 import { ME_ID } from '@/data/types'
 import { previewOf } from '@/lib/files'
 import { toMs } from '@/lib/time'
+import { syncTask, unsyncTask } from './calendar'
 
 /**
  * Client-side cache of the inbox. All reads come from `api.loadInbox()` and all writes go through
@@ -411,11 +412,14 @@ export const useInbox = create<InboxState>()((set, get) => {
     async setTaskDone(taskId, done) {
       set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? { ...t, done } : t)) }))
       await api.updateTask(taskId, { done })
+      const task = get().tasks.find((t) => t.id === taskId)
+      if (task) void syncTask(task)
     },
 
     async deleteTask(taskId) {
       set((s) => ({ tasks: s.tasks.filter((t) => t.id !== taskId) }))
       await api.deleteTask(taskId)
+      void unsyncTask(taskId)
     },
 
     async resetDemo() {

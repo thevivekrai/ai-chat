@@ -1,5 +1,6 @@
 import type {
   AuthResult,
+  CalendarStatus,
   InstagramLinkResult,
   MessageHint,
   PublicAccount,
@@ -170,6 +171,11 @@ export const serverApi = {
     request<{ thread: Thread }>('POST', `/threads/${segment(threadId)}/state`, patch),
   putTask: (task: Task) => request<{ task: Task }>('PUT', `/tasks/${segment(task.id)}`, task),
   deleteTask: (taskId: string) => request<{ ok: true }>('DELETE', `/tasks/${segment(taskId)}`),
+  calendar: () => request<CalendarStatus>('GET', '/calendar'),
+  disconnectCalendar: () => request<CalendarStatus>('DELETE', '/calendar'),
+  syncTask: (task: Task, note?: string) =>
+    request<{ ok: true; eventId: string }>('PUT', `/calendar/tasks/${segment(task.id)}`, { ...task, ...(note ? { note } : {}) }),
+  unsyncTask: (taskId: string) => request<{ ok: true }>('DELETE', `/calendar/tasks/${segment(taskId)}`),
   older: (threadId: string, before: { id: string } & Partial<MessageHint>) => {
     const query = new URLSearchParams({ before: before.id })
     if (before.senderId && before.sentAt) {

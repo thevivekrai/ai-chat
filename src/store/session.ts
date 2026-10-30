@@ -5,6 +5,7 @@ import { serverApi } from '@/data/server/serverApi'
 import type { PublicUser, ServerFeatures } from '@/data/server/types'
 import { storage } from '@/data/storage'
 import { restoreAiConsent } from './aiConsent'
+import { useCalendar } from './calendar'
 import { useInbox } from './inbox'
 import { useUi } from './ui'
 
@@ -98,6 +99,7 @@ export const useSession = create<SessionState>()((set, get) => ({
     const key = get().recoveryKey
     set({ status: 'signed-in', user, notice: null, ...(key && key.userId !== user.id ? { recoveryKey: null } : {}) })
     restoreAiConsent(user.id)
+    void useCalendar.getState().refresh()
     await api.connections.setServerSession(user)
   },
 
@@ -109,6 +111,7 @@ export const useSession = create<SessionState>()((set, get) => ({
   async signedOut(notice) {
     storage.remove(GUEST_KEY)
     useInbox.getState().clear()
+    useCalendar.getState().forget()
     // Signing back in starts at the inbox, not wherever the last person left off.
     useUi.getState().closeDialog()
     // A recovery key being shown stays until it's saved: the server already has it in place of the

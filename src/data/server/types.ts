@@ -73,6 +73,8 @@ export interface ServerFeatures {
   guffshuff: boolean
   /** Instagram DMs, signed in to as the website does (INSTAGRAM=off turns it off). */
   instagram: boolean
+  /** Tasks can be kept in Google Calendar (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET). */
+  calendar?: boolean
   uploads: boolean
   /**
    * False while the server has no database at all: the site works, but signing in and linked
@@ -188,3 +190,16 @@ export interface ServerOlderMessages {
 
 export type TelegramCodeResult = { via: 'app' | 'sms' }
 export type TelegramVerifyResult = { status: 'connected' } | { status: 'password'; hint?: string }
+
+/** Tasks kept as events in Google Calendar. */
+export interface CalendarStatus {
+  /** The server is set up for it. */
+  available: boolean
+  connected: boolean
+  /** The Google account it's connected to. */
+  email?: string
+  /** Why syncing stopped, when it did (access revoked in Google). */
+  problem?: string
+  /** The tasks that have an event already. */
+  synced?: string[]
+}

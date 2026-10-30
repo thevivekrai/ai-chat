@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { CalendarDays, Check, ListTodo, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { CalendarCheck2, CalendarDays, Check, ListTodo, Plus, Sparkles, Trash2, TriangleAlert } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ExtractedTask } from '@/ai'
 import { EmptyState } from '@/components/threads/EmptyStates'
@@ -13,9 +13,11 @@ import { cn } from '@/lib/cn'
 import { byDue, DAY, formatWhen, startOfDay, toMs } from '@/lib/time'
 import { addExtractedTask, openThread, turnOnAi } from '@/store/actions'
 import { useAi } from '@/store/ai'
+import { useCalendar } from '@/store/calendar'
 import { engineKey, useAiEngine } from '@/store/aiEngine'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
+import { useSession } from '@/store/session'
 import { useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
 
@@ -88,6 +90,7 @@ export function TasksView() {
           </h1>
           <p className="text-xs text-faint">Things your chats asked of you</p>
         </div>
+        <CalendarSync />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
@@ -177,6 +180,62 @@ export function TasksView() {
         )}
       </div>
     </Panel>
+  )
+}
+
+/** Connecting Google Calendar, so tasks show up there as events; and how that stands. */
+function CalendarSync() {
+  const signedIn = useSession((s) => s.status === 'signed-in')
+  const status = useCalendar((s) => s.status)
+  const [busy, setBusy] = useState(false)
+  if (!signedIn || !status) return null
+
+  if (!status.connected) {
+    return (
+      <div className="mt-3 rounded-xl border border-line bg-surface-2/60 px-3 py-2.5">
+        <p className="flex items-center gap-2 text-[13px] leading-snug text-muted">
+          <CalendarDays className="size-4 shrink-0 text-accent-ink" aria-hidden />
+          {status.available ? 'See your tasks as events in Google Calendar.' : 'Google Calendar isn’t set up on this server yet.'}
+        </p>
+        <Button size="sm" variant="primary" className="mt-2" disabled={!status.available} onClick={() => useCalendar.getState().connect()}>
+          Connect Google Calendar
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-line bg-surface-2/60 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {status.problem ? (
+          <TriangleAlert className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+        ) : (
+          <CalendarCheck2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        )}
+        <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
+          {status.problem ? 'Google Calendar sync stopped' : 'Synced to Google Calendar'}
+          {status.email && <span className="text-faint"> · {status.email}</span>}
+        </p>
+        {status.problem && (
+          <Button size="sm" variant="primary" onClick={() => useCalendar.getState().connect()}>
+            Connect again
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            await useCalendar.getState().disconnect()
+            setBusy(false)
+          }}
+        >
+          Disconnect
+        </Button>
+      </div>
+      {status.problem && <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300">{status.problem}</p>}
+    </div>
   )
 }
 

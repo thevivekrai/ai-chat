@@ -179,6 +179,8 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     guffshuff,
     instagram,
     files,
+    sealer,
+    calendar: config.googleClientId && config.googleClientSecret ? { clientId: config.googleClientId, clientSecret: config.googleClientSecret } : null,
     secureCookies: config.production,
     staticDir,
     ai: config.ai ?? null,
