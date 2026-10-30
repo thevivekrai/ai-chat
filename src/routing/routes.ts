@@ -115,7 +115,7 @@ export function titleOf(route: Route, context: { threadTitle?: string | null } =
     case 'login':
       return named('Sign in', 'Sign in to Sytext to bring your own chats into one inbox.')
     case 'not-found':
-      return named('Page not found', 'That page does not exist.')
+      return { title: '404: Skill Issue — Sytext', description: 'That page does not exist.' }
     default:
       break
   }

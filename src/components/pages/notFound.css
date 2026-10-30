@@ -1,0 +1,179 @@
+/* The 404 page, as designed in public/404.html (Oct 27): a liquid-glass card over a sky gradient,
+   with chat bubbles drifting behind it. Scoped to .nf so it never touches the app. */
+@import '@fontsource/instrument-serif/latin-400-italic.css';
+
+.nf {
+  --nf-bg-top: #b5cce6;
+  --nf-bg-bottom: #f2f6fa;
+  --nf-text-main: #0f1419;
+  --nf-text-muted: #536471;
+  --nf-glass-bg: rgba(255, 255, 255, 0.45);
+  --nf-glass-border: rgba(255, 255, 255, 0.7);
+  --nf-glass-highlight: rgba(255, 255, 255, 1);
+  --nf-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+  --nf-glass-blur: blur(24px) saturate(180%);
+  --nf-black: #0f1419;
+  --nf-white: #ffffff;
+  --nf-serif: 'Instrument Serif', Georgia, serif;
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+  color: var(--nf-text-main);
+  background: linear-gradient(180deg, var(--nf-bg-top) 0%, var(--nf-bg-bottom) 100%);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+
+.dark .nf {
+  --nf-bg-top: #1d2435;
+  --nf-bg-bottom: #0b0e14;
+  --nf-text-main: #f0f3f5;
+  --nf-text-muted: #8b98a5;
+  --nf-glass-bg: rgba(30, 37, 54, 0.5);
+  --nf-glass-border: rgba(255, 255, 255, 0.08);
+  --nf-glass-highlight: rgba(255, 255, 255, 0.15);
+  --nf-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --nf-black: #ffffff;
+  --nf-white: #151a21;
+}
+
+.nf-noise {
+  position: absolute;
+  inset: 0;
+  opacity: 0.04;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+.dark .nf-noise {
+  opacity: 0.06;
+}
+
+.nf-ghost {
+  position: absolute;
+  background: var(--nf-glass-bg);
+  backdrop-filter: var(--nf-glass-blur);
+  -webkit-backdrop-filter: var(--nf-glass-blur);
+  border: 1px solid var(--nf-glass-border);
+  padding: 12px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--nf-text-muted);
+  box-shadow: var(--nf-glass-shadow);
+  opacity: 0.6;
+  pointer-events: none;
+  animation: nf-drift 20s linear infinite;
+}
+.nf-ghost-1 { top: 15%; left: 8%; animation-delay: 0s; transform: rotate(-5deg); }
+.nf-ghost-2 { bottom: 15%; right: 10%; animation-delay: -5s; transform: rotate(8deg); }
+.nf-ghost-3 { top: 25%; right: 12%; animation-delay: -10s; transform: rotate(3deg); }
+.nf-ghost-4 { bottom: 25%; left: 12%; animation-delay: -15s; transform: rotate(-10deg); }
+
+@keyframes nf-drift {
+  0% { transform: translateY(0) rotate(-5deg); }
+  50% { transform: translateY(-20px) rotate(5deg); }
+  100% { transform: translateY(0) rotate(-5deg); }
+}
+
+.nf-card {
+  background: var(--nf-glass-bg);
+  backdrop-filter: var(--nf-glass-blur);
+  -webkit-backdrop-filter: var(--nf-glass-blur);
+  border: 1px solid var(--nf-glass-border);
+  box-shadow: inset 0 1px 0 var(--nf-glass-highlight), 0 30px 60px -15px rgba(0, 0, 0, 0.2);
+  border-radius: 40px;
+  padding: 64px 48px;
+  text-align: center;
+  max-width: 600px;
+  width: min(100% - 40px, 600px);
+  position: relative;
+  z-index: 10;
+  animation: nf-float 8s ease-in-out infinite;
+}
+.dark .nf-card {
+  box-shadow: inset 0 1px 0 var(--nf-glass-highlight), 0 30px 60px -15px rgba(0, 0, 0, 0.9);
+}
+
+@keyframes nf-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.nf-code {
+  font-size: clamp(100px, 18vw, 140px);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.06em;
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, var(--nf-text-main), var(--nf-text-muted));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.nf-card h1 {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin-bottom: 16px;
+  color: var(--nf-text-main);
+}
+.nf-card h1 span {
+  font-family: var(--nf-serif);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--nf-text-muted);
+}
+
+.nf-card p {
+  color: var(--nf-text-muted);
+  font-size: 18px;
+  line-height: 1.6;
+  margin-bottom: 40px;
+  max-width: 440px;
+  margin-inline: auto;
+}
+
+.nf-home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 36px;
+  border-radius: 9999px;
+  background: var(--nf-black);
+  color: var(--nf-white);
+  font-weight: 600;
+  font-size: 16px;
+  text-decoration: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+}
+.nf-home:hover {
+  transform: translateY(-3px) scale(1.02);
+  background: #2a323d;
+}
+.dark .nf-home:hover {
+  background: #e5e7eb;
+}
+.nf-home:focus-visible {
+  outline: 3px solid var(--nf-text-muted);
+  outline-offset: 3px;
+}
+.nf-home svg { width: 18px; height: 18px; }
+
+@media (max-width: 600px) {
+  .nf-card { padding: 48px 24px; }
+  .nf-ghost { display: none; }
+  .nf-code { font-size: 100px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-card,
+  .nf-ghost { animation: none; }
+}
