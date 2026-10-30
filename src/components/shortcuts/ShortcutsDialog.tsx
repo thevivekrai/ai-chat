@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { BookOpen, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Modal } from '@/components/ui/Modal'
@@ -10,9 +10,9 @@ export function ShortcutsDialog() {
   const open = useUi((s) => s.dialog === 'shortcuts')
   const close = () => useUi.getState().closeDialog()
   return (
-    <Modal open={open} onClose={close} label="Keyboard shortcuts" className="max-w-md">
+    <Modal open={open} onClose={close} label="Keyboard shortcuts and help" className="max-w-md">
       <header className="flex items-center justify-between border-b border-line px-5 py-4">
-        <h2 className="text-base font-semibold">Keyboard shortcuts</h2>
+        <h2 className="text-base font-semibold">Keyboard shortcuts &amp; help</h2>
         <Button variant="ghost" size="icon-sm" aria-label="Close" onClick={close}>
           <X className="size-4" />
         </Button>
@@ -34,6 +34,12 @@ export function ShortcutsDialog() {
           </div>
         ))}
       </dl>
+      <footer className="flex items-center justify-between gap-3 border-t border-line px-5 py-3.5">
+        <p className="text-sm text-muted">Linking, AI, privacy and more</p>
+        <Button size="sm" variant="primary" onClick={() => window.open('/help', '_blank', 'noopener')}>
+          <BookOpen className="size-3.5" aria-hidden /> View guide
+        </Button>
+      </footer>
     </Modal>
   )
 }

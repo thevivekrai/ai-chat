@@ -17,7 +17,7 @@ describe.skipIf(!TEST_MONGODB_URI)('Instagram DMs', () => {
 
   const newUser = async (email: string) => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough' })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', acceptedTerms: true })).status).toBe(200)
     return browser
   }
 

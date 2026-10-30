@@ -78,10 +78,12 @@ export const serverApi = {
       throw error
     }
   },
-  register: (input: { name: string; email: string; password: string }) => request<AuthResult>('POST', '/auth/register', input),
+  register: (input: { name: string; email: string; password: string; acceptedTerms: boolean }) => request<AuthResult>('POST', '/auth/register', input),
   login: (input: { email: string; password: string }) => request<AuthResult>('POST', '/auth/login', input),
   google: (credential: string) => request<AuthResult>('POST', '/auth/google', { credential }),
   logout: () => request<{ ok: true }>('POST', '/auth/logout'),
+  /** Deletes the account for good: with the password, or the email typed out for a Google-only one. */
+  deleteAccount: (proof: { current?: string; confirm?: string }) => request<{ ok: true }>('DELETE', '/me', proof),
   /** A forgotten password: the email and recovery key set a new one (and a new key comes back). */
   recover: (input: { email: string; recoveryKey: string; password: string }) => request<AuthResult>('POST', '/auth/recover', input),
   newRecoveryKey: (current: string) => request<{ user: PublicUser; recoveryKey: string }>('POST', '/me/recovery-key', { current }),

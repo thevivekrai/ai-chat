@@ -28,6 +28,8 @@ export interface UserDoc {
   /** SHA-256 of the recovery key, which resets the password with the email address (see recoveryKeys.ts). */
   recoveryKeyHash?: string
   recoveryKeyCreatedAt?: Date
+  /** When they agreed to the Terms & Conditions, signing up. */
+  termsAcceptedAt?: Date
   /** Incognito: reading and typing aren't shown to anyone on WhatsApp or Telegram. */
   incognito?: boolean
   /** Google Calendar, when connected: tasks are kept there as events (see calendar.ts). */

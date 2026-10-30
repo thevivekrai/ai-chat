@@ -29,7 +29,7 @@ function newPassword(body: unknown): string {
 }
 
 /** Changing what protects the account takes the current password. */
-async function requireCurrentPassword(body: unknown, passwordHash: string) {
+export async function requireCurrentPassword(body: unknown, passwordHash: string) {
   const current = typeof (body as { current?: unknown })?.current === 'string' ? (body as { current: string }).current : ''
   if (!(await verifyPassword(current, passwordHash))) throw new HttpError(400, "Your current password isn't right.")
 }
@@ -76,6 +76,8 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     const email = field(req.body, 'email', { max: 254 }).toLowerCase()
     if (!EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address.')
     const password = newPassword(req.body)
+    // Ticked on the sign-up form: they've read the Terms (/terms). Kept with the account, with when.
+    if (req.body?.acceptedTerms !== true) throw new HttpError(400, 'Agree to the Terms & Conditions to create an account.')
     const existing = await col.users.findOne({ email })
     if (existing) {
       throw new HttpError(
@@ -94,6 +96,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
       name,
       passwordHash: await hashPassword(password),
       ...fields,
+      termsAcceptedAt: now,
       createdAt: now,
       updatedAt: now,
     }

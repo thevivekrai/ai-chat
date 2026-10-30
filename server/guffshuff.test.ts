@@ -16,7 +16,7 @@ describe.skipIf(!TEST_MONGODB_URI)('Guffshuff (the user’s own site)', () => {
 
   const newUser = async (email: string) => {
     const browser = new Browser(server.url)
-    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough' })).status).toBe(200)
+    expect((await browser.post('/api/auth/register', { name: 'Aarav', email, password: 'long enough', acceptedTerms: true })).status).toBe(200)
     return browser
   }
 
@@ -176,7 +176,7 @@ describe.skipIf(!TEST_MONGODB_URI)('Guffshuff (the user’s own site)', () => {
       const gs = quick.guffshuff
       gs.write(ASHA, 'Anyone there?')
       const browser = new Browser(quick.url)
-      expect((await browser.post('/api/auth/register', { name: 'Aarav', email: 'gs-quiet@example.com', password: 'long enough' })).status).toBe(200)
+      expect((await browser.post('/api/auth/register', { name: 'Aarav', email: 'gs-quiet@example.com', password: 'long enough', acceptedTerms: true })).status).toBe(200)
       gs.state.broken = ['/api/messages/unread']
       expect((await browser.post('/api/link/guffshuff', { username: 'aarav', password: gs.state.password })).status).toBe(200)
       expect(gs.state.calls).toContain('GET /api/messages/unread')

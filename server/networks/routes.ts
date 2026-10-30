@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import type { Collections } from '../db.ts'
-import { field, rateLimit, requireUser, userIdOf } from '../http.ts'
-import type { SessionTokens } from '../auth/tokens.ts'
+import { field, HttpError, rateLimit, requireUser, userIdOf } from '../http.ts'
+import { requireCurrentPassword } from '../auth/routes.ts'
+import { SESSION_COOKIE, type SessionTokens } from '../auth/tokens.ts'
 import type { Accounts } from './accounts.ts'
 import type { Guffshuff } from './guffshuff.ts'
 import type { Instagram } from './instagram.ts'
@@ -100,6 +101,37 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
 
   router.delete('/link/telegram', signedIn, async (_req, res) => {
     await telegram.unlink(userIdOf(res))
+    res.json({ ok: true })
+  })
+
+  /**
+   * Deletes the account and everything kept for it: linked sessions (signed out of WhatsApp,
+   * Telegram, Instagram and Guffshuff first), chats, messages, contacts, pictures and tasks. Takes
+   * the password, or for a Google-only account the email typed out, so it can't happen by accident
+   * or from a session left open.
+   */
+  router.delete('/me', signedIn, limited('delete-account', 10), async (req, res) => {
+    const userId = userIdOf(res)
+    const user = await col.users.findOne({ _id: userId })
+    if (!user) throw new HttpError(404, 'No such account.')
+    if (user.passwordHash) await requireCurrentPassword(req.body, user.passwordHash)
+    else if (String(req.body?.confirm ?? '').trim().toLowerCase() !== user.email) {
+      throw new HttpError(400, 'Type your email address to confirm.')
+    }
+    // Signed out of each network, so nothing is left connected in the user's name. One that
+    // fails to answer doesn't stop the rest: its session is deleted below either way.
+    await Promise.allSettled([whatsapp.unlink(userId), telegram.unlink(userId), guffshuff.unlink(userId), instagram.unlink(userId)])
+    await Promise.all([
+      col.accounts.deleteMany({ userId }),
+      col.waAuth.deleteMany({ userId }),
+      col.threads.deleteMany({ userId }),
+      col.contacts.deleteMany({ userId }),
+      col.messages.deleteMany({ userId }),
+      col.avatars.deleteMany({ userId }),
+      col.tasks.deleteMany({ userId }),
+    ])
+    await col.users.deleteOne({ _id: userId })
+    res.clearCookie(SESSION_COOKIE, { path: '/' })
     res.json({ ok: true })
   })
 

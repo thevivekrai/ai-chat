@@ -15,6 +15,8 @@ import { useAi } from './ai'
 import { isUnsentHere, useInbox } from './inbox'
 import { incognitoOn } from './privacy'
 import { useSession } from './session'
+import { useCalendar } from './calendar'
+import { wipeDeviceStore } from '@/data/server/deviceStore'
 import { keepAiConsent } from './aiConsent'
 import { currentAiEngine } from './aiEngine'
 import { useSettings, type AiSettings } from './settings'
@@ -507,8 +509,8 @@ export async function signIn(email: string, password: string) {
   await useSession.getState().signedIn(user)
 }
 
-export async function createAccount(name: string, email: string, password: string) {
-  const { user, recoveryKey } = await serverApi.register({ name, email, password })
+export async function createAccount(name: string, email: string, password: string, acceptedTerms: boolean) {
+  const { user, recoveryKey } = await serverApi.register({ name, email, password, acceptedTerms })
   if (recoveryKey) useSession.getState().showRecoveryKey(recoveryKey, user)
   await useSession.getState().signedIn(user)
 }
@@ -546,6 +548,18 @@ export async function signOut() {
   keepConsentOfSignedInUser()
   forgetThreadsHere(isServerThread)
   await useSession.getState().signedOut()
+}
+
+/**
+ * Deletes the account and everything kept for it, here and on the server. Google Calendar access
+ * is revoked first; the events already made stay in the calendar.
+ */
+export async function deleteAccount(proof: { current?: string; confirm?: string }) {
+  if (useCalendar.getState().status?.connected) await serverApi.disconnectCalendar().catch(() => undefined)
+  await serverApi.deleteAccount(proof)
+  forgetThreadsHere(isServerThread)
+  await wipeDeviceStore().catch(() => undefined)
+  await useSession.getState().signedOut('Your account was deleted, with your linked chats and everything kept for it.')
 }
 
 /** Sends the user back to the sign-in screen when the server ends the session. */
