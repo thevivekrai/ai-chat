@@ -2055,6 +2055,82 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
     })
   })
 
+  describe('guessing passwords', () => {
+    it('locks the account after a few wrong passwords, from any address, and tells the owner after', async () => {
+      await newUser('target@example.com')
+      // Each guess from a different address: the per-address limit alone wouldn't stop this.
+      for (let i = 0; i < 4; i++) {
+        expect((await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: `guess ${i}` })).status).toBe(401)
+      }
+      const fifth = await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'guess 4' })
+      expect(fifth.status).toBe(429)
+      expect(fifth.json.error).toMatch(/locked for 15 minutes/)
+      // Locked: even the right password isn't looked at, so guessing on can't find it.
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'long enough' })).status).toBe(429)
+
+      // The lock runs out: the owner gets in, and is told what happened.
+      await server.database.col.users.updateOne({ email: 'target@example.com' }, { $set: { 'signIn.lockedUntil': new Date(Date.now() - 1000) } })
+      const owner = await new Browser(server.url).post('/api/auth/login', { email: 'target@example.com', password: 'long enough' })
+      expect(owner.status).toBe(200)
+      expect(owner.json.failedAttempts).toBe(5)
+      // And the count starts again.
+      expect((await server.database.col.users.findOne({ email: 'target@example.com' }))?.signIn).toBeUndefined()
+    })
+
+    it('answers the same for an email with no account, so guessing tells nothing', async () => {
+      for (let i = 0; i < 4; i++) {
+        expect((await new Browser(server.url).post('/api/auth/login', { email: 'nobody-here@example.com', password: `guess ${i}` })).json.error).toBe('Wrong email or password.')
+      }
+      expect((await new Browser(server.url).post('/api/auth/login', { email: 'nobody-here@example.com', password: 'guess 4' })).status).toBe(429)
+    })
+
+    it('counts wrong current passwords in an open session too', async () => {
+      const browser = await newUser('open-session@example.com')
+      for (let i = 0; i < 4; i++) expect((await browser.post('/api/me/recovery-key', { current: `guess ${i}` })).status).toBe(400)
+      expect((await browser.post('/api/me/recovery-key', { current: 'guess 4' })).status).toBe(429)
+      expect((await browser.post('/api/me/recovery-key', { current: 'long enough' })).status).toBe(429)
+    })
+
+    it('refuses passwords that guessers try first', async () => {
+      const browser = new Browser(server.url)
+      for (const password of ['password123', '12345678', 'aaaaaaaa', 'qwertyuiop', 'easyguess-mehta']) {
+        const res = await browser.post('/api/auth/register', { name: 'Riya', email: 'easyguess-mehta@example.com', password, acceptedTerms: true })
+        expect(res.status, password).toBe(400)
+      }
+    })
+  })
+
+  describe('one account, never another’s data', () => {
+    it('gives a stranger nothing of someone else’s chats, messages, tasks or pictures', async () => {
+      const RAVI = '919812345678@s.whatsapp.net'
+      const owner = await newUser('owner-data@example.com')
+      const socket = await linkWhatsApp(owner)
+      socket.emit('messages.upsert', {
+        type: 'notify',
+        messages: [{ key: { remoteJid: RAVI, fromMe: false, id: 'PRIVATE1' }, message: { conversation: 'My private message' }, messageTimestamp: Math.floor(Date.now() / 1000) }],
+      } as never)
+      const threadId = `wa:${RAVI}`
+      await waitFor(async () => expect(byId((await owner.get('/api/inbox')).json.messages)[`${threadId}:PRIVATE1`]).toBeDefined())
+      expect((await owner.put('/api/tasks/t_private', { title: 'Mine', dueAt: null, source: { threadId, messageId: `${threadId}:PRIVATE1` } })).status).toBe(200)
+
+      const stranger = await newUser('stranger-data@example.com')
+      const chat = `/api/threads/${encodeURIComponent(threadId)}`
+      expect(JSON.stringify((await stranger.get('/api/inbox')).json)).not.toContain('My private message')
+      expect((await stranger.get(`${chat}/messages?before=${encodeURIComponent(`${threadId}:PRIVATE1`)}`)).status).toBe(404)
+      expect((await stranger.post(`${chat}/messages`, { body: 'hi' })).status).toBe(404)
+      expect((await stranger.post(`${chat}/reactions`, { messageId: `${threadId}:PRIVATE1`, emoji: '👍' })).status).toBe(404)
+      expect((await stranger.post(`${chat}/archive`, { archived: true })).status).toBe(404)
+      expect((await stranger.post(`${chat}/state`, { doneAt: null })).status).toBe(404)
+      expect((await stranger.get(`/api/avatars/${encodeURIComponent(threadId)}`)).status).toBe(404)
+      // Same task id: their own task, never a change to the owner's.
+      await stranger.delete('/api/tasks/t_private')
+      expect((await owner.get('/api/inbox')).json.tasks.map((t: { id: string }) => t.id)).toContain('t_private')
+      // No session at all: nothing.
+      expect((await new Browser(server.url).get('/api/inbox')).status).toBe(401)
+      await owner.delete('/api/link/whatsapp')
+    })
+  })
+
   describe('deleting the account', () => {
     it('takes the password, signs out of WhatsApp, and leaves nothing behind', async () => {
       const browser = await newUser('leaving@example.com')

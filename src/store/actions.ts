@@ -505,8 +505,15 @@ function forgetThreadsHere(matches: (threadId: string) => boolean) {
 /* ── Signing in ──────────────────────────────────────────────────────────── */
 
 export async function signIn(email: string, password: string) {
-  const { user } = await serverApi.login({ email, password })
+  const { user, failedAttempts } = await serverApi.login({ email, password })
   await useSession.getState().signedIn(user)
+  // Someone else may have been trying: the owner hears of it.
+  if (failedAttempts) {
+    toast({
+      title: `${failedAttempts} wrong password${failedAttempts === 1 ? ' was' : 's were'} tried on your account`,
+      description: "Since you last signed in. If that wasn't you, change your password in Settings → Profile.",
+    })
+  }
 }
 
 export async function createAccount(name: string, email: string, password: string, acceptedTerms: boolean) {

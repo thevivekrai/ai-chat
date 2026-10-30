@@ -6,7 +6,8 @@ import { field, HttpError, rateLimit, requireUser, userIdOf } from '../http.ts'
 import type { Media } from '../media.ts'
 import type { Hub } from '../realtime.ts'
 import type { GoogleVerifier } from './google.ts'
-import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from './passwords.ts'
+import { signInGuard, type SignInGuardian } from './lockout.ts'
+import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword, weakPasswordReason } from './passwords.ts'
 import { hashRecoveryKey, matchesRecoveryKey, newRecoveryKey } from './recoveryKeys.ts'
 import { SESSION_COOKIE, SESSION_DAYS, type SessionTokens } from './tokens.ts'
 
@@ -21,17 +22,36 @@ export const toPublicUser = (u: UserDoc): PublicUser => ({
   ...(u.incognito ? { incognito: true } : {}),
 })
 
-/** The new password a request sets, if it's long enough. */
-function newPassword(body: unknown): string {
+/** The new password a request sets, if it's long enough and not one guessers try first. */
+function newPassword(body: unknown, who: { email?: string; name?: string } = {}): string {
   const password = field(body, 'password', { max: 200, trim: false })
   if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(400, `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`)
+  const weak = weakPasswordReason(password, who)
+  if (weak) throw new HttpError(400, weak)
   return password
 }
 
-/** Changing what protects the account takes the current password. */
-export async function requireCurrentPassword(body: unknown, passwordHash: string) {
+/** One guard for every place a password is checked, so guesses add up wherever they're made. */
+const guards = new WeakMap<Collections, SignInGuardian>()
+export const guardOf = (col: Collections) => {
+  let guard = guards.get(col)
+  if (!guard) guards.set(col, (guard = signInGuard(col)))
+  return guard
+}
+
+/**
+ * Changing what protects the account takes the current password. Wrong ones count toward the
+ * account's lock too, so a session left open can't be used to guess it.
+ */
+export async function requireCurrentPassword(col: Collections, body: unknown, user: UserDoc & { passwordHash: string }) {
+  const guard = guardOf(col)
+  guard.check(user.email, user)
   const current = typeof (body as { current?: unknown })?.current === 'string' ? (body as { current: string }).current : ''
-  if (!(await verifyPassword(current, passwordHash))) throw new HttpError(400, "Your current password isn't right.")
+  if (!(await verifyPassword(current, user.passwordHash))) {
+    await guard.failed(user.email, user)
+    throw new HttpError(400, "Your current password isn't right.")
+  }
+  await guard.succeeded(user._id, user.signIn)
 }
 
 /** A new recovery key, and what to store for it. */
@@ -59,6 +79,9 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
   const limited = rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 30 })
   // Resetting a password is rarer still, and a guess at a recovery key is worth slowing down.
   const recovering = rateLimit({ name: 'recover', windowMs: 15 * 60_000, max: 10 })
+  // Password guesses from one address; the account's own lock (lockout.ts) covers many addresses.
+  const signingIn = rateLimit({ name: 'login', windowMs: 15 * 60_000, max: 15 })
+  const guard = guardOf(col)
 
   async function startSession(res: Response, user: UserDoc, extra: Record<string, unknown> = {}) {
     res.cookie(SESSION_COOKIE, await tokens.sign(user._id.toHexString()), {
@@ -75,7 +98,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     const name = field(req.body, 'name', { max: 80 })
     const email = field(req.body, 'email', { max: 254 }).toLowerCase()
     if (!EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address.')
-    const password = newPassword(req.body)
+    const password = newPassword(req.body, { email, name })
     // Ticked on the sign-up form: they've read the Terms (/terms). Kept with the account, with when.
     if (req.body?.acceptedTerms !== true) throw new HttpError(400, 'Agree to the Terms & Conditions to create an account.')
     const existing = await col.users.findOne({ email })
@@ -116,7 +139,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
   router.post('/auth/recover', recovering, async (req, res) => {
     const email = field(req.body, 'email', { max: 254 }).toLowerCase()
     const key = field(req.body, 'recoveryKey', { max: 100 })
-    const password = newPassword(req.body)
+    const password = newPassword(req.body, { email })
     const mismatch = new HttpError(401, "That email and recovery key don't match. Use the key you saved when you made your account.")
     const user = await col.users.findOne({ email })
     if (!matchesRecoveryKey(key, user?.recoveryKeyHash) || !user) throw mismatch
@@ -125,21 +148,28 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     // Only while the key is still the one just checked, so it can't be used twice at once.
     const updated = await col.users.findOneAndUpdate(
       { _id: user._id, recoveryKeyHash: user.recoveryKeyHash },
-      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now } },
+      // The owner is back in: a lock from someone guessing is lifted.
+      { $set: { passwordHash: await hashPassword(password), ...fields, sessionsValidAfter: now, updatedAt: now }, $unset: { signIn: '' } },
       { returnDocument: 'after' },
     )
     if (!updated) throw mismatch
     await startSession(res, updated, { recoveryKey })
   })
 
-  router.post('/auth/login', limited, async (req, res) => {
+  router.post('/auth/login', limited, signingIn, async (req, res) => {
     const email = field(req.body, 'email', { max: 254 }).toLowerCase()
     const password = field(req.body, 'password', { max: 200, trim: false })
     const user = await col.users.findOne({ email })
+    // Locked: refused before the password is even looked at, so guessing on can't find it.
+    guard.check(email, user)
     const ok = await verifyPassword(password, user?.passwordHash ?? (await DUMMY_HASH))
     if (user && !user.passwordHash) throw new HttpError(400, 'This account signs in with Google. Use "Continue with Google".')
-    if (!user || !ok) throw new HttpError(401, 'Wrong email or password.')
-    await startSession(res, user)
+    if (!user || !ok) {
+      await guard.failed(email, user)
+      throw new HttpError(401, 'Wrong email or password.')
+    }
+    const wrongBefore = await guard.succeeded(user._id, user.signIn)
+    await startSession(res, user, wrongBefore ? { failedAttempts: wrongBefore } : {})
   })
 
   router.post('/auth/google', limited, async (req, res) => {
@@ -224,10 +254,10 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
 
   /** Sets a password (Google-only accounts) or changes it (with the current one). */
   router.post('/me/password', signedIn, limited, async (req, res) => {
-    const password = newPassword(req.body)
     const user = await col.users.findOne({ _id: userIdOf(res) })
     if (!user) throw new HttpError(401, 'Sign in to continue.')
-    if (user.passwordHash) await requireCurrentPassword(req.body, user.passwordHash)
+    const password = newPassword(req.body, user)
+    if (user.passwordHash) await requireCurrentPassword(col, req.body, { ...user, passwordHash: user.passwordHash })
     const now = new Date()
     // A new recovery key too: the old one could have been made by anyone who knew the old password,
     // and would let them take the account back.
@@ -246,7 +276,7 @@ export function authRoutes({ col, hub, tokens, google, media, secureCookies }: A
     const user = await col.users.findOne({ _id: userIdOf(res) })
     if (!user) throw new HttpError(401, 'Sign in to continue.')
     if (!user.passwordHash) throw new HttpError(400, 'Set a password first: a recovery key is for resetting it.')
-    await requireCurrentPassword(req.body, user.passwordHash)
+    await requireCurrentPassword(col, req.body, { ...user, passwordHash: user.passwordHash })
     const now = new Date()
     const { recoveryKey, fields } = recoveryKeyFields(now)
     const updated = await col.users.findOneAndUpdate(

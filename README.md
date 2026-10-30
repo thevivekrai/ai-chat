@@ -568,8 +568,21 @@ through this app's server to the shared AI's provider, or straight to the provid
 - **Passwords and data:** passwords are hashed with scrypt. Linked sessions, chats and Google
   tokens are sealed with `DATA_ENCRYPTION_KEY`. Request values are checked for type before any
   database query.
+- **Password guessing:** after 5 wrong passwords in a row an account locks for 15 minutes, then
+  30, 60 and so on up to a day, whichever addresses the guesses come from. While it's locked,
+  even the right password isn't checked. Wrong current passwords in an open session count too. An
+  email with no account answers the same way, so guessing doesn't reveal who has one. The owner
+  is told how many wrong passwords were tried when they next sign in. A recovery-key reset lifts
+  the lock. Common passwords, key runs and ones made of the email or name are refused.
+- **One account, never another's data:** every chat, message, task, file and picture is looked up
+  by the signed-in account as well as by id, so another account's ids lead to "not found". Tests
+  check this route by route.
 - **Limits:** sign-in, recovery, linking, people search, AI and calendar sync each have their own
   limits, under an overall ceiling per visitor.
+- **Viewing the code:** a browser has to download a site's code to run it, so no site can stop it
+  being viewed. Here it's minified, with no source maps or comments, and holds no secrets: every
+  key, the database and other people's data stay on the server. To keep the source private, make
+  the GitHub repository private (Render still deploys from a private repository).
 - **Nothing exposed:** unknown `/api` addresses answer a plain 404, and errors never include stack
   traces or internals (those go to the server log only). Dotfiles aren't served, and the build has
   no source maps. `NODE_ENV=production` (set by the Blueprint) turns on secure cookies.

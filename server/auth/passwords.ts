@@ -31,3 +31,36 @@ export async function verifyPassword(password: string, stored: string): Promise<
   })
   return timingSafeEqual(actual, expected)
 }
+
+/**
+ * Passwords guessers try first: the most used ones, keyboard runs and plain words with numbers.
+ * Any of these, however long, falls in minutes to someone trying a list.
+ */
+const COMMON = new Set(
+  (
+    'password password1 password12 password123 password1234 passw0rd p@ssw0rd p@ssword 12345678 123456789 1234567890 ' +
+    '0123456789 87654321 11111111 00000000 12341234 11223344 abcd1234 1234abcd abc12345 qwertyui qwerty123 qwerty12 ' +
+    '1q2w3e4r 1q2w3e4r5t qwertyuiop asdfghjk asdfghjkl zxcvbnm1 iloveyou iloveyou1 sunshine princess football ' +
+    'baseball dragon123 monkey123 letmein1 letmein123 welcome1 welcome123 admin123 administrator trustno1 superman ' +
+    'starwars whatever computer internet changeme changeme123 secret123 master123 shadow123 michael1 jennifer ' +
+    'india123 india@123 bharat123 krishna123 sachin123 pakistan123 mypassword newpassword yourpassword default1 ' +
+    'test1234 testtest guest123 login123 sytext123 sytext1234 whatsapp telegram instagram facebook'
+  ).split(' '),
+)
+
+/** Why a new password is too easy to guess, or null when it's fine. */
+export function weakPasswordReason(password: string, { email, name }: { email?: string; name?: string } = {}): string | null {
+  const lower = password.toLowerCase()
+  if (COMMON.has(lower)) return 'That password is one of the most common ones, so it would be guessed quickly. Choose another.'
+  if (/^(.)\1+$/.test(password)) return 'Use more than one repeated character.'
+  const digits = '01234567890123456789'
+  const letters = 'abcdefghijklmnopqrstuvwxyz'
+  if (digits.includes(lower) || [...digits].reverse().join('').includes(lower) || letters.includes(lower) || 'qwertyuiopasdfghjklzxcvbnm'.includes(lower)) {
+    return 'A run of keys or numbers is easy to guess. Choose another password.'
+  }
+  const local = email?.split('@')[0]?.toLowerCase()
+  if (local && local.length >= 4 && lower.includes(local)) return "Don't use your email address in your password."
+  const first = name?.trim().split(/\s+/)[0]?.toLowerCase()
+  if (first && first.length >= 4 && lower.replace(/[^a-z]/g, '') === first) return "Don't make your password just your name."
+  return null
+}

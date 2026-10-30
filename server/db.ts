@@ -1,3 +1,4 @@
+import type { SignInGuard } from './auth/lockout.ts'
 import {
   MongoBulkWriteError,
   MongoClient,
@@ -28,6 +29,8 @@ export interface UserDoc {
   /** SHA-256 of the recovery key, which resets the password with the email address (see recoveryKeys.ts). */
   recoveryKeyHash?: string
   recoveryKeyCreatedAt?: Date
+  /** Wrong passwords in a row, and any lock they've put on the account (see auth/lockout.ts). */
+  signIn?: SignInGuard
   /** When they agreed to the Terms & Conditions, signing up. */
   termsAcceptedAt?: Date
   /** Incognito: reading and typing aren't shown to anyone on WhatsApp or Telegram. */
