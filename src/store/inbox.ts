@@ -258,7 +258,7 @@ export const useInbox = create<InboxState>()((set, get) => {
       const tempId = `pending-${Date.now()}-${++pendingCount}`
       const quoted = options?.replyToId ? get().messages[threadId]?.find((m) => m.id === options.replyToId) : undefined
       // A photo shows from this device until the network has it.
-      const preview = options?.file ? previewOf(options.file) : undefined
+      const preview = options?.file ? previewOf(options.file, { sticker: !!options.sticker }) : undefined
       if (options?.file) unsentFiles.set(tempId, options.file)
       putMessage({
         id: tempId,

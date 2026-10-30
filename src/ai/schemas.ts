@@ -59,12 +59,18 @@ const AnswerSchema = z.object({
   citedMessageIds: z.array(z.string()).describe('Ids of the messages the answer relies on.'),
 })
 
+const TranslateSchema = z.object({
+  text: z.string().describe('The message in the target language, nothing added.'),
+  from: z.string().describe('The language it was written in, as its English name.'),
+})
+
 export const SCHEMAS: { [K in LlmTask]: z.ZodType<LlmOutputs[K]> } = {
   priority: PrioritySchema,
   summary: SummarySchema,
   tasks: TasksSchema,
   drafts: DraftsSchema,
   answer: AnswerSchema,
+  translate: TranslateSchema,
 }
 
 export const LLM_TASKS = Object.keys(SCHEMAS) as LlmTask[]

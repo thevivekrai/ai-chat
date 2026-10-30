@@ -119,7 +119,14 @@ export const serverApi = {
    * Sends a photo or file, with `caption` as its text. The body is the file itself; headers say
    * what it is (and require this site's own code to send it: other sites can't set them).
    */
-  async sendFile(threadId: string, file: File, caption: string, replyToId?: string, replyTo?: MessageHint): Promise<{ message: Message }> {
+  async sendFile(
+    threadId: string,
+    file: File,
+    caption: string,
+    replyToId?: string,
+    replyTo?: MessageHint,
+    sticker = false,
+  ): Promise<{ message: Message }> {
     let res: Response
     try {
       res = await fetch(`/api/threads/${segment(threadId)}/files`, {
@@ -133,6 +140,7 @@ export const serverApi = {
           ...(caption ? { 'X-Caption': encodeURIComponent(caption) } : {}),
           ...(replyToId ? { 'X-Reply-To': encodeURIComponent(replyToId) } : {}),
           ...(replyTo ? { 'X-Reply-Hint': encodeURIComponent(JSON.stringify(replyTo)) } : {}),
+          ...(sticker ? { 'X-Sticker': '1' } : {}),
         },
         body: file,
       })

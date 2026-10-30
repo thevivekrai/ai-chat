@@ -5,7 +5,9 @@ import type { Attachment } from '@/data/types'
 export const isPhoto = (file: Pick<File, 'type'>) => isPhotoType(file.type)
 
 /** How a file being sent shows in the chat until the network has it: a local preview. */
-export function previewOf(file: File): Attachment {
+export function previewOf(file: File, { sticker = false } = {}): Attachment {
+  // A sticker shows as itself while it's on its way, not as a photo with a size under it.
+  if (sticker) return { kind: 'sticker', name: 'Sticker', ...(file.type ? { mime: file.type } : {}), url: URL.createObjectURL(file) }
   const photo = isPhoto(file)
   return {
     kind: photo ? 'image' : 'file',

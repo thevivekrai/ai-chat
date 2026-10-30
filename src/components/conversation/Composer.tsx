@@ -13,11 +13,12 @@ import { NETWORKS } from '@/lib/networks'
 import { sendLaterOptions } from '@/lib/schedule'
 import { formatShortWhen } from '@/lib/time'
 import { ME_ID } from '@/data/types'
-import { cancelEdit, noteTyping, saveEdit, scheduleReply, sendReply, stopTyping, toggleDrafts } from '@/store/actions'
+import { cancelEdit, noteTyping, saveEdit, scheduleReply, sendReply, sendSticker, stopTyping, toggleDrafts } from '@/store/actions'
 import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
+import { StickerPicker } from './StickerPicker'
 
 const MAX_HEIGHT = 200
 /** Photos and files sent at once. */
@@ -59,6 +60,7 @@ export function Composer({ threadId }: { threadId: string }) {
   const blanks = findPlaceholders(text)
   // Photos and files waiting to be sent, for this chat only.
   const canAttach = useMemo(() => api.capabilities(threadId).files, [threadId])
+  const canSticker = useMemo(() => api.capabilities(threadId).stickers, [threadId])
   const [attached, setAttached] = useState<{ threadId: string; files: File[] }>({ threadId, files: [] })
   const files = attached.threadId === threadId ? attached.files : []
   const fileInput = useRef<HTMLInputElement>(null)
@@ -252,6 +254,7 @@ export function Composer({ threadId }: { threadId: string }) {
             </Button>
           </>
         )}
+        {canSticker && !editingId && <StickerPicker onPick={(sticker) => void sendSticker(threadId, sticker)} />}
         <textarea
           ref={ref}
           rows={1}

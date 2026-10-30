@@ -36,6 +36,7 @@ const GUFFSHUFF_CAPABILITIES: ChatCapabilities = {
   typing: false,
   history: false,
   files: true,
+  stickers: true,
   edit: false,
   delete: true,
   pin: true,
@@ -49,6 +50,7 @@ const INSTAGRAM_CAPABILITIES: ChatCapabilities = {
   typing: false,
   history: false,
   files: false,
+  stickers: false,
   edit: false,
   delete: true,
   pin: true,
@@ -62,6 +64,7 @@ const LINKED_CAPABILITIES: ChatCapabilities = {
   typing: true,
   history: true,
   files: true,
+  stickers: true,
   edit: true,
   delete: true,
   pin: true,
@@ -265,7 +268,14 @@ export class ServerConnector implements Connector {
       const { message } = file
         ? // With a file, the quote travels in a header: its start is plenty to show it.
           await this.oneAtATime(threadId, () =>
-            serverApi.sendFile(threadId, file, body, options.replyToId, hint && { ...hint, body: hint.body?.slice(0, QUOTE_IN_HEADER) }),
+            serverApi.sendFile(
+              threadId,
+              file,
+              body,
+              options.replyToId,
+              hint && { ...hint, body: hint.body?.slice(0, QUOTE_IN_HEADER) },
+              !!options.sticker,
+            ),
           )
         : await serverApi.send(threadId, body, options?.replyToId, hint)
       this.keepMessages([message])

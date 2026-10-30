@@ -32,6 +32,7 @@ export interface LlmOutputs {
   tasks: { tasks: Omit<ExtractedTask, 'id'>[] }
   drafts: Record<Tone, string>
   answer: SearchAnswer
+  translate: { text: string; from: string }
 }
 
 export type LlmTask = keyof LlmOutputs

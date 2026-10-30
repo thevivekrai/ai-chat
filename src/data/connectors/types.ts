@@ -94,6 +94,8 @@ export interface SendOptions {
   replyToId?: string
   /** A photo or file to send, with the text as its caption (where the chat can send files). */
   file?: File
+  /** The file is a sticker: sent as one where the network has them. */
+  sticker?: boolean
 }
 
 export interface OlderMessages {

@@ -17,6 +17,15 @@ const newId = (prefix: string) =>
 
 const clone = <T>(value: T): T => structuredClone(value)
 
+/** A small file as a data URL, so the demo can keep it with its chats. */
+const dataUrlOf = (file: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error ?? new Error("Couldn't read the sticker."))
+    reader.readAsDataURL(file)
+  })
+
 /** The demo shows replies, reactions and typing; it has no older history to fetch. */
 const DEMO_CAPABILITIES: ChatCapabilities = {
   reply: true,
@@ -24,6 +33,8 @@ const DEMO_CAPABILITIES: ChatCapabilities = {
   typing: true,
   history: false,
   files: false,
+  // The demo keeps a sticker it's sent as a picture in the chat, as the networks do.
+  stickers: true,
   edit: true,
   delete: true,
   pin: true,
@@ -109,6 +120,7 @@ export function createMockApi(): DemoApi {
       await latency(240)
       findThread(threadId)
       const quoted = options?.replyToId ? db.messages.find((m) => m.id === options.replyToId) : undefined
+      const sticker = options?.sticker && options.file ? await dataUrlOf(options.file) : null
       const message: Message = {
         id: newId('m'),
         threadId,
@@ -116,6 +128,7 @@ export function createMockApi(): DemoApi {
         body,
         sentAt: new Date().toISOString(),
         status: 'sent',
+        ...(sticker ? { attachments: [{ kind: 'sticker' as const, name: 'Sticker', mime: options!.file!.type, url: sticker }] } : {}),
         ...(quoted ? { replyTo: { id: quoted.id, senderId: quoted.senderId, body: quoted.body } } : {}),
       }
       db.messages.push(message)

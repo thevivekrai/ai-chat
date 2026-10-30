@@ -994,6 +994,13 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       // WebP isn't a photo to WhatsApp: it goes as a file, as the app shows it while sending.
       await browser.upload(thread, Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 '), { name: 'sticker.webp', type: 'image/webp' })
       expect(socket.files[5]).toMatchObject({ kind: 'document', mimetype: 'image/webp' })
+      // Picked from the sticker picker, the same WebP is a sticker, and shows as one.
+      const sticker = await browser.upload(thread, Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 '), { name: 'Laughing.webp', type: 'image/webp', sticker: true })
+      expect(socket.files[6]).toMatchObject({ kind: 'sticker', mimetype: 'image/webp' })
+      expect(sticker.json.message.attachments[0]).toMatchObject({ kind: 'sticker' })
+      // Only a picture can be one: a PDF marked as a sticker is still a PDF.
+      await browser.upload(thread, pdf, { name: 'not-a-sticker.pdf', type: 'application/pdf', sticker: true })
+      expect(socket.files[7]).toMatchObject({ kind: 'document', mimetype: 'application/pdf' })
 
       // Refused: no name, too big, someone else's chat, a chat that doesn't exist (before the file
       // is read), not signed in.
@@ -1008,7 +1015,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
       const nowhere = await browser.upload('wa:000@s.whatsapp.net', Buffer.alloc(MAX_TEST_FILE_BYTES), { name: 'x.bin', type: 'application/octet-stream' })
       expect(nowhere).toEqual({ status: 404, json: { error: 'No such chat.' } })
       expect((await new Browser(server.url).upload(thread, pdf, { name: 'x.pdf', type: 'application/pdf' })).status).toBe(401)
-      expect(socket.files).toHaveLength(6)
+      expect(socket.files).toHaveLength(8)
     })
 
     it('WhatsApp: brings back stickers and photos kept before they could be opened', async () => {

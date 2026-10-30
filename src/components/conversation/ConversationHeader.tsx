@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Avatar } from '@/components/ui/Avatar'
+import { cn } from '@/lib/cn'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
@@ -199,15 +200,17 @@ function TagMenu({ threadId, own, locked }: { threadId: string; own: ChatLabel[]
       side="auto"
       panelClassName="min-w-52"
       renderTrigger={(props) => (
+        // A small chip on every screen: the tag icon, and how many tags the chat has.
         <Button
           {...props}
           variant={labels.length ? 'soft' : 'ghost'}
           size="icon-sm"
-          className="max-sm:hidden"
+          className={cn(labels.length > 0 && 'w-auto gap-1 px-2')}
           aria-label={labels.length ? `Tags: ${labels.map((l) => LABELS[l].label).join(', ')}` : 'Tag this chat'}
           title="Tag this chat"
         >
           <TagIcon className="size-4" />
+          {labels.length > 0 && <span className="text-xs tabular-nums">{labels.length}</span>}
         </Button>
       )}
     />

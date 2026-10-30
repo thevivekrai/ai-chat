@@ -9,6 +9,7 @@ import { myReaction } from '@/data/reactions'
 import { serverApi } from '@/data/server/serverApi'
 import { LINKED_PREFIXES, MAX_CAPTION } from '@/data/server/types'
 import { isAtLeast } from '@/lib/media'
+import { stickerFile, type Sticker } from '@/lib/stickers'
 import { formatWhen } from '@/lib/time'
 import { useAi } from './ai'
 import { isUnsentHere, useInbox } from './inbox'
@@ -56,6 +57,21 @@ export async function sendReply(threadId: string, text: string, files: File[] = 
       inbox.sendMessage(threadId, i === 0 && !ownMessage ? body : '', { file, ...(i === 0 && !ownMessage && replyToId ? { replyToId } : {}) }),
     ),
   )
+}
+
+/** Sends a sticker: as the network's own sticker where it has them, a picture otherwise. */
+export async function sendSticker(threadId: string, sticker: Sticker) {
+  let file: File
+  try {
+    file = await stickerFile(sticker)
+  } catch (error) {
+    toast({ title: "Couldn't send the sticker", description: error instanceof Error ? error.message : undefined, group: 'stickers' })
+    return
+  }
+  const ui = useUi.getState()
+  const replyToId = ui.replyingTo[threadId]
+  ui.setReplyingTo(threadId, null)
+  await useInbox.getState().sendMessage(threadId, '', { file, sticker: true, ...(replyToId ? { replyToId } : {}) })
 }
 
 /* ── Editing, deleting, pinning and starring ─────────────────────────────── */

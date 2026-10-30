@@ -455,12 +455,15 @@ export const createGramClient: CreateTgClient = (session, api) => {
     },
     async sendFile(chatId, file, caption, replyToId) {
       const photo = isPhotoType(file.mime)
+      const sticker = file.sticker && file.mime === 'image/webp'
       const sent = await client.sendFile(await inputPeer(chatId), {
         file: new CustomFile(file.name, file.data.length, '', file.data),
-        caption,
+        caption: sticker ? '' : caption,
         parseMode: false,
-        // Anything but a photo or MP4 video arrives as a file, as sent, rather than recompressed.
-        forceDocument: !(photo || file.mime === 'video/mp4'),
+        // A sticker is a WebP marked as one; anything but a photo or MP4 video arrives as a file, as
+        // sent, rather than recompressed.
+        ...(sticker ? { attributes: [new Api.DocumentAttributeSticker({ alt: '🙂', stickerset: new Api.InputStickerSetEmpty() })] } : {}),
+        forceDocument: !(sticker || photo || file.mime === 'video/mp4'),
         workers: 1,
         ...(replyToId ? { replyTo: replyToId } : {}),
       })
