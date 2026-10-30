@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
-import { AlertTriangle, CalendarClock, Check, CornerUpLeft, FileText, Paperclip, Pencil, SendHorizontal, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CalendarDays, Check, CornerUpLeft, FileText, Paperclip, Pencil, SendHorizontal, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { Menu } from '@/components/ui/Popover'
@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn'
 import { isPhoto } from '@/lib/files'
 import { findPlaceholders, placeholderPattern, shortName } from '@/lib/format'
 import { NETWORKS } from '@/lib/networks'
-import { sendLaterOptions } from '@/lib/schedule'
+import { pickStart, sendLaterOptions } from '@/lib/schedule'
 import { formatShortWhen } from '@/lib/time'
 import { ME_ID } from '@/data/types'
 import { cancelEdit, noteTyping, saveEdit, scheduleReply, sendReply, sendSticker, stopTyping, toggleDrafts } from '@/store/actions'
@@ -18,6 +18,7 @@ import { useClock } from '@/store/clock'
 import { useInbox } from '@/store/inbox'
 import { toast } from '@/store/toasts'
 import { useUi } from '@/store/ui'
+import { DateTimeDialog } from '@/components/ui/DateTimeDialog'
 import { StickerPicker } from './StickerPicker'
 
 const MAX_HEIGHT = 200
@@ -57,6 +58,8 @@ export function Composer({ threadId }: { threadId: string }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   // Asking once before sending a reply that still has a [blank] in it.
   const [confirmingBlanks, setConfirmingBlanks] = useState(false)
+  // "Pick date & time…" from Send later.
+  const [picking, setPicking] = useState(false)
   const blanks = findPlaceholders(text)
   // Photos and files waiting to be sent, for this chat only.
   const canAttach = useMemo(() => api.capabilities(threadId).files, [threadId])
@@ -182,6 +185,17 @@ export function Composer({ threadId }: { threadId: string }) {
 
   return (
     <div className="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4" {...dropHandlers}>
+      <DateTimeDialog
+        open={picking}
+        title="Send later"
+        confirmLabel="Schedule"
+        initial={pickStart(now)}
+        onClose={() => setPicking(false)}
+        onConfirm={(at) => {
+          setPicking(false)
+          void scheduleReply(threadId, text, at)
+        }}
+      />
       {editingId && (
         <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-line bg-surface px-3 py-2 shadow-card animate-pop-in">
           <Pencil className="size-4 shrink-0 text-accent-ink" aria-hidden />
@@ -272,13 +286,16 @@ export function Composer({ threadId }: { threadId: string }) {
           title="Send later"
           side="top"
           panelClassName="min-w-64"
-          items={options.map((o) => ({
-            id: o.id,
-            label: o.label,
-            hint: formatShortWhen(o.at.getTime(), now),
-            icon: CalendarClock,
-            onSelect: () => void scheduleReply(threadId, text, o.at),
-          }))}
+          items={[
+            ...options.map((o) => ({
+              id: o.id,
+              label: o.label,
+              hint: formatShortWhen(o.at.getTime(), now),
+              icon: CalendarClock,
+              onSelect: () => void scheduleReply(threadId, text, o.at),
+            })),
+            { id: 'pick', label: 'Pick date & time…', icon: CalendarDays, onSelect: () => setPicking(true) },
+          ]}
           renderTrigger={(props) => (
             <Button
               {...props}

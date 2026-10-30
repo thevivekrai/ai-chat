@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import {
   AlarmClock,
   AlarmClockOff,
   Archive,
   ArchiveRestore,
   ArrowLeft,
+  CalendarDays,
   Check,
   CheckCheck,
   Eraser,
@@ -19,13 +21,14 @@ import { cn } from '@/lib/cn'
 import { Button } from '@/components/ui/Button'
 import { Kbd } from '@/components/ui/Kbd'
 import { NetworkIcon } from '@/components/ui/NetworkIcon'
+import { DateTimeDialog } from '@/components/ui/DateTimeDialog'
 import { Menu, type MenuItem } from '@/components/ui/Popover'
 import { CHAT_LABELS, type ChatLabel } from '@/data/types'
 import { LABELS, whyOf } from '@/lib/chatLabels'
 import { typingLabel } from '@/lib/format'
 import { useBreakpoint } from '@/lib/media'
 import { NETWORKS } from '@/lib/networks'
-import { snoozeOptions } from '@/lib/schedule'
+import { pickStart, snoozeOptions } from '@/lib/schedule'
 import { formatShortWhen, toMs } from '@/lib/time'
 import {
   archiveThread,
@@ -138,17 +141,31 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
   const open = useUi((s) => s.snoozeMenuOpen)
   const setOpen = useUi((s) => s.setSnoozeMenuOpen)
   const now = useClock((s) => s.now)
-  const items = snoozeOptions(now).map((o) => ({
+  const [picking, setPicking] = useState(false)
+  const items: MenuItem[] = snoozeOptions(now).map((o) => ({
     id: o.id,
     label: o.label,
     hint: formatShortWhen(o.at.getTime(), now),
     icon: AlarmClock,
     onSelect: () => void snoozeThread(threadId, o.at),
   }))
+  items.push({ id: 'pick', label: 'Pick date & time…', icon: CalendarDays, onSelect: () => setPicking(true) })
   if (snoozed) items.unshift({ id: 'unsnooze', label: 'Unsnooze', hint: '', icon: AlarmClockOff, onSelect: () => void unsnoozeThread(threadId) })
 
   return (
-    <Menu
+    <>
+      <DateTimeDialog
+        open={picking}
+        title="Snooze until"
+        confirmLabel="Snooze"
+        initial={pickStart(now)}
+        onClose={() => setPicking(false)}
+        onConfirm={(at) => {
+          setPicking(false)
+          void snoozeThread(threadId, at)
+        }}
+      />
+      <Menu
       title="Snooze until"
       panelClassName="min-w-64"
       open={open}
@@ -159,7 +176,8 @@ function SnoozeMenu({ threadId, snoozed }: { threadId: string; snoozed: boolean 
           <AlarmClock className="size-4" />
         </Button>
       )}
-    />
+      />
+    </>
   )
 }
 

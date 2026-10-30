@@ -18,6 +18,12 @@ function roundUp(ts: number): number {
   return Math.ceil(ts / step) * step
 }
 
+/** Where a hand-picked time starts: an hour from now, on the next five minutes. */
+export function pickStart(now: number = Date.now()): Date {
+  const step = 5 * MINUTE
+  return new Date(Math.ceil((now + HOUR) / step) * step)
+}
+
 export function snoozeOptions(now: number = Date.now()): TimeOption[] {
   const hour = new Date(now).getHours()
   const day = new Date(now).getDay()
