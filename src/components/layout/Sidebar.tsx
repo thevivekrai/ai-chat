@@ -141,7 +141,7 @@ export function Sidebar({ className }: { className?: string }) {
           onClick={() => useUi.getState().openDialog('shortcuts')}
           className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted hover:text-fg"
         >
-          <Keyboard className="size-3.5" aria-hidden /> Keyboard shortcuts <Kbd className="ml-auto">?</Kbd>
+          <Keyboard className="size-3.5" aria-hidden /> Shortcuts &amp; help <Kbd className="ml-auto">?</Kbd>
         </button>
       </div>
     </nav>

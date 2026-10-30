@@ -1,12 +1,12 @@
 import { useRef, useState, type FormEvent } from 'react'
-import { Camera, Loader2, LogOut } from 'lucide-react'
+import { Camera, Loader2, LogOut, Trash2 } from 'lucide-react'
 import { PasswordInput } from '@/components/auth/AuthScreen'
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import type { PublicUser } from '@/data/server/types'
 import { useAsyncAction as useAsync } from '@/hooks/useAsyncAction'
 import { squareThumbnail } from '@/lib/image'
-import { changeAvatar, changePassword, makeRecoveryKey, renameUser, signOut } from '@/store/actions'
+import { changeAvatar, changePassword, deleteAccount, makeRecoveryKey, renameUser, signOut } from '@/store/actions'
 import { useSession } from '@/store/session'
 import { Card, ErrorText, Field, Input, SectionTitle } from './parts'
 
@@ -57,7 +57,56 @@ export function ProfileTab() {
           so they're all here when you sign in again. To stop that, unlink them in Accounts.
         </p>
       </section>
+
+      <DeleteAccount user={user} />
     </div>
+  )
+}
+
+/**
+ * Deleting the account, for good: tucked away under a disclosure, and it takes the password (or,
+ * for a Google-only account, the email typed out).
+ */
+function DeleteAccount({ user }: { user: PublicUser }) {
+  const [proof, setProof] = useState('')
+  const [visible, setVisible] = useState(false)
+  const removing = useAsync()
+  const ready = user.hasPassword ? proof.length > 0 : proof.trim().toLowerCase() === user.email.toLowerCase()
+  return (
+    <section className="space-y-2 border-t border-line pt-5">
+      <details className="group">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-rose-600 select-none hover:underline dark:text-rose-400">
+          <Trash2 className="size-4" aria-hidden /> Delete account
+        </summary>
+        <form
+          className="mt-3 space-y-3 rounded-2xl border border-rose-500/25 bg-rose-500/5 p-4"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault()
+            void removing.run(() => deleteAccount(user.hasPassword ? { current: proof } : { confirm: proof }))
+          }}
+        >
+          <p className="text-[13px] leading-relaxed text-muted">
+            This deletes your Sytext account for good: WhatsApp, Telegram, Instagram and Guffshuff are signed out and
+            unlinked, and every chat, message, contact and task kept for you is deleted. Your chats stay on the apps
+            themselves. It can't be undone.
+          </p>
+          {user.hasPassword ? (
+            <Field label="Your password, to confirm">
+              <PasswordInput value={proof} onChange={setProof} visible={visible} onToggle={() => setVisible(!visible)} autoComplete="current-password" />
+            </Field>
+          ) : (
+            <Field label={`Type ${user.email} to confirm`}>
+              <Input autoComplete="off" spellCheck={false} value={proof} onChange={(e) => setProof(e.target.value)} />
+            </Field>
+          )}
+          {removing.error && <ErrorText>{removing.error}</ErrorText>}
+          <Button type="submit" size="sm" disabled={!ready || removing.busy} className="bg-rose-600 text-white hover:bg-rose-700">
+            {removing.busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Trash2 className="size-3.5" aria-hidden />}
+            Delete my account
+          </Button>
+        </form>
+      </details>
+    </section>
   )
 }
 

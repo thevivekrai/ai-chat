@@ -7,8 +7,10 @@ import { NetworkIcon } from '@/components/ui/NetworkIcon'
 import { LogoMark } from '@/components/layout/LogoMark'
 import { Wallpaper } from '@/components/layout/Wallpaper'
 import { APP_NAME } from '@/config'
+import type { NetworkId } from '@/data/types'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { cn } from '@/lib/cn'
+import { NETWORKS } from '@/lib/networks'
 import { createAccount, recoverAccount, signIn, signInWithGoogle } from '@/store/actions'
 import { DATABASE_RECHECK_MS, useSession } from '@/store/session'
 import { GoogleButton } from './GoogleButton'
@@ -34,6 +36,7 @@ export function AuthScreen() {
   const [password, setPassword] = useState('')
   const [recoveryKey, setRecoveryKey] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const form = useAsyncAction()
   const google = useAsyncAction()
 
@@ -41,7 +44,7 @@ export function AuthScreen() {
     e.preventDefault()
     void form.run(() =>
       mode === 'create'
-        ? createAccount(name.trim(), email.trim(), password)
+        ? createAccount(name.trim(), email.trim(), password, acceptedTerms)
         : mode === 'recover'
           ? recoverAccount(email.trim(), recoveryKey, password)
           : signIn(email.trim(), password),
@@ -66,14 +69,9 @@ export function AuthScreen() {
           <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
             {mode === 'recover'
               ? 'Enter your email, the recovery key you saved when you made your account, and a new password.'
-              : 'One inbox for your WhatsApp and Telegram chats, with AI that sorts them and drafts replies.'}
+              : 'Every chat app in one inbox, with AI that sorts your chats and drafts the replies.'}
           </p>
-          {mode !== 'recover' && (
-            <div className="mt-3 flex items-center gap-1.5" aria-hidden>
-              <NetworkIcon network="whatsapp" className="size-5" />
-              <NetworkIcon network="telegram" className="size-5" />
-            </div>
-          )}
+          {mode !== 'recover' && <Networks />}
         </div>
 
         {notice && (
@@ -166,8 +164,30 @@ export function AuthScreen() {
               </button>
             </div>
           )}
+          {mode === 'create' && (
+            <label className="flex items-start gap-2.5 text-[13px] leading-snug text-muted">
+              <input
+                type="checkbox"
+                required
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 accent-[var(--color-accent)]"
+              />
+              <span>
+                I have read and agree to the{' '}
+                <a href="/terms" target="_blank" rel="noopener" className="font-medium text-accent-ink hover:underline">
+                  Terms &amp; Conditions
+                </a>{' '}
+                and the{' '}
+                <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-accent-ink hover:underline">
+                  Privacy Policy
+                </a>
+                .
+              </span>
+            </label>
+          )}
           {form.error && <ErrorText>{form.error}</ErrorText>}
-          <Button type="submit" variant="primary" className="w-full" disabled={form.busy}>
+          <Button type="submit" variant="primary" className="w-full" disabled={form.busy || (mode === 'create' && !acceptedTerms)}>
             {form.busy && <Loader2 className="size-4 animate-spin" aria-hidden />}
             {mode === 'create' ? 'Create account' : mode === 'recover' ? 'Reset password' : 'Sign in'}
           </Button>
@@ -177,6 +197,20 @@ export function AuthScreen() {
           <p className="mt-4 text-[11px] leading-relaxed text-faint">
             No recovery key? Then a forgotten password can't be reset here: Sytext can't email you a link. If you sign in
             with Google, use Continue with Google instead. Once you're back in, make a key in Settings → Profile.
+          </p>
+        )}
+
+        {features?.googleClientId && mode !== 'recover' && (
+          <p className="mt-4 text-center text-[11px] leading-relaxed text-faint">
+            Continuing with Google means you agree to the{' '}
+            <a href="/terms" target="_blank" rel="noopener" className="underline hover:text-muted">
+              Terms
+            </a>{' '}
+            and{' '}
+            <a href="/privacy" target="_blank" rel="noopener" className="underline hover:text-muted">
+              Privacy Policy
+            </a>
+            .
           </p>
         )}
 
@@ -199,6 +233,26 @@ export function AuthScreen() {
       >
         Try the demo without an account <ArrowRight className="size-3.5" aria-hidden />
       </button>
+    </div>
+  )
+}
+
+/** The chat apps Sytext brings together: every one, not just two. */
+const SHOWN_NETWORKS: NetworkId[] = ['whatsapp', 'telegram', 'instagram', 'guffshuff', 'matrix', 'slack', 'sms']
+
+function Networks() {
+  return (
+    <div className="mt-3.5 flex flex-col items-center gap-1.5">
+      <ul className="flex items-center gap-1.5" aria-label={`Works with ${SHOWN_NETWORKS.map((n) => NETWORKS[n].name).join(', ')} and more`}>
+        {SHOWN_NETWORKS.map((n) => (
+          <li key={n} title={NETWORKS[n].name}>
+            <NetworkIcon network={n} className="size-6" />
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-faint" aria-hidden>
+        WhatsApp, Telegram, Instagram, Matrix bridges and more
+      </p>
     </div>
   )
 }

@@ -225,15 +225,20 @@ function PrivacyBadge() {
               {engineWhere(engine)}
             </p>
           </div>
-          <Button
-            size="sm"
-            onClick={() => {
-              close()
-              useUi.getState().openSettings('ai')
-            }}
-          >
-            Privacy settings
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                close()
+                useUi.getState().openSettings('ai')
+              }}
+            >
+              Privacy settings
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => window.open('/privacy', '_blank', 'noopener')}>
+              Privacy Policy
+            </Button>
+          </div>
         </div>
       )}
     </Popover>
