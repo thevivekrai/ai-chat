@@ -8,6 +8,7 @@ import { useSettings, type ThemePreference } from '@/store/settings'
 import { useUi, type SettingsTab } from '@/store/ui'
 import { AccountsTab } from './AccountsTab'
 import { AiTab } from './AiTab'
+import { NotificationsTab } from './NotificationsTab'
 import { SectionTitle } from './parts'
 import { PrivacyTab } from './PrivacyTab'
 import { ProfileTab } from './ProfileTab'
@@ -26,6 +27,7 @@ export function SettingsDialog() {
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'accounts', label: 'Accounts' },
+  { id: 'notifications', label: 'Notifications' },
   { id: 'ai', label: 'AI' },
   { id: 'privacy', label: 'Privacy' },
   { id: 'appearance', label: 'Appearance' },
@@ -84,6 +86,8 @@ function SettingsBody({ close }: { close(): void }) {
           <ProfileTab />
         ) : tab === 'accounts' ? (
           <AccountsTab close={close} />
+        ) : tab === 'notifications' ? (
+          <NotificationsTab />
         ) : tab === 'ai' ? (
           <AiTab />
         ) : tab === 'privacy' ? (

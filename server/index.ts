@@ -20,6 +20,7 @@ import { createTelegram } from './networks/telegram.ts'
 import { createWhatsApp } from './networks/whatsapp.ts'
 import { keepAwake } from './keepAwake.ts'
 import { createHub } from './realtime.ts'
+import { createPush, notifyingHub } from './push.ts'
 import { startTemporaryDatabase, type TemporaryDatabase } from './temporaryDatabase.ts'
 
 /** How often linked accounts that aren't connected are reconnected. */
@@ -154,8 +155,10 @@ async function runOnTemporaryStorage(
 function start(config: Config, database: Database, staticDir: string, temporaryProblem?: () => DatabaseProblem | undefined): Instance {
   const { col } = database
   const sealer = createSealer(config.dataKey)
-  const hub = createHub()
   const store = createInboxStore(col, sealer)
+  const push = createPush({ col, sealer, ...config.vapid })
+  // Every new message goes through the hub: from there it's also a notification on the user's devices.
+  const hub = notifyingHub(createHub(), { push, store })
   const avatars = createAvatars(col, sealer)
   const accounts = createAccounts(col, hub)
   const media = createMedia(config.cloudinary)
@@ -187,6 +190,8 @@ function start(config: Config, database: Database, staticDir: string, temporaryP
     secureCookies: config.production,
     staticDir,
     ai: config.ai ?? null,
+    push,
+    androidCertificates: config.androidCertificates,
     ...(temporaryProblem ? { temporaryStorage: { problem: temporaryProblem } } : {}),
   })
 

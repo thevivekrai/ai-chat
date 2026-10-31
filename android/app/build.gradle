@@ -1,0 +1,73 @@
+plugins {
+    id 'com.android.application'
+}
+
+/*
+ * Sytext for Android: the site, full screen, as a Trusted Web Activity (Chrome shows it without
+ * its address bar once the site vouches for the app at /.well-known/assetlinks.json). Notifications
+ * are the site's own Web Push, shown under the app's name and icon.
+ *
+ * Built by .github/workflows/android.yml. TWA_HOST is the site it opens; VERSION_CODE numbers the
+ * build; ANDROID_KEYSTORE (and its passwords) signs it.
+ */
+def host = System.getenv('TWA_HOST') ?: 'sytext-in.onrender.com'
+def launchUrl = "https://${host}/"
+def versionNumber = (System.getenv('VERSION_CODE') ?: '1') as int
+
+android {
+    namespace 'com.sytext.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.sytext.app'
+        minSdk 21
+        targetSdk 35
+        versionCode versionNumber
+        versionName "1.0.${versionNumber}"
+
+        resValue 'string', 'appName', 'Sytext'
+        resValue 'string', 'launcherName', 'Sytext'
+        resValue 'string', 'launchUrl', launchUrl
+        resValue 'string', 'hostName', host
+        resValue 'string', 'providerAuthority', 'com.sytext.app.fileprovider'
+        resValue 'string', 'webManifestUrl', "https://${host}/manifest.webmanifest"
+        // The other half of the handshake with assetlinks.json: the app vouches for the site.
+        resValue 'string', 'assetStatements',
+            '[{ \\"relation\\": [\\"delegate_permission/common.handle_all_urls\\"], ' +
+            '\\"target\\": {\\"namespace\\": \\"web\\", \\"site\\": \\"https://' + host + '\\"}}]'
+        manifestPlaceholders = [hostName: host]
+    }
+
+    signingConfigs {
+        release {
+            def keystore = System.getenv('ANDROID_KEYSTORE')
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'sytext'
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: System.getenv('ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('ANDROID_KEYSTORE')) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}

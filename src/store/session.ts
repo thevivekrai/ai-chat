@@ -7,6 +7,7 @@ import { storage } from '@/data/storage'
 import { restoreAiConsent } from './aiConsent'
 import { useCalendar } from './calendar'
 import { useInbox } from './inbox'
+import { useNotifications } from './notifications'
 import { useUi } from './ui'
 
 /**
@@ -107,6 +108,7 @@ export const useSession = create<SessionState>()((set, get) => ({
     set({ status: 'signed-in', user, notice: null, ...(key && key.userId !== user.id ? { recoveryKey: null } : {}) })
     restoreAiConsent(user.id)
     void useCalendar.getState().refresh()
+    void useNotifications.getState().sync()
     await api.connections.setServerSession(user)
   },
 
@@ -119,6 +121,8 @@ export const useSession = create<SessionState>()((set, get) => ({
     storage.remove(GUEST_KEY)
     useInbox.getState().clear()
     useCalendar.getState().forget()
+    // This device stops getting the account's messages (signed out here or from elsewhere).
+    void useNotifications.getState().forgetHere()
     // Signing back in starts at the inbox, not wherever the last person left off.
     useUi.getState().closeDialog()
     // A recovery key being shown stays until it's saved: the server already has it in place of the

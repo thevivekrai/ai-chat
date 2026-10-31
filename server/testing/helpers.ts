@@ -27,6 +27,7 @@ import { createAccounts } from '../networks/accounts.ts'
 import { createTelegram, type CreateTgClient, type Telegram, type TgMessage, type TgSelf, type TgUpdate } from '../networks/telegram.ts'
 import { createWhatsApp, type DownloadWaMedia, type WaContent, type WaSocket, type WhatsApp } from '../networks/whatsapp.ts'
 import { createHub } from '../realtime.ts'
+import { createPush, notifyingHub, type PushSubscriptionInput } from '../push.ts'
 
 /** Integration tests run against a real MongoDB when TEST_MONGODB_URI is set (each run gets its own database). */
 export const TEST_MONGODB_URI = process.env.TEST_MONGODB_URI
@@ -463,6 +464,10 @@ export interface TestServer {
   x: ReturnType<typeof fakeX>
   calendar: ReturnType<typeof fakeCalendar>
   google: Awaited<ReturnType<typeof fakeGoogle>>
+  /** Notifications sent to devices, newest last. */
+  pushes: (PushSubscriptionInput & { payload: Record<string, unknown> })[]
+  /** Devices whose push service says they're gone (410). */
+  gonePush: Set<string>
   /** The parts running now (rebuilt by `restart`). */
   current(): { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram; x: X }
   /** Builds the network managers again over the same database, as after a restart. */
@@ -503,13 +508,25 @@ export async function startTestServer({
   const calendar = fakeCalendar()
   const google = await fakeGoogle()
   const tokens = createSessionTokens('x'.repeat(40))
+  /** Notifications sent, as the push services would have taken them; endpoints in gonePush answer 410. */
+  const pushes: (PushSubscriptionInput & { payload: Record<string, unknown> })[] = []
+  const gonePush = new Set<string>()
 
   let server: Server
   let managers: { store: InboxStore; whatsapp: WhatsApp; telegram: Telegram; guffshuff: Guffshuff; instagram: Instagram; x: X }
 
   async function boot(port = 0) {
-    const hub = createHub()
     const store = createInboxStore(database.col, sealer)
+    const push = createPush({
+      col: database.col,
+      sealer,
+      subject: 'mailto:test@example.com',
+      sendPush: async (subscription, payload) => {
+        pushes.push({ endpoint: subscription.endpoint, keys: subscription.keys, payload: JSON.parse(payload) as Record<string, unknown> })
+        if (gonePush.has(subscription.endpoint)) throw Object.assign(new Error('gone'), { statusCode: 410 })
+      },
+    })
+    const hub = notifyingHub(createHub(), { push, store })
     const avatars = createAvatars(database.col, sealer)
     const accounts = createAccounts(database.col, hub)
     const files = createFileLinks(sealer)
@@ -595,6 +612,8 @@ export async function startTestServer({
       secureCookies: false,
       staticDir,
       ai,
+      push,
+      androidCertificates: ['AA:'.repeat(31) + 'AA'],
     })
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(port, '127.0.0.1', () => resolve(s))
@@ -626,6 +645,8 @@ export async function startTestServer({
     x: xSite,
     calendar,
     google,
+    pushes,
+    gonePush,
     current: () => managers,
     async restart() {
       const port = (server.address() as AddressInfo).port

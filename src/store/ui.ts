@@ -19,7 +19,7 @@ export interface ChatSearch {
   current: string | null
 }
 export type Dialog = 'command' | 'settings' | 'shortcuts'
-export type SettingsTab = 'profile' | 'accounts' | 'ai' | 'privacy' | 'appearance'
+export type SettingsTab = 'profile' | 'accounts' | 'notifications' | 'ai' | 'privacy' | 'appearance'
 
 interface UiState {
   view: View

@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "Sytext",
+  "short_name": "Sytext",
+  "description": "One AI inbox for WhatsApp, Telegram, Instagram, X and more, with notifications of new messages.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#251d56",
+  "theme_color": "#251d56",
+  "categories": ["social", "productivity", "communication"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Needs reply", "url": "/", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "All chats", "url": "/chat", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

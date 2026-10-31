@@ -264,6 +264,7 @@ describe.skipIf(!TEST_MONGODB_URI)('server (with MongoDB)', () => {
         instagram: true,
         x: true,
         calendar: true,
+        androidApp: false,
         uploads: false,
         database: true,
         storage: 'database',

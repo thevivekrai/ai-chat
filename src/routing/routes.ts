@@ -45,7 +45,7 @@ const LIST_PATHS: Record<Exclude<View, 'needs-reply' | 'all'>, string> = {
 }
 const VIEW_OF_PATH = Object.fromEntries(Object.entries(LIST_PATHS).map(([view, path]) => [path, view as View]))
 
-const SETTINGS_TABS: SettingsTab[] = ['profile', 'accounts', 'ai', 'privacy', 'appearance']
+const SETTINGS_TABS: SettingsTab[] = ['profile', 'accounts', 'notifications', 'ai', 'privacy', 'appearance']
 
 /** The public pages, which show the same whether or not anyone is signed in. */
 export const PUBLIC_PAGES: Page[] = ['login', 'not-found']

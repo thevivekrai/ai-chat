@@ -99,6 +99,8 @@ export interface ServerFeatures {
   x?: boolean
   /** Tasks can be kept in Google Calendar (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET). */
   calendar?: boolean
+  /** The Android app can be downloaded from this site (/download/sytext.apk). */
+  androidApp?: boolean
   uploads: boolean
   /**
    * False while the server has no database at all: the site works, but signing in and linked

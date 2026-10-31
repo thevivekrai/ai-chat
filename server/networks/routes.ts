@@ -146,6 +146,7 @@ export function linkRoutes({ col, tokens, accounts, whatsapp, telegram, guffshuf
       col.messages.deleteMany({ userId }),
       col.avatars.deleteMany({ userId }),
       col.tasks.deleteMany({ userId }),
+      col.push.deleteMany({ userId }),
     ])
     await col.users.deleteOne({ _id: userId })
     res.clearCookie(SESSION_COOKIE, { path: '/' })
