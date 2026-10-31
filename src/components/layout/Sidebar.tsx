@@ -83,7 +83,7 @@ export function Sidebar({ className }: { className?: string }) {
                   <span className="flex-1 text-left">{label}</span>
                   {count > 0 &&
                     (id === 'needs-reply' ? (
-                      <span className="grid h-5 min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg tabular-nums">
+                      <span className="accent-gloss grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] font-semibold shadow-sm tabular-nums">
                         {count}
                       </span>
                     ) : (

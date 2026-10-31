@@ -3,15 +3,17 @@ import { cn } from '@/lib/cn'
 import { hashString, initials, isEmojiAvatar } from '@/lib/format'
 import { NetworkIcon } from './NetworkIcon'
 
+/* Each entry: a soft two-stop gradient plus the ink colour for the initials, so a contact's
+   avatar reads as a small glossy orb rather than a flat tinted circle. */
 const PALETTE = [
-  'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
-  'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
-  'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-  'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
-  'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
-  'bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300',
-  'bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-300',
-  'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
+  'bg-gradient-to-br from-rose-200 to-rose-300/80 text-rose-800 dark:from-rose-500/30 dark:to-rose-500/10 dark:text-rose-200',
+  'bg-gradient-to-br from-amber-200 to-amber-300/80 text-amber-900 dark:from-amber-500/30 dark:to-amber-500/10 dark:text-amber-200',
+  'bg-gradient-to-br from-emerald-200 to-emerald-300/80 text-emerald-800 dark:from-emerald-500/30 dark:to-emerald-500/10 dark:text-emerald-200',
+  'bg-gradient-to-br from-sky-200 to-sky-300/80 text-sky-800 dark:from-sky-500/30 dark:to-sky-500/10 dark:text-sky-200',
+  'bg-gradient-to-br from-violet-200 to-violet-300/80 text-violet-800 dark:from-violet-500/30 dark:to-violet-500/10 dark:text-violet-200',
+  'bg-gradient-to-br from-teal-200 to-teal-300/80 text-teal-800 dark:from-teal-500/30 dark:to-teal-500/10 dark:text-teal-200',
+  'bg-gradient-to-br from-orange-200 to-orange-300/80 text-orange-900 dark:from-orange-500/30 dark:to-orange-500/10 dark:text-orange-200',
+  'bg-gradient-to-br from-indigo-200 to-indigo-300/80 text-indigo-800 dark:from-indigo-500/30 dark:to-indigo-500/10 dark:text-indigo-200',
 ]
 
 const SIZES = {
@@ -40,6 +42,7 @@ interface AvatarProps {
 export function Avatar({ name, seed = name, size = 'md', group = false, network, imageUrl, className }: AvatarProps) {
   const label = initials(name)
   const emoji = isEmojiAvatar(label)
+  const shape = group ? 'rounded-[30%]' : 'rounded-full'
   return (
     <span className={cn('relative inline-flex shrink-0', className)}>
       {imageUrl ? (
@@ -48,26 +51,33 @@ export function Avatar({ name, seed = name, size = 'md', group = false, network,
           alt=""
           // Google's profile photos refuse requests that carry a referrer.
           referrerPolicy="no-referrer"
-          className={cn('object-cover ring-1 ring-line', group ? 'rounded-[30%]' : 'rounded-full', SIZES[size])}
+          className={cn('object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10', shape, SIZES[size])}
         />
       ) : (
         <span
           aria-hidden
           className={cn(
-            'inline-flex items-center justify-center font-semibold tracking-tight select-none',
-            group ? 'rounded-[30%]' : 'rounded-full',
-            emoji ? 'bg-surface-2 ring-1 ring-line ring-inset' : PALETTE[hashString(seed) % PALETTE.length],
+            'relative isolate inline-flex items-center justify-center overflow-hidden font-semibold tracking-tight select-none',
+            shape,
+            emoji ? 'bg-surface-2 ring-1 ring-line ring-inset' : cn(PALETTE[hashString(seed) % PALETTE.length], 'shadow-sm ring-1 ring-black/5 dark:ring-white/10'),
             SIZES[size],
             emoji && EMOJI_SIZES[size],
           )}
         >
-          {label}
+          {/* A soft light catching the top of the orb, like the rest of the glass UI. */}
+          {!emoji && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-[linear-gradient(165deg,rgb(255_255_255/0.65),rgb(255_255_255/0)_55%)] dark:bg-[linear-gradient(165deg,rgb(255_255_255/0.22),rgb(255_255_255/0)_55%)]"
+            />
+          )}
+          <span className="relative">{label}</span>
         </span>
       )}
       {network && (
         <NetworkIcon
           network={network}
-          className={cn('absolute -right-1 -bottom-1 ring-2 ring-surface-solid', BADGE_SIZES[size])}
+          className={cn('absolute -right-1 -bottom-1 shadow-sm ring-2 ring-surface-solid', BADGE_SIZES[size])}
         />
       )}
     </span>
