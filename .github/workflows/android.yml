@@ -1,0 +1,137 @@
+# Builds the Android app (android/): the site as a Trusted Web Activity, with its notifications.
+#
+# On a pull request that touches it: builds, so a broken build shows before merging.
+# On main (or run by hand from the Actions tab): builds a signed APK, attaches it to a GitHub
+# Release, and commits it as android/sytext.apk, which the site offers at /download/sytext.apk.
+# The key's fingerprint goes into android/signing-sha256.txt, which the site serves in
+# /.well-known/assetlinks.json, so the app opens full screen.
+#
+# Signing: set these repository secrets (Settings → Secrets and variables → Actions) to sign every
+# build with the same key, so new versions install over old ones:
+#   ANDROID_KEYSTORE_BASE64    the keystore file, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD  its password
+#   ANDROID_KEY_ALIAS          the key's alias (default: sytext)
+#   ANDROID_KEY_PASSWORD       the key's password (default: the keystore's)
+# Without them, each build makes a key of its own: the APK works, but installing a newer one means
+# uninstalling the old one first.
+#
+# The site the app opens: the SITE_HOST repository variable, or sytext-in.onrender.com.
+name: Android app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '!android/sytext.apk'
+      - '!android/signing-sha256.txt'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'The site the app opens (a host name, like sytext-in.onrender.com)'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TWA_HOST: ${{ inputs.host || vars.SITE_HOST || 'sytext-in.onrender.com' }}
+      VERSION_CODE: ${{ github.run_number }}
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          keystore="$RUNNER_TEMP/release.keystore"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+            store_pass="$KEYSTORE_PASSWORD"
+            alias="${KEY_ALIAS:-sytext}"
+            key_pass="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret, so this build is signed with a key of its own. Installing a later build means uninstalling this one first. See .github/workflows/android.yml."
+            store_pass="$(openssl rand -hex 24)"
+            alias=sytext
+            key_pass="$store_pass"
+            keytool -genkeypair -noprompt -keystore "$keystore" -storetype PKCS12 -storepass "$store_pass" \
+              -alias "$alias" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sytext, O=Sytext"
+          fi
+          echo "::add-mask::$store_pass"
+          echo "::add-mask::$key_pass"
+          fingerprint="$(keytool -list -v -keystore "$keystore" -storepass "$store_pass" -alias "$alias" | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d '[:space:]')"
+          echo "Signing key SHA-256: $fingerprint"
+          {
+            echo "ANDROID_KEYSTORE=$keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$store_pass"
+            echo "ANDROID_KEY_ALIAS=$alias"
+            echo "ANDROID_KEY_PASSWORD=$key_pass"
+            echo "CERT_SHA256=$fingerprint"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Check the APK
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          ls -l "$apk"
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          "$apksigner" verify --print-certs "$apk"
+          cp "$apk" Sytext.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sytext-${{ github.run_number }}
+          path: Sytext.apk
+
+      - name: Release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "android-v1.0.${VERSION_CODE}" Sytext.apk \
+            --title "Sytext for Android 1.0.${VERSION_CODE}" \
+            --notes "Install on Android: download Sytext.apk on the phone, open it, and allow installing from your browser if asked. The app opens https://${TWA_HOST}/ and shows notifications of new messages (turn them on in Settings → Notifications). Signing key SHA-256: ${CERT_SHA256}" \
+            --latest
+
+      - name: Commit the APK
+        if: env.PUBLISH == 'true'
+        run: |
+          cp Sytext.apk android/sytext.apk
+          touch android/signing-sha256.txt
+          grep -qxF "$CERT_SHA256" android/signing-sha256.txt || echo "$CERT_SHA256" >> android/signing-sha256.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/sytext.apk android/signing-sha256.txt
+          git commit -m "Android app: build 1.0.${VERSION_CODE}"
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1

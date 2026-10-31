@@ -185,6 +185,10 @@ export const serverApi = {
     request<{ thread: Thread }>('POST', `/threads/${segment(threadId)}/state`, patch),
   putTask: (task: Task) => request<{ task: Task }>('PUT', `/tasks/${segment(task.id)}`, task),
   deleteTask: (taskId: string) => request<{ ok: true }>('DELETE', `/tasks/${segment(taskId)}`),
+  pushKey: () => request<{ key: string }>('GET', '/push/key'),
+  pushSubscribe: (subscription: PushSubscriptionJSON, preview: boolean) => request<{ ok: true }>('POST', '/push/subscribe', { subscription, preview }),
+  pushUnsubscribe: (endpoint: string) => request<{ ok: true }>('POST', '/push/unsubscribe', { endpoint }),
+  pushTest: () => request<{ sent: number }>('POST', '/push/test'),
   calendar: () => request<CalendarStatus>('GET', '/calendar'),
   disconnectCalendar: () => request<CalendarStatus>('DELETE', '/calendar'),
   syncTask: (task: Task, note?: string) =>

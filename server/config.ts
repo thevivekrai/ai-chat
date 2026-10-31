@@ -53,6 +53,18 @@ export interface Config {
    * shape doesn't. AI_MODEL and AI_TRIAGE_MODEL choose the models.
    */
   ai?: { provider: SharedAiProvider; apiKey: string; model: string; triageModel: string }
+  /**
+   * Signs notifications of new messages (Web Push). VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY, from
+   * `npx web-push generate-vapid-keys`; without them the server makes a pair once and keeps it in
+   * the database. VAPID_SUBJECT is how a push service can reach whoever runs the server.
+   */
+  vapid: { subject: string; keys?: { publicKey: string; privateKey: string } }
+  /**
+   * SHA-256 fingerprints of the keys the Android app is signed with, comma-separated, for
+   * /.well-known/assetlinks.json (ANDROID_CERT_SHA256): a key of your own, or Google Play's. The
+   * keys of the APKs built into the repository (android/signing-sha256.txt) are always included.
+   */
+  androidCertificates: string[]
 }
 
 export class ConfigError extends Error {}
@@ -104,7 +116,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     instagram: !isOff(env.INSTAGRAM),
     x: !isOff(env.X),
     ai: aiKey ? sharedAi(aiKey, env) : undefined,
+    vapid: vapidOf(env),
+    androidCertificates: (env.ANDROID_CERT_SHA256 ?? '')
+      .split(',')
+      .map((c) => c.trim().toUpperCase())
+      .filter((c) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(c)),
   }
+}
+
+function vapidOf(env: NodeJS.ProcessEnv): Config['vapid'] {
+  const publicKey = env.VAPID_PUBLIC_KEY?.trim()
+  const privateKey = env.VAPID_PRIVATE_KEY?.trim()
+  if (!!publicKey !== !!privateKey) throw new ConfigError('Set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY, or neither.')
+  const site = env.KEEP_AWAKE_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim()
+  const subject = env.VAPID_SUBJECT?.trim() || (site?.startsWith('https://') ? site : 'mailto:notifications@sytext.invalid')
+  if (!/^(https:\/\/|mailto:)/.test(subject)) throw new ConfigError('VAPID_SUBJECT must be an https:// address or a mailto: address.')
+  return { subject, ...(publicKey && privateKey ? { keys: { publicKey, privateKey } } : {}) }
 }
 
 export type SharedAiProvider = 'openrouter' | 'gemini'

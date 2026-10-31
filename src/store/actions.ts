@@ -19,6 +19,7 @@ import { useCalendar } from './calendar'
 import { wipeDeviceStore } from '@/data/server/deviceStore'
 import { keepAiConsent } from './aiConsent'
 import { currentAiEngine } from './aiEngine'
+import { useNotifications } from './notifications'
 import { useSettings, type AiSettings } from './settings'
 import { toast, useToasts } from './toasts'
 import { useUi } from './ui'
@@ -572,6 +573,8 @@ export async function signInWithGoogle(credential: string) {
 }
 
 export async function signOut() {
+  // While still signed in, so the server forgets this device too.
+  await useNotifications.getState().forgetHere().catch(() => undefined)
   await serverApi.logout().catch(() => undefined)
   keepConsentOfSignedInUser()
   forgetThreadsHere(isServerThread)

@@ -199,6 +199,28 @@ export interface MessagePayload {
   reactedAt?: Record<string, number>
 }
 
+/** A device the user turned notifications on for (see push.ts). */
+export interface PushDoc {
+  userId: ObjectId
+  /** Where its push service takes pushes for it: unique to the device's browser. */
+  endpoint: string
+  /** Sealed { p256dh, auth }: what pushes are encrypted for. */
+  keys: string
+  /** Show who wrote and what, or only that a message came. */
+  preview: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+/** Settings the server keeps for itself: the push signing key. */
+export interface SettingDoc {
+  _id: string
+  publicKey?: string
+  /** Sealed. */
+  privateKey?: string
+  createdAt?: Date
+}
+
 export interface Collections {
   users: Collection<UserDoc>
   accounts: Collection<AccountDoc>
@@ -208,6 +230,8 @@ export interface Collections {
   messages: Collection<MessageDoc>
   avatars: Collection<AvatarDoc>
   tasks: Collection<TaskDoc>
+  push: Collection<PushDoc>
+  settings: Collection<SettingDoc>
 }
 
 export interface Database {
@@ -250,6 +274,8 @@ export async function connectDatabase(uri: string, dbName = databaseName(uri)): 
     messages: db.collection('messages'),
     avatars: db.collection('avatars'),
     tasks: db.collection('tasks'),
+    push: db.collection('push_subscriptions'),
+    settings: db.collection('settings'),
   }
   try {
     await ensureIndexes(col)
@@ -346,6 +372,8 @@ async function ensureIndexes(col: Collections) {
     index(col.messages, { userId: 1, threadId: 1, sentAt: -1 }),
     index(col.avatars, { userId: 1, id: 1 }, { unique: true }),
     index(col.tasks, { userId: 1, id: 1 }, { unique: true }),
+    index(col.push, { endpoint: 1 }, { unique: true }),
+    index(col.push, { userId: 1, updatedAt: -1 }),
   ])
 }
 

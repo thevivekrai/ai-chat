@@ -23,6 +23,7 @@ import type { X } from './networks/x.ts'
 import type { Telegram } from './networks/telegram.ts'
 import type { WhatsApp } from './networks/whatsapp.ts'
 import type { Hub } from './realtime.ts'
+import { pushRoutes, type Push } from './push.ts'
 
 export interface AppDeps {
   col: Collections
@@ -58,6 +59,10 @@ export interface AppDeps {
   sealer: Sealer
   /** Google Calendar, when the server has a client id and secret for it. */
   calendar?: CalendarConfig | null
+  /** Notifications of new messages on the user's devices. */
+  push: Push
+  /** SHA-256 fingerprints of the keys the Android app is signed with (for /.well-known/assetlinks.json). */
+  androidCertificates?: string[]
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -73,6 +78,21 @@ export function createApp(deps: AppDeps): Express {
       res.sendFile(join(process.cwd(), 'public', page, `${page}.html`))
     })
   }
+
+  // The Android app (android/) opens this site full screen, without a browser bar, once the site
+  // vouches for it here: the app's package and the fingerprints of the keys it's signed with.
+  app.get('/.well-known/assetlinks.json', (_req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=3600')
+    res.json(assetLinks(deps.androidCertificates ?? []))
+  })
+
+  // The Android app itself, for phones to download straight from the site.
+  app.get('/download/sytext.apk', (_req, res, next) => {
+    if (!existsSync(ANDROID_APK_FILE)) return next()
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.download(ANDROID_APK_FILE, 'Sytext.apk')
+  })
 
   const api = Router()
   // A ceiling for any one visitor, far above what the app sends, so a flood of requests can't
@@ -92,6 +112,7 @@ export function createApp(deps: AppDeps): Express {
       telegram: deps.telegram.enabled,
       guffshuff: deps.guffshuff.enabled,
       calendar: !!deps.calendar,
+      androidApp: existsSync(ANDROID_APK_FILE),
       instagram: deps.instagram.enabled,
       x: deps.x.enabled,
       uploads: !!deps.media,
@@ -117,6 +138,7 @@ export function createApp(deps: AppDeps): Express {
   api.use(linkRoutes(deps))
   api.use(aiRoutes({ col: deps.col, tokens: deps.tokens, ai: deps.ai ?? null }))
   api.use(calendarRoutes({ col: deps.col, tokens: deps.tokens, sealer: deps.sealer, config: deps.calendar ?? null }))
+  api.use(pushRoutes({ col: deps.col, tokens: deps.tokens, push: deps.push }))
   api.use(inboxRoutes(deps))
   api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')))
   api.use(errorHandler)
@@ -124,6 +146,28 @@ export function createApp(deps: AppDeps): Express {
 
   serveApp(app, deps.staticDir)
   return app
+}
+
+/** The Android app's package name (android/app/build.gradle). */
+export const ANDROID_PACKAGE = 'com.sytext.app'
+/** The APK built by GitHub Actions (.github/workflows/android.yml), committed to the repository. */
+const ANDROID_APK_FILE = join(process.cwd(), 'android', 'sytext.apk')
+/** Fingerprints of the keys the APKs in the repository were signed with, one per line (the build adds them). */
+const ANDROID_SIGNING_FILE = join(process.cwd(), 'android', 'signing-sha256.txt')
+const FINGERPRINT = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/
+
+/** Digital Asset Links: this site trusts the Android app signed with these keys to show it. */
+export function assetLinks(extra: string[], file = ANDROID_SIGNING_FILE) {
+  const built = existsSync(file) ? readFileSync(file, 'utf8').split(/\s+/) : []
+  const fingerprints = [...new Set([...built, ...extra].map((f) => f.trim().toUpperCase()).filter((f) => FINGERPRINT.test(f)))]
+  return fingerprints.length
+    ? [
+        {
+          relation: ['delegate_permission/common.handle_all_urls'],
+          target: { namespace: 'android_app', package_name: ANDROID_PACKAGE, sha256_cert_fingerprints: fingerprints },
+        },
+      ]
+    : []
 }
 
 /** The app's own pages; anything else is a 404 (the app still shows its "not found" page). */

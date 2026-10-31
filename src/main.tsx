@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter'
 import './index.css'
 import { App } from './App'
+import { go } from './routing/router'
+import { registerServiceWorker } from './store/notifications'
 
 // Scammers ask people to paste code here to take over their account ("self-XSS"): say so plainly.
 if (import.meta.env.PROD) {
@@ -12,6 +14,9 @@ if (import.meta.env.PROD) {
     'font-size:15px',
   )
 }
+
+// Notifications of new messages, and opening the chat when one is tapped (see public/sw.js).
+void registerServiceWorker((path) => go(path))
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

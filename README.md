@@ -97,6 +97,8 @@ variable. The service's log says which file it read and which features are on:
 | `INSTAGRAM` | `off` takes Instagram off the Settings page for everyone on this server (it's offered by default). |
 | `AI_API` | An OpenRouter key (`sk-or-…`) or a Google Gemini key: turns on the shared AI for everyone signed in. `AI_PROVIDER` (`openrouter` or `gemini`) says which if the key doesn't; `AI_MODEL` and `AI_TRIAGE_MODEL` pick its models. |
 | `KEEP_AWAKE` | `off` stops the server visiting itself to stay awake (see below). `KEEP_AWAKE_URL` sets the address to visit elsewhere than Render. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional: your own key pair for notifications (`npx web-push generate-vapid-keys`). Without them the server makes one and keeps it in the database. |
+| `ANDROID_CERT_SHA256` | Optional: more signing-key fingerprints for the Android app (see [Notifications and the Android app](#notifications-and-the-android-app)). |
 | `TEMPORARY_STORAGE` | `off` stops the server keeping accounts in temporary storage while the database can't be reached (see below). |
 
 `PORT` is optional: the server listens where Render tells it to.
@@ -142,6 +144,40 @@ your open tasks (with their due dates) as well as your chats.
 | `R` | Draft replies | `A` | Toggle AI panel |
 | `1` `2` `3` | Use a draft | `⌘K` / `Ctrl+K` | Search & ask across chats |
 | `Tab` | Next `[blank]` in a draft | `/` · `?` · `Esc` | Filter list · Help · Close |
+
+## Notifications and the Android app
+
+Linked accounts live on the server, connected around the clock (with keep-awake on Render's free
+plan, above), so the server is what sees a message arrive, and it tells your devices with **Web
+Push**. Turn it on per device in **Settings → Notifications** (the app also offers it once after
+you sign in). Each new message from someone else becomes a notification: one per chat, the newest
+replacing the last, with who wrote and what (or only "New message on WhatsApp" with previews off).
+Nothing shows while Sytext is open in front of you, archived chats stay quiet, messages arriving
+late from a history sync don't ring, and a flood is held to a dozen a minute. Tapping one opens
+the chat. It works in Chrome, Edge, Firefox and Safari on computers and Android, and on iPhone
+once Sytext is added to the Home Screen. Signing out stops a device's notifications, and so does a
+new password (for every other device).
+
+The **Android app** (`android/`) is the site as a [Trusted Web
+Activity](https://developer.chrome.com/docs/android/trusted-web-activity): it opens full screen
+from the home screen and shows the same notifications under its own name and icon. GitHub Actions
+builds it (`.github/workflows/android.yml`) whenever `android/` changes on `main`: a signed APK on
+the [Releases](../../releases) page and in the repository as `android/sytext.apk`, which the site
+offers at `/download/sytext.apk` (Settings → Notifications on an Android phone has the button). To
+install: download it on the phone, open it, and allow installing from the browser when asked.
+
+- **Which site it opens:** `sytext-in.onrender.com`, or set the `SITE_HOST` repository variable
+  (Settings → Secrets and variables → Actions → Variables) and run the workflow again.
+- **Signing:** add the keystore as repository secrets (`ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, and if they differ `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`) so
+  every build is signed with the same key and installs over the last. Without them each build gets
+  a key of its own, and a newer APK needs the old one uninstalled first. Make a keystore with
+  `keytool -genkeypair -keystore sytext.keystore -storetype PKCS12 -alias sytext -keyalg RSA -keysize 2048 -validity 10000`,
+  then `base64 -w0 sytext.keystore` for the secret. Keep the file safe: it's what proves an update
+  is yours.
+- **Full screen:** the build records its key's fingerprint in `android/signing-sha256.txt`, which
+  the site serves at `/.well-known/assetlinks.json`; until the site has redeployed with it, the app
+  shows a slim address bar at the top.
 
 ## Sign in
 

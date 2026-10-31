@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's own light and dark backgrounds (src/index.css), and its brand navy. -->
+    <color name="statusBar">#DBE7F3</color>
+    <color name="statusBarDark">#0B0E14</color>
+    <color name="navigationBar">#F2F6FA</color>
+    <color name="navigationBarDark">#0B0E14</color>
+    <color name="splashBackground">#251D56</color>
+    <color name="iconBackground">#251D56</color>
+</resources>
