@@ -541,6 +541,29 @@
     .footer-links a { color: inherit; }
     .footer-links a:hover { color: var(--text-main); }
 
+
+    /* ============ MASCOT ============ */
+    /* In the flow, so it can never cover the heading or hang off a narrow screen. Beside the
+       title on a wide screen (it sits in the grid's spare first column), above it on a phone. */
+    .mascot {
+      display: block;
+      width: clamp(96px, 16vw, 140px);
+      height: auto;
+      margin: 0 auto;
+      pointer-events: none;
+      user-select: none;
+      filter: drop-shadow(0 15px 25px rgba(0,0,0,0.15));
+      animation: floatMascot 6s ease-in-out infinite;
+      object-fit: contain;
+    }
+    @keyframes floatMascot {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-12px) rotate(3deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .mascot { animation: none; }
+    }
+
     /* ============ RESPONSIVE ============ */
     @media (max-width: 900px) {
       .layout-grid {
@@ -600,7 +623,7 @@
 
   <header class="terms-header">
     <div class="layout-grid" style="padding-bottom: 0;">
-      <div></div>
+      <div><img src="../m2.png" alt="" class="mascot" /></div>
       <div>
         <a href="/" class="back-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

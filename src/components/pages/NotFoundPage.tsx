@@ -22,6 +22,7 @@ export function NotFoundPage() {
       </div>
 
       <main className="nf-card">
+        <img src="/m5.png" alt="" className="nf-mascot" />
         <div className="nf-code" aria-hidden>
           404
         </div>

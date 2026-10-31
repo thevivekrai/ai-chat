@@ -18,10 +18,13 @@
 
   position: fixed;
   inset: 0;
-  overflow: hidden;
+  /* Scrolls rather than clips: on a short window the card (and the mascot lifted over its top
+     edge) would otherwise lose its head. */
+  overflow: auto;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 28px 0;
   font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
   color: var(--nf-text-main);
   background: linear-gradient(180deg, var(--nf-bg-top) 0%, var(--nf-bg-bottom) 100%);
@@ -93,6 +96,7 @@
   width: min(100% - 40px, 600px);
   position: relative;
   z-index: 10;
+  margin: auto;
   animation: nf-float 8s ease-in-out infinite;
 }
 .dark .nf-card {
@@ -102,6 +106,18 @@
 @keyframes nf-float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-8px); }
+}
+
+/* The mascot peeks over the top edge of the card, as on the marketing pages. */
+.nf-mascot {
+  display: block;
+  width: clamp(96px, 20vw, 140px);
+  height: auto;
+  /* Lifted so it straddles the card's top edge; the card's 64px padding takes the rest. */
+  margin: -92px auto 4px;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 15px 25px rgba(0, 0, 0, 0.18));
 }
 
 .nf-code {
@@ -171,6 +187,7 @@
   .nf-card { padding: 48px 24px; }
   .nf-ghost { display: none; }
   .nf-code { font-size: 100px; }
+  .nf-mascot { margin-top: -72px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
