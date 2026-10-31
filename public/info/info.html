@@ -102,10 +102,15 @@
     [data-theme="dark"] .noise-overlay { opacity: 0.06; }
 
     /* ============ MASCOT GLOBAL STYLES ============ */
+    /* In the flow, never absolutely placed: a mascot can then not land on top of a heading or
+       hang off the side of a narrow screen. Each section only says where its own one sits. */
     .mascot {
-      position: absolute;
-      z-index: 10;
+      display: block;
+      width: clamp(104px, 17vw, 150px);
+      height: auto;
+      margin: 0 auto;
       pointer-events: none;
+      user-select: none;
       filter: drop-shadow(0 15px 25px rgba(0,0,0,0.15));
       animation: floatMascot 6s ease-in-out infinite;
       object-fit: contain;
@@ -114,6 +119,9 @@
     @keyframes floatMascot {
       0%, 100% { transform: translateY(0) rotate(0deg); }
       50% { transform: translateY(-12px) rotate(3deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .mascot { animation: none; }
     }
 
     /* ============ TYPOGRAPHY ============ */
@@ -302,12 +310,8 @@
       text-align: center;
     }
     
-    /* Mascot 1 */
-    .mascot-hero {
-      top: 160px; 
-      left: -120px;
-      width: 150px;
-    }
+    /* Mascot 1: over the badge that opens the hero. */
+    .mascot-hero { margin-bottom: 20px; }
 
     .hero-badge {
       display: inline-flex;
@@ -497,12 +501,8 @@
       position: relative;
     }
     
-    /* Mascot 3 */
-    .mascot-how {
-      top: -80px;
-      right: -80px;
-      width: 170px;
-    }
+    /* Mascot 3: the heading here is left-aligned, so this one sits out to the right of it. */
+    .mascot-how { margin: 0 0 8px auto; }
 
     .section-label {
       display: block;
@@ -587,11 +587,7 @@
     }
     
     /* Mascot 2 */
-    .mascot-features {
-      top: -140px;
-      right: 40px;
-      width: 160px;
-    }
+    .mascot-features { margin-bottom: 12px; }
 
     .section-header .h2 { margin-bottom: 16px; }
     .section-header .text-muted { max-width: 600px; margin: 0 auto; }
@@ -695,11 +691,7 @@
     .privacy { padding: 100px 0; }
     
     /* Mascot 4 */
-    .mascot-privacy {
-      top: -50px;
-      left: -120px;
-      width: 160px;
-    }
+    .mascot-privacy { margin-bottom: 12px; }
 
     .states-wrapper {
       display: flex;
@@ -736,13 +728,8 @@
     /* ============ FAQ ============ */
     .faq { padding: 100px 0; }
     
-    /* Mascot 5: Moved further up and made bigger */
-    .mascot-faq {
-      top: -120px;
-      left: 50%;
-      margin-left: -80px; /* Center for 160px width */
-      width: 160px;
-    }
+    /* Mascot 5 */
+    .mascot-faq { margin-bottom: 12px; }
 
     .faq-list {
       max-width: 760px;
@@ -827,14 +814,6 @@
     .social-links svg { width: 20px; height: 20px; }
 
     /* ============ RESPONSIVE ============ */
-    @media (max-width: 1024px) {
-      .mascot-hero { width: 130px; left: -80px; top: 140px; }
-      .mascot-how { right: -40px; width: 140px; top: -60px; }
-      .mascot-features { width: 130px; top: -120px; right: 20px; }
-      .mascot-privacy { left: -60px; width: 130px; }
-      .mascot-faq { width: 130px; margin-left: -65px; top: -100px; }
-    }
-
     @media (max-width: 768px) {
       .nav-wrapper { top: 16px; }
       .navbar { padding: 8px 12px 8px 16px; width: calc(100% - 24px); }
@@ -843,14 +822,8 @@
       
       .hero { padding-top: 120px; padding-bottom: 60px; }
       
-      /* Mascot Mobile Sizing & Positions */
-      .mascot-hero { width: 110px; left: -40px; top: 120px; }
-      .mascot-how { width: 110px; right: -10px; top: -60px; }
-      .mascot-features { width: 110px; right: 10px; top: -120px; }
-      .mascot-privacy { width: 110px; left: -30px; top: -30px; }
-      
-      .mascot-faq { width: 110px; margin-left: -55px; top: -90px; }
-      .faq .h2 { margin-top: 60px; }
+      /* The heading block sits under the mascot here, so it keeps its own left edge. */
+      .mascot-how { margin-inline: auto; }
       
       .laptop-frame { border-radius: 16px; }
       .browser-header { padding: 8px 12px; }
@@ -1199,7 +1172,7 @@
       <!-- Mascot 5 -->
       <img src="../m5.png" alt="Sytext Mascot" class="mascot mascot-faq" />
 
-      <h2 class="h2" style="margin-bottom: 64px; margin-top: 80px;">Questions, <span class="serif-italic">answered.</span></h2>
+      <h2 class="h2" style="margin-bottom: 64px;">Questions, <span class="serif-italic">answered.</span></h2>
       
       <div class="faq-list">
         <details class="faq-item" open>
