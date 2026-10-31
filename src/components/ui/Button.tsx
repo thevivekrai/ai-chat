@@ -1,14 +1,16 @@
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/cn'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'soft'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'soft' | 'glass'
 type Size = 'sm' | 'md' | 'icon' | 'icon-sm'
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'accent-gloss shadow-accent hover:brightness-[1.07]',
+  primary: 'accent-gloss shadow-accent hover:brightness-110',
   secondary: 'border border-line bg-surface text-fg shadow-card hover:border-line-strong hover:bg-pill',
-  ghost: 'text-muted hover:bg-surface-2 hover:text-fg',
-  soft: 'bg-accent-soft text-accent-ink hover:bg-accent/20',
+  ghost: 'text-muted hover:bg-surface-2 hover:text-fg hover:shadow-sm',
+  soft: 'bg-accent-soft text-accent-ink shadow-sm hover:bg-accent/20',
+  /** A frosted chip for icon buttons that sit directly on the wallpaper or a header (not a panel). */
+  glass: 'relative glass glass-edge text-muted shadow-glass hover:text-fg',
 }
 
 const SIZES: Record<Size, string> = {

@@ -113,7 +113,7 @@ export const ThreadRow = memo(function ThreadRow({ view, selected, now, contacts
           {unread > 0 && (
             <span
               aria-label={`${unread} unread`}
-              className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg tabular-nums"
+              className="accent-gloss grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full px-1 text-[10px] font-semibold shadow-sm tabular-nums"
             >
               {unread}
             </span>

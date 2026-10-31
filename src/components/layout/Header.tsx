@@ -40,9 +40,9 @@ export function Header() {
   return (
     <header className="flex h-14 shrink-0 items-center gap-1.5 px-2 md:gap-2 md:px-4">
       <Button
-        variant="ghost"
+        variant="glass"
         size="icon"
-        className="lg:hidden"
+        className="rounded-full lg:hidden"
         aria-label="Open navigation"
         onClick={() => setSidebarOpen(true)}
       >
@@ -62,13 +62,13 @@ export function Header() {
         </button>
       </div>
 
-      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Search" onClick={() => openDialog('command')}>
+      <Button variant="glass" size="icon" className="rounded-full md:hidden" aria-label="Search" onClick={() => openDialog('command')}>
         <Search className="size-5" />
       </Button>
       <IncognitoBadge />
       <PrivacyBadge />
       <ThemeMenu />
-      <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => openDialog('settings')}>
+      <Button variant="glass" size="icon" className="rounded-full" aria-label="Settings" onClick={() => openDialog('settings')}>
         <Settings className="size-[18px]" />
       </Button>
       <AccountButton />
@@ -264,7 +264,7 @@ function ThemeMenu() {
       }))}
       renderTrigger={(props) => (
         // Phones have little room up here; the theme is in Settings → Appearance too.
-        <Button {...props} variant="ghost" size="icon" aria-label="Theme" className="max-sm:hidden">
+        <Button {...props} variant="glass" size="icon" aria-label="Theme" className="rounded-full max-sm:hidden">
           <Icon className="size-[18px]" />
         </Button>
       )}
